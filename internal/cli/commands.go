@@ -1,0 +1,708 @@
+package cli
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"net/url"
+	"os"
+	"os/exec"
+	"os/signal"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/dcimorra/middleware-public/internal/auth"
+	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/middleware-public/internal/settings"
+	"github.com/dcimorra/middleware-public/internal/sites"
+)
+
+// Usage is what `middleware help` adds for these commands.
+const Usage = `  setup        print a one-time code to create the operator in the panel
+               (--password: set the password from the terminal instead)
+  site         list | show | add | rm | restart | stop | start | hold | unhold | logs | deploy
+  events       recent events (-f to follow)
+  system       version, uptime, load, memory, disk
+  token        add | list | rm — API tokens for scripts
+
+  Every command takes --root <dir> and --json (machine-readable output).
+  The CLI talks to the running supervisor over data/api.sock; without the
+  socket it uses the loopback listener with $MIDDLEWARE_TOKEN.
+`
+
+// Env is what a command runs with. Tests replace Connect and the streams.
+type Env struct {
+	Stdin   io.Reader
+	Stdout  io.Writer
+	Stderr  io.Writer
+	Connect func(root string) (*Client, error)
+
+	in *bufio.Reader
+}
+
+// Command returns the function cmd/middleware registers for name.
+func Command(name string) func(args []string) error {
+	return func(args []string) error {
+		e := &Env{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr, Connect: Connect}
+		return e.Run(name, args)
+	}
+}
+
+// Run dispatches one top-level command.
+func (e *Env) Run(name string, args []string) error {
+	switch name {
+	case "setup":
+		return e.setup(args)
+	case "site":
+		return e.site(args)
+	case "events":
+		return e.events(args)
+	case "system":
+		return e.system(args)
+	case "token":
+		return e.token(args)
+	}
+	return fmt.Errorf("unknown command %q", name)
+}
+
+// common holds the flags every command takes.
+type common struct {
+	root string
+	json bool
+}
+
+func (c *common) bind(fs *flag.FlagSet) {
+	fs.StringVar(&c.root, "root", "", "installation root (default $MIDDLEWARE_ROOT or /srv/middleware)")
+	fs.BoolVar(&c.json, "json", false, "print the API's answer as JSON")
+}
+
+// parse accepts flags before and after positional arguments, so both
+// `site logs -f example.com` and `site logs example.com -f` work. The
+// flag package stops at the first positional; this resumes after it.
+func parse(fs *flag.FlagSet, args []string) ([]string, error) {
+	fs.SetOutput(io.Discard)
+	var pos []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			return pos, nil
+		}
+		pos = append(pos, rest[0])
+		args = rest[1:]
+		if len(args) == 0 {
+			return pos, nil
+		}
+	}
+}
+
+func (e *Env) client(c common) (*Client, error) {
+	return e.Connect(settings.Root(c.root))
+}
+
+// printJSON writes raw API bytes as they came, indented by the server.
+func (e *Env) printJSON(raw []byte) {
+	raw = []byte(strings.TrimRight(string(raw), "\n"))
+	fmt.Fprintln(e.Stdout, string(raw))
+}
+
+// --- setup ---------------------------------------------------------------
+
+func (e *Env) setup(args []string) error {
+	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
+	var c common
+	c.bind(fs)
+	direct := fs.Bool("password", false, "set the operator password now, from the terminal")
+	if _, err := parse(fs, args); err != nil {
+		return err
+	}
+	root := settings.Root(c.root)
+	if _, err := os.Stat(root); err != nil {
+		return fmt.Errorf("root %s: %w", root, err)
+	}
+	store := auth.New(root, events.New(""))
+	if *direct {
+		pw, err := e.readPassword("New operator password: ")
+		if err != nil {
+			return err
+		}
+		again, err := e.readPassword("Again: ")
+		if err != nil {
+			return err
+		}
+		if pw != again {
+			return errors.New("the passwords do not match")
+		}
+		if err := store.SetPassword(pw); err != nil {
+			return err
+		}
+		if c.json {
+			e.printJSON([]byte(`{"ok": true}`))
+		} else {
+			fmt.Fprintln(e.Stdout, "Password set. Every session is logged out.")
+		}
+		return nil
+	}
+	code, err := store.CreateSetupCode()
+	if err != nil {
+		return err
+	}
+	if c.json {
+		out, _ := json.Marshal(map[string]string{"code": code})
+		e.printJSON(out)
+		return nil
+	}
+	st, _ := settings.Load(root)
+	where := "http://" + st.Listen + "/"
+	if st.PanelDomain != "" {
+		where = "https://" + st.PanelDomain + "/"
+	}
+	fmt.Fprintf(e.Stdout, "Setup code: %s\n\nOpen %s and enter it with the password you choose.\nThe code works once; run `middleware setup` again for a new one,\nor `middleware setup --password` to set the password here.\n", code, where)
+	return nil
+}
+
+// readPassword reads a line without echo when stdin is a terminal. The
+// echo is switched off with stty, which every Linux has, because reading
+// the terminal's mode without x/term is a hundred lines of ioctl for one
+// prompt.
+func (e *Env) readPassword(prompt string) (string, error) {
+	fmt.Fprint(e.Stderr, prompt)
+	f, isTerm := e.Stdin.(*os.File)
+	if isTerm {
+		if st, err := f.Stat(); err != nil || st.Mode()&os.ModeCharDevice == 0 {
+			isTerm = false
+		}
+	}
+	if isTerm {
+		stty := func(arg string) { cmd := exec.Command("stty", arg); cmd.Stdin = f; _ = cmd.Run() }
+		stty("-echo")
+		defer func() { stty("echo"); fmt.Fprintln(e.Stderr) }()
+	}
+	// One buffered reader for the whole run: a fresh one per prompt
+	// would swallow the second line while reading the first.
+	if e.in == nil {
+		e.in = bufio.NewReader(e.Stdin)
+	}
+	line, err := e.in.ReadString('\n')
+	if err != nil && line == "" {
+		return "", err
+	}
+	return strings.TrimRight(line, "\r\n"), nil
+}
+
+// --- site ----------------------------------------------------------------
+
+const siteUsage = `usage: middleware site <command> [flags]
+
+  list                        every site folder
+  show <domain>               one site, with its manifest
+  add <domain> [--template static|node|go|docker] [--manifest file.json|-]
+  rm <domain> [--archive]     delete, or move to data/archive/
+  restart <domain> | --all    force a handover
+  stop | start <domain>       write disabled into the manifest
+  hold <domain> [--title t] [--message m]
+  unhold <domain>
+  logs <domain> [-f] [--lines 200] [--worker name]
+  deploy <domain>             run deploy.github.build and write the pointer
+`
+
+func (e *Env) site(args []string) error {
+	if len(args) == 0 || args[0] == "help" {
+		fmt.Fprint(e.Stderr, siteUsage)
+		return nil
+	}
+	sub, args := args[0], args[1:]
+	fs := flag.NewFlagSet("site "+sub, flag.ContinueOnError)
+	var c common
+	c.bind(fs)
+	var (
+		template = fs.String("template", "static", "template for add")
+		manifest = fs.String("manifest", "", "manifest file for add (- for stdin)")
+		archive  = fs.Bool("archive", false, "move to data/archive/ instead of deleting")
+		all      = fs.Bool("all", false, "every running site (restart)")
+		title    = fs.String("title", "", "holding page title")
+		message  = fs.String("message", "", "holding page message")
+		follow   = fs.Bool("f", false, "follow the log")
+		lines    = fs.Int("lines", 200, "lines of log")
+		worker   = fs.String("worker", "", "a worker's log instead of the site's")
+	)
+	pos, err := parse(fs, args)
+	if err != nil {
+		return err
+	}
+	cl, err := e.client(c)
+	if err != nil {
+		return err
+	}
+	domain := ""
+	if len(pos) > 0 {
+		domain = strings.ToLower(pos[0])
+	}
+	need := func() error {
+		if domain == "" {
+			return fmt.Errorf("site %s: a domain is required", sub)
+		}
+		return nil
+	}
+	switch sub {
+	case "list", "ls":
+		var raw []byte
+		if err := cl.Do("GET", "/api/v1/sites", nil, &raw); err != nil {
+			return err
+		}
+		if c.json {
+			e.printJSON(raw)
+			return nil
+		}
+		var list []sites.Site
+		if err := json.Unmarshal(raw, &list); err != nil {
+			return err
+		}
+		rows := make([][]string, 0, len(list))
+		for _, s := range list {
+			mode := string(s.Mode)
+			if !s.Managed {
+				mode = "unmanaged"
+			}
+			port := ""
+			if s.Port != 0 {
+				port = strconv.Itoa(s.Port)
+			}
+			rows = append(rows, []string{s.Domain, mode, yesNo(s.Alive), port, s.Revision, oneLine(s.Error)})
+		}
+		Table(e.Stdout, []string{"DOMAIN", "MODE", "ALIVE", "PORT", "REVISION", "ERROR"}, rows)
+		return nil
+	case "show":
+		if err := need(); err != nil {
+			return err
+		}
+		var raw []byte
+		if err := cl.Do("GET", "/api/v1/sites/"+domain, nil, &raw); err != nil {
+			return err
+		}
+		return e.showSite(c, raw)
+	case "add":
+		if err := need(); err != nil {
+			return err
+		}
+		body := map[string]any{"domain": domain}
+		if *manifest != "" {
+			var data []byte
+			if *manifest == "-" {
+				data, err = io.ReadAll(e.Stdin)
+			} else {
+				data, err = os.ReadFile(*manifest)
+			}
+			if err != nil {
+				return err
+			}
+			body["manifest"] = json.RawMessage(data)
+		} else {
+			body["template"] = *template
+		}
+		var raw []byte
+		if err := cl.Do("POST", "/api/v1/sites", body, &raw); err != nil {
+			return err
+		}
+		if c.json {
+			e.printJSON(raw)
+			return nil
+		}
+		fmt.Fprintf(e.Stdout, "Created %s. The engine picks it up on its next tick.\n", domain)
+		return nil
+	case "rm", "remove", "delete":
+		if err := need(); err != nil {
+			return err
+		}
+		var raw []byte
+		q := ""
+		if *archive {
+			q = "?archive=true"
+		}
+		if err := cl.Do("DELETE", "/api/v1/sites/"+domain+q, nil, &raw); err != nil {
+			return err
+		}
+		if c.json {
+			e.printJSON(raw)
+			return nil
+		}
+		var out struct {
+			Path string `json:"path"`
+		}
+		_ = json.Unmarshal(raw, &out)
+		if out.Path != "" {
+			fmt.Fprintf(e.Stdout, "Archived %s to %s\n", domain, out.Path)
+		} else {
+			fmt.Fprintf(e.Stdout, "Deleted %s\n", domain)
+		}
+		return nil
+	case "restart":
+		if *all {
+			var list []sites.Site
+			if err := cl.Do("GET", "/api/v1/sites", nil, &list); err != nil {
+				return err
+			}
+			for _, s := range list {
+				if !s.Alive {
+					continue
+				}
+				if err := cl.Do("POST", "/api/v1/sites/"+s.Domain+"/restart", nil, nil); err != nil {
+					fmt.Fprintf(e.Stderr, "%s: %v\n", s.Domain, err)
+					continue
+				}
+				fmt.Fprintf(e.Stdout, "%s: handover started\n", s.Domain)
+			}
+			return nil
+		}
+		if err := need(); err != nil {
+			return err
+		}
+		return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/restart", nil, "Handover started for "+domain)
+	case "stop":
+		if err := need(); err != nil {
+			return err
+		}
+		return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/stop", nil, "Stopped "+domain+" (disabled in site.json)")
+	case "start":
+		if err := need(); err != nil {
+			return err
+		}
+		return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/start", nil, "Started "+domain)
+	case "hold":
+		if err := need(); err != nil {
+			return err
+		}
+		return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/hold", map[string]any{"enabled": true, "title": *title, "message": *message}, domain+" is behind the holding page")
+	case "unhold":
+		if err := need(); err != nil {
+			return err
+		}
+		return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/hold", map[string]any{"enabled": false}, domain+" is back")
+	case "deploy":
+		if err := need(); err != nil {
+			return err
+		}
+		return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/deploy", nil, "Deployment started for "+domain+"; follow it with `middleware events -f`")
+	case "logs", "log":
+		if err := need(); err != nil {
+			return err
+		}
+		q := url.Values{}
+		q.Set("lines", strconv.Itoa(*lines))
+		if *worker != "" {
+			q.Set("worker", *worker)
+		}
+		if *follow {
+			q.Set("follow", "1")
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		body, err := cl.Stream(ctx, "/api/v1/sites/"+domain+"/logs?"+q.Encode())
+		if err != nil {
+			return err
+		}
+		defer body.Close()
+		_, err = io.Copy(e.Stdout, body)
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
+		return err
+	}
+	fmt.Fprint(e.Stderr, siteUsage)
+	return fmt.Errorf("site: unknown command %q", sub)
+}
+
+// simple does a call whose answer is either printed as JSON or summed
+// up in one line.
+func (e *Env) simple(c common, cl *Client, method, path string, body any, done string) error {
+	var raw []byte
+	if err := cl.Do(method, path, body, &raw); err != nil {
+		return err
+	}
+	if c.json {
+		e.printJSON(raw)
+		return nil
+	}
+	fmt.Fprintln(e.Stdout, done)
+	return nil
+}
+
+func (e *Env) showSite(c common, raw []byte) error {
+	if c.json {
+		e.printJSON(raw)
+		return nil
+	}
+	var s sites.Site
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return err
+	}
+	pairs := [][2]string{
+		{"domain", s.Domain},
+		{"mode", string(s.Mode)},
+		{"managed", yesNo(s.Managed)},
+		{"alive", yesNo(s.Alive)},
+	}
+	if s.Port != 0 {
+		pairs = append(pairs, [2]string{"port", strconv.Itoa(s.Port)})
+	}
+	if s.Revision != "" {
+		pairs = append(pairs, [2]string{"revision", s.Revision})
+	}
+	if s.Handing {
+		pairs = append(pairs, [2]string{"handing over", "yes"})
+	}
+	if s.Error != "" {
+		pairs = append(pairs, [2]string{"error", s.Error})
+	}
+	for name, w := range s.Workers {
+		pairs = append(pairs, [2]string{"worker " + name, fmt.Sprintf("port %d, alive %s %s", w.Port, yesNo(w.Alive), w.Error)})
+	}
+	KeyValues(e.Stdout, pairs)
+	if s.Manifest != nil {
+		data, _ := json.MarshalIndent(s.Manifest, "", "  ")
+		fmt.Fprintf(e.Stdout, "\nsite.json\n%s\n", data)
+	}
+	return nil
+}
+
+// --- events --------------------------------------------------------------
+
+func (e *Env) events(args []string) error {
+	fs := flag.NewFlagSet("events", flag.ContinueOnError)
+	var c common
+	c.bind(fs)
+	follow := fs.Bool("f", false, "stream new events as they happen")
+	since := fs.String("since", "", "RFC3339 time, or a duration back from now (1h)")
+	typ := fs.String("type", "", "type prefix (instance., handover., auth.)")
+	subject := fs.String("subject", "", "a domain")
+	limit := fs.Int("limit", 50, "how many")
+	if _, err := parse(fs, args); err != nil {
+		return err
+	}
+	cl, err := e.client(c)
+	if err != nil {
+		return err
+	}
+	q := url.Values{}
+	if *since != "" {
+		if d, err := time.ParseDuration(*since); err == nil {
+			q.Set("since", time.Now().Add(-d).UTC().Format(time.RFC3339Nano))
+		} else {
+			q.Set("since", *since)
+		}
+	}
+	if *typ != "" {
+		q.Set("type", *typ)
+	}
+	if *subject != "" {
+		q.Set("subject", *subject)
+	}
+	if !*follow {
+		q.Set("limit", strconv.Itoa(*limit))
+		var raw []byte
+		if err := cl.Do("GET", "/api/v1/events?"+q.Encode(), nil, &raw); err != nil {
+			return err
+		}
+		if c.json {
+			e.printJSON(raw)
+			return nil
+		}
+		var list []events.Event
+		if err := json.Unmarshal(raw, &list); err != nil {
+			return err
+		}
+		rows := make([][]string, 0, len(list))
+		for _, ev := range list {
+			rows = append(rows, eventRow(ev))
+		}
+		Table(e.Stdout, []string{"TIME", "TYPE", "SUBJECT", "ACTOR", "MESSAGE"}, rows)
+		return nil
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	body, err := cl.Stream(ctx, "/api/v1/events/stream?"+q.Encode())
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	sc := bufio.NewScanner(body)
+	sc.Buffer(make([]byte, 64<<10), 4<<20)
+	for sc.Scan() {
+		data, ok := strings.CutPrefix(sc.Text(), "data: ")
+		if !ok {
+			continue
+		}
+		if c.json {
+			fmt.Fprintln(e.Stdout, data)
+			continue
+		}
+		var ev events.Event
+		if json.Unmarshal([]byte(data), &ev) != nil {
+			continue
+		}
+		fmt.Fprintln(e.Stdout, strings.Join(eventRow(ev), "  "))
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
+	return sc.Err()
+}
+
+func eventRow(ev events.Event) []string {
+	msg := ev.Message
+	if ev.Level != "" {
+		msg = "[" + ev.Level + "] " + msg
+	}
+	return []string{ev.Time.Local().Format("2006-01-02 15:04:05"), ev.Type, ev.Subject, ev.Actor, oneLine(msg)}
+}
+
+// --- system --------------------------------------------------------------
+
+func (e *Env) system(args []string) error {
+	fs := flag.NewFlagSet("system", flag.ContinueOnError)
+	var c common
+	c.bind(fs)
+	if _, err := parse(fs, args); err != nil {
+		return err
+	}
+	cl, err := e.client(c)
+	if err != nil {
+		return err
+	}
+	var raw []byte
+	if err := cl.Do("GET", "/api/v1/system", nil, &raw); err != nil {
+		return err
+	}
+	if c.json {
+		e.printJSON(raw)
+		return nil
+	}
+	var sys struct {
+		Version     string             `json:"version"`
+		Root        string             `json:"root"`
+		Uptime      string             `json:"uptime"`
+		Listen      string             `json:"listen"`
+		PanelDomain string             `json:"panel_domain"`
+		Go          string             `json:"go"`
+		Hostname    string             `json:"hostname"`
+		Load        map[string]float64 `json:"load"`
+		Memory      map[string]int64   `json:"memory"`
+		Disk        map[string]int64   `json:"disk"`
+	}
+	if err := json.Unmarshal(raw, &sys); err != nil {
+		return err
+	}
+	KeyValues(e.Stdout, [][2]string{
+		{"version", sys.Version + " (" + sys.Go + ")"},
+		{"host", sys.Hostname},
+		{"root", sys.Root},
+		{"uptime", sys.Uptime},
+		{"listen", sys.Listen},
+		{"panel", orDash(sys.PanelDomain)},
+		{"via", cl.Via},
+		{"load", fmt.Sprintf("%.2f %.2f %.2f", sys.Load["1m"], sys.Load["5m"], sys.Load["15m"])},
+		{"memory", fmt.Sprintf("%s used of %s", bytesHuman(sys.Memory["used"]), bytesHuman(sys.Memory["total"]))},
+		{"disk", fmt.Sprintf("%s free of %s", bytesHuman(sys.Disk["free"]), bytesHuman(sys.Disk["total"]))},
+	})
+	return nil
+}
+
+// --- token ---------------------------------------------------------------
+
+const tokenUsage = `usage: middleware token <command>
+
+  add <name>    create a token; the secret is printed once
+  list          tokens, with when each was last used
+  rm <id>       revoke a token
+`
+
+func (e *Env) token(args []string) error {
+	if len(args) == 0 || args[0] == "help" {
+		fmt.Fprint(e.Stderr, tokenUsage)
+		return nil
+	}
+	sub, args := args[0], args[1:]
+	fs := flag.NewFlagSet("token "+sub, flag.ContinueOnError)
+	var c common
+	c.bind(fs)
+	pos, err := parse(fs, args)
+	if err != nil {
+		return err
+	}
+	cl, err := e.client(c)
+	if err != nil {
+		return err
+	}
+	switch sub {
+	case "add", "create":
+		if len(pos) == 0 {
+			return errors.New("token add: a name is required")
+		}
+		var raw []byte
+		if err := cl.Do("POST", "/api/v1/auth/tokens", map[string]string{"name": strings.Join(pos, " ")}, &raw); err != nil {
+			return err
+		}
+		if c.json {
+			e.printJSON(raw)
+			return nil
+		}
+		var out struct {
+			ID    string `json:"id"`
+			Token string `json:"token"`
+		}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return err
+		}
+		fmt.Fprintf(e.Stdout, "Token %s created. The secret is shown once:\n\n  %s\n\nUse it as `Authorization: Bearer …` or in $%s.\n", out.ID, out.Token, TokenEnv)
+		return nil
+	case "list", "ls":
+		var raw []byte
+		if err := cl.Do("GET", "/api/v1/auth/tokens", nil, &raw); err != nil {
+			return err
+		}
+		if c.json {
+			e.printJSON(raw)
+			return nil
+		}
+		var list []auth.Public
+		if err := json.Unmarshal(raw, &list); err != nil {
+			return err
+		}
+		rows := make([][]string, 0, len(list))
+		for _, t := range list {
+			rows = append(rows, []string{t.ID, t.Name, t.Created.Local().Format("2006-01-02"), ago(t.LastUsed)})
+		}
+		Table(e.Stdout, []string{"ID", "NAME", "CREATED", "LAST USED"}, rows)
+		return nil
+	case "rm", "remove", "delete", "revoke":
+		if len(pos) == 0 {
+			return errors.New("token rm: an id is required")
+		}
+		return e.simple(c, cl, "DELETE", "/api/v1/auth/tokens/"+url.PathEscape(pos[0]), nil, "Token "+pos[0]+" revoked")
+	}
+	fmt.Fprint(e.Stderr, tokenUsage)
+	return fmt.Errorf("token: unknown command %q", sub)
+}
+
+func oneLine(s string) string {
+	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
+	if len(s) > 80 {
+		return s[:77] + "…"
+	}
+	return s
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
