@@ -1,0 +1,34 @@
+# middleware-helper.service, rendered by middleware dev install.
+# The only thing in this installation that runs as root. It answers a closed
+# list of operations (firewall, vpn, sysctl) on a unix socket shared with the
+# middleware group, and never takes a string that reaches a shell.
+[Unit]
+Description=middleware privileged helper
+Documentation=https://github.com/dcimorra/middleware-public/blob/main/docs/security.md
+After=network-online.target
+Before=middleware.service
+
+[Service]
+Type=simple
+User=root
+RuntimeDirectory=middleware
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+ExecStart=/usr/local/bin/middleware helper --socket /run/middleware/helper.sock --allow-gid middleware
+Restart=always
+RestartSec=2
+
+# Strict by default; the three places the operations write are listed and
+# nothing else on the filesystem is reachable for writing.
+ProtectSystem=strict
+ReadWritePaths=/etc/wireguard /etc/sysctl.d /run/middleware
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+# NET_ADMIN for nftables and wireguard, NET_RAW for the interface, SYS_ADMIN
+# for sysctl writes under /proc/sys.
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+
+[Install]
+WantedBy=multi-user.target

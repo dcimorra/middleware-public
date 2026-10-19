@@ -1,0 +1,132 @@
+package main
+
+import (
+	"bufio"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"os/user"
+	"strings"
+
+	"github.com/dcimorra/middleware-public/internal/installer"
+	"github.com/dcimorra/middleware-public/internal/settings"
+)
+
+func init() {
+	subcommands["install"] = installCmd
+	subcommands["uninstall"] = uninstallCmd
+	subcommands["doctor"] = doctorCmd
+	extraUsage += `  install      install units, group and root directory (uses sudo where needed)
+  uninstall    stop and remove the units; keeps the root directory and the sites
+  doctor       check the installation and print one line per check
+`
+}
+
+// installFlags are shared by install, uninstall and doctor so the three
+// agree on where things are.
+func installFlags(fs *flag.FlagSet, p *installer.Params) {
+	fs.StringVar(&p.Root, "root", "", "installation root (default $MIDDLEWARE_ROOT or /srv/middleware)")
+	fs.StringVar(&p.User, "user", "", "user that runs the supervisor and owns the root (default: you)")
+	fs.StringVar(&p.Binary, "binary", p.Binary, "where the executable is installed")
+}
+
+func installParams(fs *flag.FlagSet, args []string) (installer.Params, error) {
+	p := installer.DefaultParams()
+	p.Version = Version
+	installFlags(fs, &p)
+	noHelper := fs.Bool("no-helper", false, "do not install the privileged helper (firewall, vpn and sysctl stay unavailable)")
+	if err := fs.Parse(args); err != nil {
+		return p, err
+	}
+	if *noHelper {
+		p.Helper = false
+	}
+	// --root "" means "resolve like serve does", except that a bare cwd
+	// with a sites/ folder is not an installation target: an operator who
+	// runs install from inside a checkout does not want /etc pointing at it.
+	if p.Root == "" {
+		if v := os.Getenv("MIDDLEWARE_ROOT"); v != "" {
+			p.Root = v
+		} else {
+			p.Root = "/srv/middleware"
+		}
+	}
+	if p.User == "" {
+		u, err := user.Current()
+		if err != nil {
+			return p, fmt.Errorf("cannot tell who you are: %w (pass --user)", err)
+		}
+		p.User = u.Username
+	}
+	// The listen address and port range come from the installation's own
+	// settings when it already has them, so the socket unit and the sysctl
+	// line agree with what serve will use.
+	if s, err := settings.Load(p.Root); err == nil {
+		p.Listen = s.Listen
+		p.PortsFrom, p.PortsTo = s.Ports.From, s.Ports.To
+	}
+	return p, nil
+}
+
+func installCmd(args []string) error {
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+	noStart := fs.Bool("no-start", false, "render and enable the units but do not start them")
+	yes := fs.Bool("yes", false, "do not ask for confirmation")
+	p, err := installParams(fs, args)
+	if err != nil {
+		return err
+	}
+	if p.User == "root" {
+		return errors.New("refusing to install for root: run as the user that will operate the panel; sudo is used where needed")
+	}
+	in := installer.New(p)
+	in.NoStart = *noStart
+	fmt.Printf("middleware %s install\n  user   %s\n  group  %s\n  root   %s\n  binary %s\n  helper %v\n\n", Version, p.User, p.Group, p.Root, p.Binary, p.Helper)
+	if !*yes && !confirm("Continue? Steps that need root will ask for your sudo password. [y/N] ") {
+		return errors.New("cancelled")
+	}
+	if _, err := in.Install(); err != nil {
+		return err
+	}
+	fmt.Println("\nDone. `middleware doctor` checks the installation at any time.")
+	return nil
+}
+
+func uninstallCmd(args []string) error {
+	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
+	yes := fs.Bool("yes", false, "do not ask for confirmation")
+	keep := fs.Bool("keep-binary", false, "leave the executable in place")
+	p, err := installParams(fs, args)
+	if err != nil {
+		return err
+	}
+	in := installer.New(p)
+	in.KeepBinary = *keep
+	fmt.Printf("This stops middleware and removes its units. The root directory %s and every site in it stay where they are.\n", p.Root)
+	if !*yes && !confirm("Continue? [y/N] ") {
+		return errors.New("cancelled")
+	}
+	_, err = in.Uninstall()
+	return err
+}
+
+func doctorCmd(args []string) error {
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	p, err := installParams(fs, args)
+	if err != nil {
+		return err
+	}
+	in := installer.New(p)
+	if _, ok := in.Doctor(); !ok {
+		return errors.New("some checks failed")
+	}
+	return nil
+}
+
+func confirm(prompt string) bool {
+	fmt.Print(prompt)
+	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	line = strings.ToLower(strings.TrimSpace(line))
+	return line == "y" || line == "yes"
+}
