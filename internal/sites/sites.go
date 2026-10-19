@@ -48,6 +48,11 @@ func New(root string, eng *engine.Engine, bus *events.Bus) *Manager {
 	if bus == nil {
 		bus = events.New("")
 	}
+	// Absolute, because the root reaches a site's environment as
+	// MIDDLEWARE_SITE_DIR and a build step may chdir before using it.
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
 	return &Manager{Root: root, Engine: eng, Bus: bus}
 }
 
