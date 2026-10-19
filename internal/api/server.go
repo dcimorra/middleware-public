@@ -107,6 +107,21 @@ type Server struct {
 	mu     sync.Mutex
 	routes []Route
 	public map[string]bool
+	// deployer, when set, is asked first by POST /sites/{domain}/deploy.
+	deployer Deployer
+}
+
+// Deployer is an alternative way to deploy a site, set with SetDeployer.
+// It returns handled false to leave the request to the sites manager.
+type Deployer func(domain string) (result any, handled bool, err error)
+
+// SetDeployer installs a Deployer. The github module, when enabled,
+// deploys by fetching the repository first; without it the manager's
+// in-place build is what the route does.
+func (s *Server) SetDeployer(d Deployer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deployer = d
 }
 
 // New builds the server with every route of this package registered.
