@@ -92,20 +92,29 @@ pointer ([deploy.md](deploy.md)).
 Conversations in the panel run on Anthropic's Claude through the official
 CLI, driven as a subprocess. No SDK in the core.
 
-- **Needs**: the `claude` CLI and a login. The module installs the CLI under
-  `modules/`; the login is yours to do once, as the user that runs
-  middleware: `claude login` (or `ANTHROPIC_API_KEY` in the module's
-  config, encrypted at rest).
-- **Verify**: the CLI runs, `claude --version` answers, and a one-token
-  prompt returns (`skip` when there is no login yet, with the command to
-  run).
-- **Installs**: the CLI, and nothing else. What the agent may touch is the
-  jail in the core ([security.md](security.md)), not a setting of the CLI.
+Without the module the conversations still run: the `claude` CLI is looked
+up in PATH and uses its own login under each site's home. The module is
+how an installation gives every conversation the same credentials.
+
+- **Needs**: all optional. `api_key` (passed as `ANTHROPIC_API_KEY`,
+  encrypted at rest), `bin` (the executable when it is not in PATH),
+  `model` (the alias offered first in the panel) and `config_dir` (passed
+  as `CLAUDE_CONFIG_DIR`, so one login serves every site).
+- **Verify**: the binary is found and `claude --version` answers;
+  `config_dir` exists. The key is handed to the CLI and not probed
+  (`skip`): a probe would spend, and the first turn says if it is wrong.
+- **Installs**: nothing. The CLI is an npm package with its own update
+  channel; a copy under `modules/bin` would be one more thing to keep
+  current. What the agent may touch is the jail in the core
+  ([security.md](security.md)), not a setting of the CLI.
+- **Enable** replaces the provider the conversations run with; **disable**
+  puts the CLI's own login back. Enabled modules are re-applied when the
+  service starts.
 
 ## agent-gemini
 
-Same shape, Google's Gemini CLI: `gemini` under `modules/`, `gemini auth
-login` once (or `GEMINI_API_KEY` in the module config).
+Same shape, Google's Gemini CLI: `api_key` (as `GEMINI_API_KEY`), `bin`
+and `model`.
 
 ## vpn
 
@@ -114,12 +123,19 @@ reachable without exposing them. Peers are created in the panel; each gets
 a client config shown once. "VPN only" makes the panel unreachable from
 anywhere else.
 
-- **Needs**: the helper (it writes `/etc/wireguard/mw0.conf` and brings the
-  interface up), `wireguard-tools`, a UDP port reachable from where you are.
-- **Verify**: the helper answers `vpn.apply` with a dry run; `wg` is present
-  or installable; the kernel module loads.
-- **Installs**: `wireguard-tools` through the package manager via the
-  helper.
+- **Needs**: `endpoint` (host:port clients connect to), and optionally
+  `listen_port` (51820) and `subnet` (10.77.0.0/24). Plus the helper (it
+  writes `/etc/wireguard/mw0.conf` and brings the interface up) and
+  `wireguard-tools`, which the installer puts there.
+- **Verify**: the values are well formed, `wg` and `wg-quick` are in PATH,
+  the helper answers. Whether the endpoint reaches this machine is a
+  `skip`: only a client connecting can tell.
+- **Installs**: nothing; the helper's operation list has no package
+  manager in it on purpose, so a missing `wireguard-tools` is reported,
+  not fetched.
+- The server key and the peers' preshared keys are kept in the same
+  encrypted store as every other credential (`data/modules-key`), so
+  `middleware vpn` and the panel read each other's state.
 
 Not available inside Docker (no helper).
 
