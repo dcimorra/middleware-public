@@ -103,22 +103,32 @@ func (l *Ledger) Allow(domain string, cap float64, at time.Time) error {
 	return nil
 }
 
-// MonthlyCap reads `agent.monthly_cap_usd` from a site folder's manifest
-// without going through the manifest package: that package rejects unknown
-// fields on purpose, and the field is read here so the schema stays owned
-// by one place. A missing file or field is "no cap".
-func MonthlyCap(siteDir string) float64 {
+// SiteSettings is the manifest's `agent` section as this package reads it.
+type SiteSettings struct {
+	Provider      string  `json:"provider"`
+	Model         string  `json:"model"`
+	MonthlyCapUSD float64 `json:"monthly_cap_usd"`
+}
+
+// ReadSiteSettings reads the `agent` section straight from the site
+// folder's site.json, without the manifest package: that package rejects
+// unknown fields on purpose and `monthly_cap_usd` is not in its schema, and
+// a manifest it refuses (a typo elsewhere) must still let the conversation
+// open, because the conversation is how the typo gets fixed. A missing
+// file or section is all defaults.
+func ReadSiteSettings(siteDir string) SiteSettings {
 	data, err := os.ReadFile(filepath.Join(siteDir, "site.json"))
 	if err != nil {
-		return 0
+		return SiteSettings{}
 	}
 	var raw struct {
-		Agent struct {
-			MonthlyCapUSD float64 `json:"monthly_cap_usd"`
-		} `json:"agent"`
+		Agent SiteSettings `json:"agent"`
 	}
 	if json.Unmarshal(data, &raw) != nil {
-		return 0
+		return SiteSettings{}
 	}
-	return raw.Agent.MonthlyCapUSD
+	return raw.Agent
 }
+
+// MonthlyCap is ReadSiteSettings(siteDir).MonthlyCapUSD.
+func MonthlyCap(siteDir string) float64 { return ReadSiteSettings(siteDir).MonthlyCapUSD }
