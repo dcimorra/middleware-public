@@ -70,7 +70,9 @@ type Module interface {
 	// Needs lists the values the module asks for.
 	Needs() []Need
 	// Verify probes every permission it can without creating anything real
-	// and reports one line per probe. It must not write anywhere.
+	// and reports one line per probe. It must not write to disk or to the
+	// service; it may fill values it discovers into cfg (an account id),
+	// and on Enable that same map reaches Install and is saved.
 	Verify(ctx context.Context, cfg Config) []Line
 	// Install fetches what the module needs on disk (a binary, a config
 	// file). progress receives one line per step for the panel and the CLI.
