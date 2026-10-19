@@ -262,17 +262,20 @@ func (s *Store) run(ctx context.Context, domain string, renew bool, c *call) {
 		s.cache[domain] = cert
 	}
 	s.mu.Unlock()
-	c.cert, c.err = cert, err
-	close(c.done)
+	// The event goes out before the waiters are released: whoever asked
+	// for the certificate must find the journal already saying what
+	// happened, or an API that reads both would see a result with no trace.
 	typ := "cert.issued"
 	if renew {
 		typ = "cert.renewed"
 	}
 	if err != nil {
 		s.emit("cert.failed", domain, "error", err.Error(), map[string]any{"renew": renew})
-		return
+	} else {
+		s.emit(typ, domain, "", "", map[string]any{"expires": cert.Leaf.NotAfter, "issuer": cert.Leaf.Issuer.CommonName})
 	}
-	s.emit(typ, domain, "", "", map[string]any{"expires": cert.Leaf.NotAfter, "issuer": cert.Leaf.Issuer.CommonName})
+	c.cert, c.err = cert, err
+	close(c.done)
 }
 
 // order is one issuance from key to files. The key is fresh each time: a
