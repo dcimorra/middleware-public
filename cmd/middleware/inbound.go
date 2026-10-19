@@ -16,17 +16,20 @@ import (
 	"github.com/dcimorra/middleware-public/internal/settings"
 )
 
+// inboundHook is the doors of the running process, for the API routes.
+var inboundHook *inbound.Hook
+
 func init() {
-	hookBuilders = append(hookBuilders, inboundHook)
+	hookBuilders = append(hookBuilders, hookBuilder{Name: "inbound", Order: orderInbound, Build: buildInbound})
 	subcommands["inbound"] = inboundCmd
 	extraUsage += `  inbound      status | open <tunnel|ports> | close <tunnel|ports>
 `
 }
 
-// inboundHook wires the doors into the app. Certificates are only ever
+// buildInbound wires the doors into the app. Certificates are only ever
 // requested for names the engine serves or the panel's own, so the CA's
 // quota is spent on this installation and nobody else.
-func inboundHook(a *app.App) app.Hook {
+func buildInbound(a *app.App) app.Hook {
 	certDir := filepath.Join(a.Root, "data", "certs")
 	solver := acme.NewHTTP01()
 	alpn := acme.NewTLSALPN01()
@@ -55,7 +58,8 @@ func inboundHook(a *app.App) app.Hook {
 		_, ok := a.Engine.Lookup(domain)
 		return ok
 	}
-	return inbound.New(a.Root, store, solver)
+	inboundHook = inbound.New(a.Root, store, solver)
+	return inboundHook
 }
 
 // inboundCmd works on the state file alone, so it needs no running
@@ -64,10 +68,10 @@ func inboundHook(a *app.App) app.Hook {
 func inboundCmd(args []string) error {
 	fs := flag.NewFlagSet("inbound", flag.ContinueOnError)
 	root := fs.String("root", "", "installation root (default $MIDDLEWARE_ROOT or /srv/middleware)")
-	if err := fs.Parse(args); err != nil {
+	rest, err := parseInterleaved(fs, args)
+	if err != nil {
 		return err
 	}
-	rest := fs.Args()
 	if len(rest) == 0 {
 		return fmt.Errorf("usage: middleware inbound status | open <door> | close <door>")
 	}

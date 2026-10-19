@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -31,7 +32,10 @@ var (
 )
 
 func init() {
-	hookBuilders = append(hookBuilders, newChatHook, newTasksHook)
+	hookBuilders = append(hookBuilders,
+		hookBuilder{Name: "chat", Order: orderChat, Build: newChatHook},
+		hookBuilder{Name: "tasks", Order: orderTasks, Build: newTasksHook},
+	)
 	subcommands["tasks"] = tasksCmd
 	subcommands["chat"] = chatCmd
 	extraUsage += `  tasks        list the scheduled tasks with their next run
@@ -45,12 +49,22 @@ func init() {
 // providers is the registry every conversation picks from. Credentials
 // and binaries come from the agent modules when they are enabled; without
 // them the adapters rely on the CLI's own login under the site's HOME.
+// There is one registry per process so the agent modules, which replace a
+// provider when enabled, and the chat manager, which picks one per turn,
+// are looking at the same map.
 func providers() *agent.Registry {
-	r := agent.NewRegistry()
-	r.Register(claude.New(claude.Config{}))
-	r.Register(gemini.New(gemini.Config{}))
-	return r
+	providersOnce.Do(func() {
+		providersCur = agent.NewRegistry()
+		providersCur.Register(claude.New(claude.Config{}))
+		providersCur.Register(gemini.New(gemini.Config{}))
+	})
+	return providersCur
 }
+
+var (
+	providersOnce sync.Once
+	providersCur  *agent.Registry
+)
 
 type chatHook struct{}
 
@@ -83,13 +97,13 @@ func rootFlag(fs *flag.FlagSet) *string {
 func tasksCmd(args []string) error {
 	fs := flag.NewFlagSet("tasks", flag.ContinueOnError)
 	root := rootFlag(fs)
-	if err := fs.Parse(args); err != nil {
+	rest, err := parseInterleaved(fs, args)
+	if err != nil {
 		return err
 	}
 	r := settings.Root(*root)
 	bus := events.New(filepath.Join(r, "data", "events"))
 	s := tasks.NewScheduler(tasks.Options{Root: r, Bus: bus})
-	rest := fs.Args()
 	if len(rest) == 0 || rest[0] == "list" {
 		list := s.List()
 		if len(list) == 0 {
@@ -141,10 +155,10 @@ func chatCmd(args []string) error {
 	fs := flag.NewFlagSet("chat", flag.ContinueOnError)
 	root := rootFlag(fs)
 	model := fs.String("model", "", "model name or alias (default: the site's)")
-	if err := fs.Parse(args); err != nil {
+	rest, err := parseInterleaved(fs, args)
+	if err != nil {
 		return err
 	}
-	rest := fs.Args()
 	if len(rest) < 2 {
 		return errors.New("usage: middleware chat <domain> <text>")
 	}
