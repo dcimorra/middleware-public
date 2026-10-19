@@ -1,0 +1,8 @@
+/middleware
+/dist/
+/sites/
+/data/
+/tasks/
+*.log
+*.test
+*.out
