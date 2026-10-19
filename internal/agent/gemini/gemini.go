@@ -1,0 +1,287 @@
+// Package gemini drives the `gemini` CLI as a subprocess. Its output
+// formats have moved between releases (plain text, a single JSON document,
+// then line-delimited JSON), so the parser accepts all three from one
+// stream: a line that is a JSON object is read for what it carries, a
+// line that is not is text, and a document that only closes at exit is
+// read when the stream ends.
+package gemini
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os/exec"
+	"strings"
+
+	"github.com/dcimorra/middleware-public/internal/agent"
+)
+
+// Config is the command template.
+type Config struct {
+	// Bin is the executable; "gemini" is looked up in PATH.
+	Bin string
+	// ExtraArgs are appended to every invocation.
+	ExtraArgs []string
+	// OutputFormat is the value of --output-format: "stream-json" when the
+	// installed CLI supports it, "json" otherwise. Empty means "json",
+	// the one every release since 0.1 accepts.
+	OutputFormat string
+	// APIKey is passed as GEMINI_API_KEY when set; empty relies on the
+	// CLI's own login under the run's HOME.
+	APIKey string
+	// ResumeFlag names the flag that resumes a session; empty disables
+	// resuming for CLIs that have no such flag.
+	ResumeFlag string
+	// SandboxArgs are added when the jail denies anything: the CLI's own
+	// sandbox (`--sandbox`) needs a container runtime, so it is opt-in and
+	// the default confinement is the working directory plus the audit.
+	SandboxArgs []string
+	// Models offered to the panel; the first is the default.
+	Models []string
+}
+
+// Provider implements agent.Provider.
+type Provider struct {
+	cfg Config
+}
+
+// New returns a provider with defaults filled in.
+func New(cfg Config) *Provider {
+	if cfg.Bin == "" {
+		cfg.Bin = "gemini"
+	}
+	if cfg.OutputFormat == "" {
+		cfg.OutputFormat = "json"
+	}
+	if len(cfg.Models) == 0 {
+		cfg.Models = []string{"gemini-2.5-pro", "gemini-2.5-flash"}
+	}
+	return &Provider{cfg: cfg}
+}
+
+// Key implements agent.Provider.
+func (p *Provider) Key() string { return "gemini" }
+
+// Available implements agent.Provider.
+func (p *Provider) Available() (bool, string) {
+	path, err := exec.LookPath(p.cfg.Bin)
+	if err != nil {
+		return false, fmt.Sprintf("%s not found in PATH", p.cfg.Bin)
+	}
+	return true, path
+}
+
+// Models implements agent.Provider.
+func (p *Provider) Models() []string { return append([]string(nil), p.cfg.Models...) }
+
+// Args builds the command line for req.
+func (p *Provider) Args(req agent.Request) []string {
+	prompt := req.Prompt
+	if req.System != "" {
+		// The CLI has no system-prompt flag in --prompt mode, so the
+		// preamble goes ahead of the prompt, set off so the model reads it
+		// as context rather than as the request.
+		prompt = req.System + "\n\n---\n\n" + req.Prompt
+	}
+	args := []string{"-p", prompt, "--output-format", p.cfg.OutputFormat, "--yolo"}
+	if req.Model != "" {
+		args = append(args, "--model", req.Model)
+	}
+	if req.SessionID != "" && p.cfg.ResumeFlag != "" {
+		args = append(args, p.cfg.ResumeFlag, req.SessionID)
+	}
+	if len(req.Jail.Deny) > 0 {
+		args = append(args, p.cfg.SandboxArgs...)
+	}
+	return append(args, p.cfg.ExtraArgs...)
+}
+
+// Start implements agent.Provider.
+func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, error) {
+	if strings.TrimSpace(req.Prompt) == "" {
+		return nil, fmt.Errorf("gemini: empty prompt")
+	}
+	if req.Jail.SiteDir == "" {
+		req.Jail.SiteDir = req.Workdir
+	}
+	if err := req.Jail.Prepare(); err != nil {
+		return nil, err
+	}
+	env := map[string]string{}
+	for k, v := range req.Env {
+		env[k] = v
+	}
+	if p.cfg.APIKey != "" {
+		env["GEMINI_API_KEY"] = p.cfg.APIKey
+	}
+	return agent.StartCLI(ctx, &parser{}, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req)...)
+}
+
+// parser is deliberately loose. Known shapes:
+//
+//	json:        {"response":"…","stats":{…}} as one document, possibly
+//	             pretty-printed over many lines;
+//	stream-json: {"type":"init","session_id":…}, {"type":"message",
+//	             "role":"assistant","content":"…"}, {"type":"tool_use",
+//	             "tool_name":…,"parameters":{…}}, {"type":"result",
+//	             "status":"success","stats":{…}}.
+//
+// A pretty-printed document is accumulated until it parses; a line that
+// is neither JSON nor part of a document is text.
+type parser struct {
+	sessionID string
+	pending   strings.Builder
+	sawResult bool
+}
+
+type doc struct {
+	Type       string          `json:"type"`
+	Role       string          `json:"role"`
+	Status     string          `json:"status"`
+	Response   string          `json:"response"`
+	Content    json.RawMessage `json:"content"`
+	Text       string          `json:"text"`
+	Error      json.RawMessage `json:"error"`
+	SessionID  string          `json:"session_id"`
+	ToolName   string          `json:"tool_name"`
+	Name       string          `json:"name"`
+	Parameters map[string]any  `json:"parameters"`
+	Input      map[string]any  `json:"input"`
+	Cost       float64         `json:"total_cost_usd"`
+	Stats      struct {
+		Cost float64 `json:"cost"`
+	} `json:"stats"`
+}
+
+func (p *parser) Line(raw string) ([]agent.Event, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, false
+	}
+	if p.pending.Len() > 0 {
+		p.pending.WriteString(raw)
+		p.pending.WriteByte('\n')
+		if d, ok := parseDoc(p.pending.String()); ok {
+			p.pending.Reset()
+			return p.events(d)
+		}
+		return nil, false
+	}
+	if strings.HasPrefix(trimmed, "{") {
+		if d, ok := parseDoc(trimmed); ok {
+			return p.events(d)
+		}
+		p.pending.WriteString(raw)
+		p.pending.WriteByte('\n')
+		return nil, false
+	}
+	return []agent.Event{{Kind: agent.KindText, Text: trimmed}}, false
+}
+
+func (p *parser) Flush() []agent.Event {
+	var evs []agent.Event
+	if p.pending.Len() > 0 {
+		// A document that never closed is still something the operator
+		// should see rather than lose.
+		evs = append(evs, agent.Event{Kind: agent.KindText, Text: strings.TrimSpace(p.pending.String())})
+		p.pending.Reset()
+	}
+	if !p.sawResult && len(evs) == 0 {
+		return nil
+	}
+	if !p.sawResult {
+		evs = append(evs, agent.Event{Kind: agent.KindResult, SessionID: p.sessionID})
+	}
+	return evs
+}
+
+func parseDoc(s string) (doc, bool) {
+	var d doc
+	if err := json.Unmarshal([]byte(s), &d); err != nil {
+		return doc{}, false
+	}
+	return d, true
+}
+
+func (p *parser) events(d doc) ([]agent.Event, bool) {
+	if d.SessionID != "" {
+		p.sessionID = d.SessionID
+	}
+	cost := d.Cost
+	if cost == 0 {
+		cost = d.Stats.Cost
+	}
+	var evs []agent.Event
+	if len(d.Error) > 0 && string(d.Error) != "null" {
+		p.sawResult = true
+		return append(evs, agent.Event{Kind: agent.KindError, Text: errorText(d.Error), SessionID: p.sessionID}), true
+	}
+	switch d.Type {
+	case "tool_use", "tool_call":
+		name := d.ToolName
+		if name == "" {
+			name = d.Name
+		}
+		in := d.Parameters
+		if in == nil {
+			in = d.Input
+		}
+		return append(evs, agent.Event{Kind: agent.KindTool, Tool: name, Input: in, SessionID: p.sessionID}), false
+	case "result":
+		p.sawResult = true
+		evs = append(evs, agent.Event{Kind: agent.KindCost, Cost: cost, SessionID: p.sessionID})
+		if d.Status != "" && d.Status != "success" {
+			return append(evs, agent.Event{Kind: agent.KindError, Text: d.Status, Cost: cost, SessionID: p.sessionID}), true
+		}
+		return append(evs, agent.Event{Kind: agent.KindResult, Text: d.Response, Cost: cost, SessionID: p.sessionID}), true
+	}
+	if text := d.Response; text != "" {
+		// The single-document json format: the whole answer, then the end.
+		p.sawResult = true
+		evs = append(evs, agent.Event{Kind: agent.KindText, Text: text, SessionID: p.sessionID})
+		evs = append(evs, agent.Event{Kind: agent.KindCost, Cost: cost, SessionID: p.sessionID})
+		return append(evs, agent.Event{Kind: agent.KindResult, Text: text, Cost: cost, SessionID: p.sessionID}), true
+	}
+	if d.Role == "user" {
+		return nil, false
+	}
+	if text := contentText(d.Content, d.Text); text != "" {
+		return append(evs, agent.Event{Kind: agent.KindText, Text: text, SessionID: p.sessionID}), false
+	}
+	return nil, false
+}
+
+func contentText(raw json.RawMessage, fallback string) string {
+	if len(raw) == 0 {
+		return fallback
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var parts []struct {
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &parts) == nil {
+		var b strings.Builder
+		for _, p := range parts {
+			b.WriteString(p.Text)
+		}
+		return b.String()
+	}
+	return fallback
+}
+
+func errorText(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var o struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(raw, &o) == nil && o.Message != "" {
+		return o.Message
+	}
+	return string(raw)
+}
