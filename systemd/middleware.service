@@ -1,0 +1,50 @@
+# middleware.service, rendered by middleware dev install.
+# Re-run "middleware install" to regenerate; edits here are overwritten.
+[Unit]
+Description=middleware supervisor
+Documentation=https://github.com/dcimorra/middleware-public
+After=network-online.target
+Wants=network-online.target
+Requires=middleware.socket
+
+[Service]
+Type=simple
+User=middleware
+Group=middleware
+WorkingDirectory=/srv/middleware
+Environment=MIDDLEWARE_ROOT=/srv/middleware
+ExecStart=/usr/local/bin/middleware serve --root /srv/middleware
+Restart=always
+RestartSec=2
+
+# Sites outlive the supervisor. With the default KillMode=control-group a
+# restart of this unit would take every site down with it; with "process"
+# only the supervisor is signalled and the sites are re-adopted when it is
+# back.
+KillMode=process
+TimeoutStopSec=20
+
+# 80/443 without root: the supervisor opens them itself when the ports door
+# is enabled. Nothing else needs a capability; everything else goes through
+# the helper.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# One descriptor per connection, per log file, per site. 1024 is reached by
+# a few dozen sites on a busy afternoon.
+LimitNOFILE=65536
+
+# Hardening that does not break sites. NoNewPrivileges stays off on purpose:
+# sites are children of this unit and one may legitimately run a setuid
+# binary (ping, a container runtime shim). The supervisor itself never
+# escalates; the helper is a separate unit for that.
+# ProtectSystem and ProtectHome are also off: the root may live anywhere,
+# including under the operator's home, and sites build inside it.
+NoNewPrivileges=no
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+# middleware.socket, rendered by middleware dev install.
+# systemd holds the loopback port and hands it to the service, so a restart
+# never refuses a connection: it waits in the kernel's accept queue instead.
+[Unit]
+Description=middleware loopback socket
+
+[Socket]
+ListenStream=127.0.0.1:46100
+ReuseAddr=yes
+NoDelay=yes
+Backlog=1024
+
+[Install]
+WantedBy=sockets.target
