@@ -4,7 +4,7 @@
 // same object and can never disagree.
 
 const state = {
-  me: null,          // {authenticated, via, needs_setup}
+  me: null,          // {authenticated, via, setup_pending}
   sites: new Map(),  // domain -> site
   sitesLoaded: false,
   events: [],        // newest last, capped

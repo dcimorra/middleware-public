@@ -136,7 +136,7 @@ async function boot() {
     else { showAuth("login"); toast(e.message, "bad"); return; }
   }
   store.set("me", me);
-  const needsSetup = me && (me.needs_setup || me.setup_required || me.setup === true);
+  const needsSetup = me && (me.setup_pending || me.needs_setup);
   if (!me || !me.authenticated) { showAuth(needsSetup ? "setup" : "login"); return; }
   authed = true;
   app.dataset.state = "ready";

@@ -1,7 +1,6 @@
-// Inbound: the two doors and which one each domain comes in by. A door
-// is a module (inbound-tunnel, inbound-ports), so opening one is enabling
-// that module and the verify lines show what happened. Moving domains
-// shows the verification lines as a checklist as they come, from the
+// Inbound: the two doors and which one each domain comes in by. A door is
+// toggled through POST /inbound/doors/{door}. Moving domains shows the
+// verification lines as a checklist as they come, from the
 // response and from inbound.* events for the same domains.
 
 import { h, clear, fmtTime, fmtAgo } from "../lib/dom.js";
@@ -83,7 +82,7 @@ export function inboundScreen() {
       }
       sw.input.disabled = true;
       try {
-        const r = await api.post(`/modules/inbound-${key}/${opening ? "enable" : "disable"}`, { config: {} });
+        const r = await api.post(`/inbound/doors/${key}`, { open: opening });
         lines.set(r && r.lines);
         if (r && r.ok === false) { sw.input.checked = !opening; toast(t("inbound.doorFailed"), "bad"); }
         else toast(opening ? t("inbound.opened", { door: t("inbound.door." + key) }) : t("inbound.closedNow", { door: t("inbound.door." + key) }), "ok");
