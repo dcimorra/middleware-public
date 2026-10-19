@@ -145,6 +145,9 @@ type GitHubDeploy struct {
 type Agent struct {
 	Provider string `json:"provider,omitempty"`
 	Model    string `json:"model,omitempty"`
+	// MonthlyCapUSD stops the conversation once the ledger passes it. Zero
+	// means no cap.
+	MonthlyCapUSD float64 `json:"monthly_cap_usd,omitempty"`
 }
 
 // Duration marshals as a Go duration string ("8s"), because "8000000000" in

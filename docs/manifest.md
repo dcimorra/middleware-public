@@ -62,7 +62,7 @@ never shell strings. Paths are relative to the site folder.
     }
   },
 
-  "agent": { "provider": "claude", "model": "" },
+  "agent": { "provider": "claude", "model": "", "monthly_cap_usd": 0 },
 
   "app": ""
 }
@@ -135,7 +135,9 @@ they restart.
   "site": "example.com",
   "command": ["./scripts/backup.sh"],
   "timeout": "1h",
-  "overlap": "skip"
+  "overlap": "skip",
+  "env": { "KEEP_DAYS": "30" },
+  "disabled": false
 }
 ```
 
