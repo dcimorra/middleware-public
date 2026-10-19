@@ -91,6 +91,11 @@ func New(opts Options) *Manager {
 	if opts.DefaultProvider == "" {
 		opts.DefaultProvider = "claude"
 	}
+	// A relative root would put relative paths in the jail's deny list and
+	// in the child's HOME, and a deny rule is only as good as its path.
+	if abs, err := filepath.Abs(opts.Root); err == nil {
+		opts.Root = abs
+	}
 	return &Manager{opts: opts, running: map[string]*running{}}
 }
 

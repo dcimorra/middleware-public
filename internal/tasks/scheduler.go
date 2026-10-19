@@ -60,6 +60,11 @@ func NewScheduler(opts Options) *Scheduler {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
+	// Absolute so a task's cwd and MIDDLEWARE_SITE_DIR do not depend on
+	// where the operator typed the command.
+	if abs, err := filepath.Abs(opts.Root); err == nil {
+		opts.Root = abs
+	}
 	return &Scheduler{opts: opts, states: map[string]*state{}, lastCheck: opts.Now()}
 }
 

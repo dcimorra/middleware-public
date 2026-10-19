@@ -30,8 +30,11 @@ type Jail struct {
 // (workdir == root) the sites folder is the only thing denied: that
 // conversation edits the house but never a tenant.
 func NewJail(root, workdir, home string) Jail {
-	root = filepath.Clean(root)
-	workdir = filepath.Clean(workdir)
+	root = absolute(root)
+	workdir = absolute(workdir)
+	if home != "" {
+		home = absolute(home)
+	}
 	j := Jail{SiteDir: workdir, Home: home}
 	if workdir == root {
 		j.Deny = []string{filepath.Join(root, "sites")}
@@ -129,6 +132,15 @@ func (j Jail) Prepare() error {
 		}
 	}
 	return nil
+}
+
+// absolute cleans p and makes it absolute; a deny rule with a relative
+// path would match nothing the CLI sees.
+func absolute(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return filepath.Clean(p)
 }
 
 func isUnder(p, dir string) bool {
