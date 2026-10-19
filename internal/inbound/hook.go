@@ -1,0 +1,505 @@
+package inbound
+
+import (
+	"context"
+	"crypto/tls"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/dcimorra/middleware-public/internal/acme"
+	"github.com/dcimorra/middleware-public/internal/app"
+	"github.com/dcimorra/middleware-public/internal/certs"
+	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/middleware-public/internal/pages"
+	"github.com/dcimorra/middleware-public/internal/proxy"
+)
+
+// Hook is the inbound side of the app: it wraps the request chain and runs
+// the ports door's listeners. One per process.
+type Hook struct {
+	// Root is the installation root; the state file is data/inbound.json.
+	Root string
+	// Store serves and obtains certificates for the ports door.
+	Store *certs.Store
+	// Solver answers HTTP-01 on every door.
+	Solver *acme.HTTP01
+	// PanelDomain always answers, whichever door it comes in by. Run takes
+	// it from the app's settings when empty.
+	PanelDomain string
+	// Sites lists the domains this installation serves. Run plugs the
+	// engine in when nil.
+	Sites func() []string
+	// Bus receives inbound.* events. Run takes the app's when nil.
+	Bus *events.Bus
+	// Handler is what the 443 listener serves: the app's full chain. Run
+	// takes the app's when nil.
+	Handler http.Handler
+	// Tick is how often the listeners are reconciled with the state file.
+	// Default 2 seconds.
+	Tick time.Duration
+
+	file  *stateFile
+	mu    sync.Mutex
+	http  *listener
+	https *listener
+	// lastErr dedupes inbound.failed: a port held by something else would
+	// otherwise emit on every tick, which is noise and not information.
+	lastErr string
+}
+
+type listener struct {
+	want string // address from the state file
+	ln   net.Listener
+	srv  *http.Server
+}
+
+// New builds the hook. Store and solver are shared with whatever else
+// needs them (the API for renewals, the CLI for status).
+func New(root string, store *certs.Store, solver *acme.HTTP01) *Hook {
+	return &Hook{
+		Root:   root,
+		Store:  store,
+		Solver: solver,
+		Tick:   2 * time.Second,
+		file:   &stateFile{path: Path(root)},
+	}
+}
+
+// State is the current content of the file.
+func (h *Hook) State() State { return h.file.get() }
+
+type ctxKey struct{}
+
+// doorOf tells which listener a request came in by. The ports servers tag
+// their connections; everything else is the loopback listener, which is
+// the tunnel door.
+func doorOf(r *http.Request) Door {
+	if d, ok := r.Context().Value(ctxKey{}).(Door); ok {
+		return d
+	}
+	return Tunnel
+}
+
+func (h *Hook) isPanel(host string) bool {
+	return host == "localhost" || host == "127.0.0.1" || host == "::1" || (h.PanelDomain != "" && host == h.PanelDomain)
+}
+
+// Wrap implements app.Hook. Order matters and is the point of the hook:
+// the challenge first, because the CA must be answered even through a
+// closed door; then the door's state; then the scheme the request really
+// arrived with, which a site behind the proxy uses for redirects.
+func (h *Hook) Wrap(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, acme.ChallengePath) {
+			h.Solver.ServeHTTP(w, r)
+			return
+		}
+		door := doorOf(r)
+		host := proxy.Host(r)
+		if !h.isPanel(host) {
+			st := h.file.get()
+			if (door == Tunnel && !st.Tunnel.Open) || (door == Ports && !st.Ports.Open) {
+				pages.Write(w, "doorclosed", http.StatusServiceUnavailable)
+				return
+			}
+		}
+		if door == Ports {
+			// Ours to say: a client on the public port cannot have been
+			// through an edge that set it.
+			if r.TLS != nil {
+				r.Header.Set("X-Forwarded-Proto", "https")
+			} else {
+				r.Header.Set("X-Forwarded-Proto", "http")
+			}
+		} else if r.Header.Get("X-Forwarded-Proto") == "" {
+			// A tunnel sets it; a plain loopback client did not, and the
+			// hop really was http.
+			r.Header.Set("X-Forwarded-Proto", "http")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// Run implements app.Hook: fills what the app knows, opens the ports door
+// if the file says so, and keeps the listeners equal to the file for the
+// life of the process. The first reconcile is synchronous so a caller can
+// read Addrs right after.
+func (h *Hook) Run(ctx context.Context, a *app.App) error {
+	if a != nil {
+		if h.Handler == nil {
+			h.Handler = a.Handler
+		}
+		if h.PanelDomain == "" {
+			h.PanelDomain = a.Settings.PanelDomain
+		}
+		if h.Bus == nil {
+			h.Bus = a.Bus
+		}
+		if h.Sites == nil && a.Engine != nil {
+			eng := a.Engine
+			h.Sites = func() []string {
+				snaps := eng.Sites()
+				out := make([]string, 0, len(snaps))
+				for _, s := range snaps {
+					out = append(out, s.Domain)
+				}
+				return out
+			}
+		}
+	}
+	if h.Handler == nil || h.Store == nil || h.Solver == nil {
+		return errors.New("inbound: hook needs a handler, a store and a solver")
+	}
+	h.reconcile()
+	go h.Store.Run(ctx)
+	go func() {
+		t := time.NewTicker(h.Tick)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				h.mu.Lock()
+				h.closeLocked()
+				h.mu.Unlock()
+				return
+			case <-t.C:
+				h.reconcile()
+			}
+		}
+	}()
+	return nil
+}
+
+// Addrs returns where the ports door is listening, empty when closed.
+func (h *Hook) Addrs() (httpAddr, httpsAddr string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.http != nil {
+		httpAddr = h.http.ln.Addr().String()
+	}
+	if h.https != nil {
+		httpsAddr = h.https.ln.Addr().String()
+	}
+	return
+}
+
+func (h *Hook) reconcile() {
+	st := h.file.get()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !st.Ports.Open {
+		if h.http != nil || h.https != nil {
+			h.closeLocked()
+			h.emit("engine", "inbound.stopped", string(Ports), "", "ports door closed", nil)
+		}
+		return
+	}
+	if h.http != nil && h.https != nil && h.http.want == st.Ports.HTTP && h.https.want == st.Ports.HTTPS {
+		return
+	}
+	h.closeLocked()
+	if err := h.openLocked(st); err != nil {
+		h.closeLocked()
+		if err.Error() != h.lastErr {
+			h.lastErr = err.Error()
+			h.emit("engine", "inbound.failed", string(Ports), "error", err.Error(), map[string]any{"http": st.Ports.HTTP, "https": st.Ports.HTTPS})
+		}
+		return
+	}
+	h.lastErr = ""
+	h.emit("engine", "inbound.listening", string(Ports), "", "ports door listening", map[string]any{
+		"http": h.http.ln.Addr().String(), "https": h.https.ln.Addr().String(),
+	})
+}
+
+func (h *Hook) openLocked(st State) error {
+	tag := func(ctx context.Context, _ net.Conn) context.Context {
+		return context.WithValue(ctx, ctxKey{}, Ports)
+	}
+	ln, err := net.Listen("tcp", st.Ports.HTTP)
+	if err != nil {
+		return fmt.Errorf("inbound: http %s: %w", st.Ports.HTTP, err)
+	}
+	h.http = &listener{want: st.Ports.HTTP, ln: ln, srv: &http.Server{
+		Handler:           http.HandlerFunc(h.serveHTTP),
+		ReadHeaderTimeout: 15 * time.Second,
+		ConnContext:       tag,
+	}}
+	go h.http.srv.Serve(ln)
+
+	ln, err = net.Listen("tcp", st.Ports.HTTPS)
+	if err != nil {
+		return fmt.Errorf("inbound: https %s: %w", st.Ports.HTTPS, err)
+	}
+	h.https = &listener{want: st.Ports.HTTPS, ln: ln, srv: &http.Server{
+		Handler:           http.HandlerFunc(h.serveHTTPS),
+		ReadHeaderTimeout: 15 * time.Second,
+		ConnContext:       tag,
+		TLSConfig: &tls.Config{
+			GetCertificate: h.Store.GetCertificate,
+			MinVersion:     tls.VersionTLS12,
+			// h2 first so browsers pick it; the ACME protocol last so a
+			// CA probing TLS-ALPN-01 is the only one that lands on it.
+			NextProtos: []string{"h2", "http/1.1", acme.ALPNProto},
+		},
+	}}
+	// ServeTLS with no files uses TLSConfig.GetCertificate and turns on
+	// HTTP/2; tls.NewListener by hand would not.
+	go h.https.srv.ServeTLS(ln, "", "")
+	return nil
+}
+
+// closeLocked stops both servers, giving in-flight responses a moment.
+// The listeners close at once so a reopen on the same address does not
+// race the old socket.
+func (h *Hook) closeLocked() {
+	for _, l := range []*listener{h.http, h.https} {
+		if l == nil {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = l.srv.Shutdown(ctx)
+		cancel()
+		_ = l.ln.Close()
+	}
+	h.http, h.https = nil, nil
+}
+
+// serveHTTP is port 80: the challenge, then a redirect. Everything else
+// over plain HTTP is a mistake the redirect corrects, including the
+// panel.
+func (h *Hook) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, acme.ChallengePath) {
+		h.Solver.ServeHTTP(w, r)
+		return
+	}
+	host := proxy.Host(r)
+	if host == "" {
+		http.Error(w, "missing host", http.StatusBadRequest)
+		return
+	}
+	// A non-standard https port (Docker publishing 8443) has to be in the
+	// redirect or the browser goes to 443 and finds nothing.
+	st := h.file.get()
+	if _, port, err := net.SplitHostPort(st.Ports.HTTPS); err == nil && port != "443" && port != "0" {
+		host = net.JoinHostPort(host, port)
+	}
+	code := http.StatusPermanentRedirect
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		code = http.StatusMovedPermanently
+	}
+	http.Redirect(w, r, "https://"+host+r.URL.RequestURI(), code)
+}
+
+// serveHTTPS is port 443. A name without a certificate reached this far
+// on the fallback certificate, and the honest answer is a page that says
+// so; the chain behind would serve the site under a certificate no
+// browser trusts, which is worse than a clear 503.
+func (h *Hook) serveHTTPS(w http.ResponseWriter, r *http.Request) {
+	host := proxy.Host(r)
+	if !h.Store.Has(host) {
+		pages.Write(w, "nocert", http.StatusServiceUnavailable)
+		return
+	}
+	h.Handler.ServeHTTP(w, r)
+}
+
+func (h *Hook) emit(actor, typ, subject, level, msg string, data map[string]any) {
+	if h.Bus == nil {
+		return
+	}
+	h.Bus.Emit(events.Event{Type: typ, Subject: subject, Actor: actor, Level: level, Message: msg, Data: data})
+}
+
+// SetDoor opens or closes a door, persists it and acts on it at once.
+func (h *Hook) SetDoor(door Door, open bool) error {
+	st := h.file.get()
+	switch door {
+	case Tunnel:
+		st.Tunnel.Open = open
+	case Ports:
+		st.Ports.Open = open
+	default:
+		return fmt.Errorf("inbound: unknown door %q", door)
+	}
+	if err := h.file.set(st); err != nil {
+		return err
+	}
+	typ := "inbound.closed"
+	if open {
+		typ = "inbound.opened"
+	}
+	h.emit("operator", typ, string(door), "", "", nil)
+	h.reconcile()
+	return nil
+}
+
+// Status is what GET /inbound answers, minus the DNS and tunnel-route
+// columns the cloudflare module fills in.
+type Status struct {
+	Doors   DoorsStatus    `json:"doors"`
+	Domains []DomainStatus `json:"domains"`
+}
+
+// DoorsStatus is both doors. Listening and Error are what the file cannot
+// say: whether the ports door is really up, and why not.
+type DoorsStatus struct {
+	Tunnel struct {
+		Open bool `json:"open"`
+	} `json:"tunnel"`
+	Ports struct {
+		Open      bool   `json:"open"`
+		HTTP      string `json:"http"`
+		HTTPS     string `json:"https"`
+		Listening bool   `json:"listening"`
+		Error     string `json:"error,omitempty"`
+	} `json:"ports"`
+}
+
+// DomainStatus is one row.
+type DomainStatus struct {
+	Domain      string     `json:"domain"`
+	Door        Door       `json:"door"`
+	CertExpires *time.Time `json:"cert_expires,omitempty"`
+}
+
+// Status reports the doors and every domain's door.
+func (h *Hook) Status() Status {
+	st := h.file.get()
+	var out Status
+	out.Doors.Tunnel.Open = st.Tunnel.Open
+	out.Doors.Ports.Open = st.Ports.Open
+	out.Doors.Ports.HTTP = st.Ports.HTTP
+	out.Doors.Ports.HTTPS = st.Ports.HTTPS
+	h.mu.Lock()
+	out.Doors.Ports.Listening = h.http != nil && h.https != nil
+	out.Doors.Ports.Error = h.lastErr
+	h.mu.Unlock()
+	for _, d := range h.domains(st) {
+		row := DomainStatus{Domain: d, Door: st.DoorOf(d)}
+		if info, ok := h.Store.Info(d); ok {
+			exp := info.Expires
+			row.CertExpires = &exp
+			if row.Door == "" {
+				row.Door = Ports
+			}
+		}
+		if row.Door == "" {
+			row.Door = Tunnel
+		}
+		out.Domains = append(out.Domains, row)
+	}
+	return out
+}
+
+// domains is every name worth a row: served sites, the panel, and
+// anything the file or the store still knows about.
+func (h *Hook) domains(st State) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(d string) {
+		if d != "" && !seen[d] {
+			seen[d] = true
+			out = append(out, d)
+		}
+	}
+	if h.Sites != nil {
+		for _, d := range h.Sites() {
+			add(d)
+		}
+	}
+	add(h.PanelDomain)
+	for _, d := range st.sortedDomains() {
+		add(d)
+	}
+	for _, info := range h.Store.List() {
+		add(info.Domain)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (h *Hook) knownSite(domain string) bool {
+	if domain == h.PanelDomain {
+		return true
+	}
+	if h.Sites == nil {
+		return false
+	}
+	for _, d := range h.Sites() {
+		if d == domain {
+			return true
+		}
+	}
+	return false
+}
+
+// Line is one verification line of a move, in the shape modules use.
+type Line struct {
+	Status string `json:"status"` // "ok", "skip" or "fail"
+	Text   string `json:"text"`
+}
+
+// Move puts domains on a door. To the ports door it obtains the
+// certificate first, through whichever door is open, and marks the domain
+// only when that worked: a domain marked without a certificate would be a
+// DNS change away from an outage. To the tunnel it only marks; the
+// certificate stays on disk for the way back.
+func (h *Hook) Move(ctx context.Context, domains []string, to Door) []Line {
+	if _, err := ParseDoor(string(to)); err != nil {
+		return []Line{{Status: "fail", Text: err.Error()}}
+	}
+	var lines []Line
+	moved := map[string]Door{}
+	for _, d := range domains {
+		d = strings.ToLower(strings.TrimSpace(d))
+		switch {
+		case !manifest.ValidDomain(d):
+			lines = append(lines, Line{Status: "fail", Text: fmt.Sprintf("%s: not a valid domain", d)})
+			continue
+		case !h.knownSite(d):
+			lines = append(lines, Line{Status: "fail", Text: fmt.Sprintf("%s: not a site of this installation", d)})
+			continue
+		}
+		if to == Ports {
+			if h.Store.Has(d) {
+				lines = append(lines, Line{Status: "ok", Text: fmt.Sprintf("%s: certificate already present", d)})
+			} else {
+				cert, err := h.Store.Obtain(ctx, d)
+				if err != nil {
+					lines = append(lines, Line{Status: "fail", Text: fmt.Sprintf("%s: certificate not obtained: %v", d, err)})
+					continue
+				}
+				lines = append(lines, Line{Status: "ok", Text: fmt.Sprintf("%s: certificate obtained, expires %s", d, cert.Leaf.NotAfter.Format("2006-01-02"))})
+			}
+		}
+		moved[d] = to
+		lines = append(lines, Line{Status: "ok", Text: fmt.Sprintf("%s: on the %s door", d, to)})
+	}
+	if len(moved) == 0 {
+		return lines
+	}
+	st := h.file.get()
+	if st.Domains == nil {
+		st.Domains = map[string]Door{}
+	}
+	for d, door := range moved {
+		st.Domains[d] = door
+	}
+	if err := h.file.set(st); err != nil {
+		return append(lines, Line{Status: "fail", Text: "state not saved: " + err.Error()})
+	}
+	for d, door := range moved {
+		h.emit("operator", "inbound.moved", d, "", "", map[string]any{"to": string(door)})
+	}
+	return lines
+}
+
+var _ app.Hook = (*Hook)(nil)
