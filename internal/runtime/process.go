@@ -1,0 +1,162 @@
+package runtime
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/dcimorra/middleware-public/internal/manifest"
+)
+
+// Process runs an instance as a child of the supervisor.
+type Process struct{}
+
+// Name implements Runtime.
+func (Process) Name() string { return "process" }
+
+type procInstance struct {
+	cmd      *exec.Cmd
+	pid      int
+	port     int
+	revision string
+	domain   string
+	logFile  string
+	started  time.Time
+	adopted  bool
+	done     chan error
+	once     sync.Once
+}
+
+// Start implements Runtime. The child gets its own process group so Stop
+// reaches grandchildren (`npm start` → node, `go run` → the binary), and its
+// output goes to a file opened here: handing exec.Cmd a pipe hangs Wait
+// while a grandchild keeps the write end, and a pipe nobody reads kills the
+// child with SIGPIPE when the supervisor restarts.
+func (Process) Start(ctx context.Context, spec *manifest.Spec, port int, logFile, home string) (Instance, error) {
+	argv, env := spec.WithPort(port)
+	if err := os.MkdirAll(filepath.Dir(logFile), 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return nil, err
+	}
+	out, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	defer out.Close() // the child holds its own descriptor after Start
+	bin := argv[0]
+	if strings.HasPrefix(bin, "./") || strings.HasPrefix(bin, "../") {
+		bin = filepath.Join(spec.Cwd, bin)
+	}
+	cmd := exec.Command(bin, argv[1:]...)
+	cmd.Dir = spec.Cwd
+	cmd.Env = buildEnv(env, port, spec.Domain, spec.SiteDir, home)
+	if hasDuplicateKeys(cmd.Env) {
+		return nil, errors.New("duplicate keys in the child environment")
+	}
+	cmd.Stdout = out
+	cmd.Stderr = out
+	cmd.Stdin = nil
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	fmt.Fprintf(out, "\n--- %s middleware: start %s rev %s on port %d\n", time.Now().Format(time.RFC3339), spec.Domain, spec.Revision, port)
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	p := &procInstance{cmd: cmd, pid: cmd.Process.Pid, port: port, revision: spec.Revision, domain: spec.Domain, logFile: logFile, started: time.Now(), done: make(chan error, 1)}
+	go func() {
+		err := cmd.Wait()
+		p.done <- err
+		close(p.done)
+	}()
+	return p, nil
+}
+
+// Adopt implements Runtime. A process started by a previous supervisor is
+// not our child, so Wait is not available: liveness is polled with signal 0
+// and Done closes when the pid disappears.
+func (Process) Adopt(ctx context.Context, st State) (Instance, error) {
+	if st.PID <= 0 || !pidAlive(st.PID) {
+		return nil, ErrGone
+	}
+	p := &procInstance{pid: st.PID, port: st.Port, revision: st.Revision, domain: st.Domain, logFile: st.LogFile, started: st.StartedAt, adopted: true, done: make(chan error, 1)}
+	go func() {
+		for pidAlive(p.pid) {
+			time.Sleep(time.Second)
+		}
+		p.done <- errors.New("adopted process exited")
+		close(p.done)
+	}()
+	return p, nil
+}
+
+func (p *procInstance) Port() int          { return p.port }
+func (p *procInstance) Revision() string   { return p.revision }
+func (p *procInstance) Done() <-chan error { return p.done }
+func (p *procInstance) Alive() bool        { return pidAlive(p.pid) }
+
+func (p *procInstance) State() State {
+	return State{Domain: p.domain, Runtime: "process", Port: p.port, Revision: p.revision, PID: p.pid, LogFile: p.logFile, StartedAt: p.started}
+}
+
+// Stop sends SIGTERM to the whole group, waits up to grace, then SIGKILL.
+// The group matters: killing only the shell that `npm start` spawned leaves
+// node alive on the port, and the next start fails to bind.
+func (p *procInstance) Stop(ctx context.Context, grace time.Duration) error {
+	if !p.Alive() {
+		return nil
+	}
+	_ = syscall.Kill(-p.pid, syscall.SIGTERM)
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-p.done:
+		return nil
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+	_ = syscall.Kill(-p.pid, syscall.SIGKILL)
+	select {
+	case <-p.done:
+	case <-time.After(5 * time.Second):
+		if p.Alive() {
+			return fmt.Errorf("pid %d survived SIGKILL", p.pid)
+		}
+	}
+	return nil
+}
+
+// pidAlive uses signal 0, which checks existence without delivering
+// anything. A zombie still answers, so adopted pids are also checked for
+// the port being open by the engine before they count as alive.
+func pidAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	if err == nil {
+		return !isZombie(pid)
+	}
+	return errors.Is(err, syscall.EPERM)
+}
+
+func isZombie(pid int) bool {
+	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return false
+	}
+	// The state is the field after the parenthesised command name.
+	i := strings.LastIndexByte(string(data), ')')
+	if i < 0 || i+2 >= len(data) {
+		return false
+	}
+	return data[i+2] == 'Z'
+}
