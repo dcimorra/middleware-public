@@ -1,0 +1,136 @@
+# Installing
+
+`middleware` is one static binary. It runs as an unprivileged user under
+systemd and needs root for exactly five things, which the installer does
+through `sudo` and prints as it goes. Requirements: Linux with systemd,
+`sudo`, and a user account that is not `root`.
+
+## One-liner
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dcimorra/middleware-public/main/scripts/install.sh | sh
+```
+
+The script refuses to run as root, detects the architecture (amd64, arm64),
+downloads the latest release binary, verifies it against the `.sha256`
+published next to it, and runs `middleware install`. Arguments after `sh -s --`
+reach the installer:
+
+```sh
+curl -fsSL …/install.sh | sh -s -- --root /opt/middleware --no-helper
+```
+
+## From source
+
+Needs Go (version in `go.mod`), nothing else: the core has no dependencies.
+
+```sh
+git clone https://github.com/dcimorra/middleware-public
+cd middleware-public
+scripts/build-from-source.sh            # builds ./middleware and runs install
+scripts/build-from-source.sh --no-install
+```
+
+or `make build && ./middleware install`.
+
+## Docker
+
+For trying it out, or for hosts without systemd. Inside a container there is
+no privileged helper: the layer-3 firewall, the WireGuard VPN module and the
+port reservation are unavailable; the supervisor, the proxy, the WAF, ACME on
+the ports door, deploys and the docker runtime (with the host socket mounted)
+work.
+
+```sh
+echo "MIDDLEWARE_SECRET_KEY=$(openssl rand -hex 32)" > .env
+docker compose up -d
+docker compose exec middleware middleware setup     # prints the one-time code
+open http://127.0.0.1:46100
+```
+
+`docker-compose.yml` keeps everything in one named volume and maps the panel
+to loopback only. The 80/443 lines are commented until the ports door is
+enabled; the comments say what to do.
+
+## What `middleware install` does
+
+Each step prints one line, `✓` or `✗`, and the command stops at the first
+`✗`. Every step compares before it writes, so running it again is quiet and
+changes nothing; running it with a newer binary updates the binary and
+restarts the service (the sites keep running, see [upgrade.md](upgrade.md)).
+
+| step | as | what |
+| --- | --- | --- |
+| package manager | you | finds apt, dnf, apk, pacman or zypper |
+| git and curl | sudo | installs whichever is missing |
+| system group | sudo | `groupadd --system middleware` |
+| user in group | sudo | `usermod -aG middleware <you>` — takes effect at your next login |
+| root directory | you (sudo if the parent is root's) | `/srv/middleware` with `sites/ tasks/ data/ modules/`, owned by you |
+| binary | sudo | copies itself to `/usr/local/bin/middleware` |
+| units and config | sudo | `middleware.service`, `middleware.socket`, `middleware-helper.service` in `/etc/systemd/system`; `/etc/tmpfiles.d/middleware.conf`; `/etc/sysctl.d/60-middleware-reserved-ports.conf` |
+| sysctl | sudo | reserves ports 33000–47000 from the kernel's ephemeral range |
+| tmpfiles | sudo | creates `/run/middleware` (the helper socket lives there) |
+| daemon-reload, enable, start | sudo | socket, helper, service |
+| operator | you | runs `middleware setup` if no operator exists and prints the one-time code and the panel URL |
+
+The rendered units are also checked in under [`systemd/`](../systemd/) so you
+can read them before installing. The comments in them say why each line is
+what it is; the one that matters most is `KillMode=process`, which is what
+lets the sites outlive a restart of the supervisor.
+
+Flags: `--root <dir>` (default `/srv/middleware`, or `$MIDDLEWARE_ROOT`),
+`--user <name>` (default: you), `--no-helper` (skip the privileged helper;
+firewall, VPN and sysctl operations are then unavailable), `--no-start`
+(write and enable the units but do not start them), `--yes` (no prompt).
+
+## Where things end up
+
+```
+/usr/local/bin/middleware                      the binary
+/etc/systemd/system/middleware.service         supervisor, runs as you
+/etc/systemd/system/middleware.socket          holds 127.0.0.1:46100
+/etc/systemd/system/middleware-helper.service  root; closed list of operations
+/etc/tmpfiles.d/middleware.conf                creates /run/middleware at boot
+/etc/sysctl.d/60-middleware-reserved-ports.conf
+/run/middleware/helper.sock                    root:middleware 0660
+/srv/middleware/                               the root: yours
+  sites/<domain>/                              one folder per site, site.json inside
+  tasks/<name>.json
+  data/                                        settings, modules, state, logs, events
+  modules/                                     binaries modules installed
+```
+
+## After installing
+
+```sh
+middleware doctor      # one line per check; exit 1 if any fails
+middleware setup       # if the installer did not run it (prints the one-time code)
+```
+
+The panel is at `http://127.0.0.1:46100`. It is loopback only until an
+inbound door is open; from your machine, `ssh -L 46100:127.0.0.1:46100 host`
+and open the same URL. Then enable `inbound-tunnel` or `inbound-ports` in the
+panel (see [modules.md](modules.md)) and give the panel a domain in Settings.
+
+If `doctor` says the helper socket is not reachable with a permission error,
+you have not logged in again since the installer added you to the
+`middleware` group.
+
+## Updating
+
+```sh
+curl -fsSL …/install.sh | sh        # same command; or: middleware install with a new binary
+```
+
+The installer replaces the binary and restarts the service. Sites keep
+running and are re-adopted; see [upgrade.md](upgrade.md) for what that means.
+
+## Removing
+
+```sh
+middleware uninstall          # or scripts/uninstall.sh
+```
+
+Stops and removes the units, the tmpfiles and sysctl entries and the binary
+(`--keep-binary` keeps it). **It never removes the root directory or the
+sites.** Delete `/srv/middleware` yourself when you mean it.

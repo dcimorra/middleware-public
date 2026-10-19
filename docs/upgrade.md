@@ -1,0 +1,99 @@
+# Upgrading
+
+The binary is swapped, the supervisor restarts, the sites keep running.
+That is the whole procedure; what follows is why it is safe and what to do
+after.
+
+## The procedure
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dcimorra/middleware-public/main/scripts/install.sh | sh
+```
+
+or, with a binary you built or downloaded yourself:
+
+```sh
+./middleware install
+```
+
+The installer compares the binary's hash with the installed one, copies the
+new one into `/usr/local/bin/middleware`, rewrites the units if the
+templates changed (then `daemon-reload`), and restarts
+`middleware-helper.service` and `middleware.service`. It does **not**
+restart `middleware.socket`: systemd keeps holding `127.0.0.1:46100`, and
+connections that arrive during the restart wait in the accept queue
+instead of being refused.
+
+By hand, the same thing is:
+
+```sh
+sudo install -m 0755 middleware /usr/local/bin/middleware
+sudo systemctl restart middleware-helper middleware
+middleware doctor
+```
+
+## Why the sites keep running
+
+`middleware.service` has `KillMode=process`. On restart systemd signals the
+supervisor only, not its control group; the sites, which are its children,
+go on serving. When the new supervisor starts it reads
+`data/state/<domain>.json`, checks each pid is alive and its port listening,
+and **re-adopts** the instance: the router points at it again without a
+restart. Requests to a site during the few hundred milliseconds of the
+supervisor's restart queue on the socket; nothing is refused.
+
+Two things do not survive a supervisor restart:
+
+- **Open WebSockets** through the proxy. They are raw sockets the process
+  owns ([deploy.md](deploy.md#what-breaks-a-websocket)). Clients reconnect.
+- **A handover in progress.** The new supervisor finds two instances for
+  the site and finishes the handover: the healthy newer one wins, the other
+  is drained.
+
+## Roll the sites over
+
+A re-adopted instance still carries the environment it was born with and
+the descriptors it inherited. If the upgrade changed how instances are
+started (a new variable, a different `HOME` layout, a fix in the
+environment builder), running instances do not have it until they are
+handed over. The release notes say when that is the case. To roll them all
+over, one at a time, each through a normal zero-downtime handover:
+
+```sh
+middleware site restart --all
+```
+
+The panel shows the same as a banner after an upgrade until it is done.
+
+## Rolling back
+
+Install the previous binary the same way; the state files are forward and
+backward compatible within a major version. Releases are at
+`https://github.com/dcimorra/middleware-public/releases`; each has its
+`.sha256`.
+
+```sh
+curl -fsSL -o middleware https://github.com/dcimorra/middleware-public/releases/download/v2.0.0/middleware-linux-amd64
+curl -fsSL https://github.com/dcimorra/middleware-public/releases/download/v2.0.0/middleware-linux-amd64.sha256 | sed 's/ .*//' > want
+sha256sum middleware | sed 's/ .*//' | diff - want && chmod +x middleware && ./middleware install
+```
+
+## Checking
+
+```sh
+middleware version
+middleware doctor
+middleware events --since 10m
+```
+
+`doctor` fails the `binary` line when the installed binary and the one
+running the command differ in version, which is what you see when the copy
+step did not happen.
+
+## From v1
+
+v1 was a different program with a different manifest. There is no automatic
+migration: create the site with `middleware site create` and translate the
+old manifest by hand with [manifest.md](manifest.md) open. The directory
+layout (`sites/<domain>/` as the whole project) is the same, so the folders
+can be moved as they are.
