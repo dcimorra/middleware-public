@@ -8,8 +8,15 @@ import (
 
 // The API hook and the operator CLI. The hook answers the panel host and
 // the unix socket; the CLI commands talk to it.
+// apiHook is the API of the running process; wire.go adds the routes of
+// the other packages to its server.
+var apiHook *api.Hook
+
 func init() {
-	hookBuilders = append(hookBuilders, func(a *app.App) app.Hook { return api.NewHook(a, Version) })
+	hookBuilders = append(hookBuilders, hookBuilder{Name: "api", Order: orderAPI, Build: func(a *app.App) app.Hook {
+		apiHook = api.NewHook(a, Version)
+		return apiHook
+	}})
 	for _, name := range []string{"setup", "site", "events", "system", "token"} {
 		subcommands[name] = cli.Command(name)
 	}

@@ -293,6 +293,17 @@ func (s *Server) sitesDeploy(w http.ResponseWriter, r *http.Request) (any, error
 	if err != nil {
 		return nil, err
 	}
+	// A deployer set by the wiring (the github module's runner, which
+	// fetches the repository first) takes the request when it wants it;
+	// otherwise the manager builds what is already in the folder.
+	s.mu.Lock()
+	deployer := s.deployer
+	s.mu.Unlock()
+	if deployer != nil {
+		if out, handled, err := deployer(domain); handled {
+			return out, err
+		}
+	}
 	id, err := m.Deploy(domain)
 	if err != nil {
 		return nil, err

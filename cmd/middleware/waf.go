@@ -24,11 +24,12 @@ import (
 	"github.com/dcimorra/middleware-public/internal/waf"
 )
 
-// The request chain is waf → access → traffic → proxy: the WAF refuses the
-// abusive before anything else spends on them, access closes the door the
-// operator closed, and traffic counts whatever came out, error pages
-// included. The guard wraps nothing; it only runs. These are the instances
-// the API hooks talk to (block, policy, incidents), set when the app starts.
+// The request chain (wire.go has the order) is inbound → waf → access →
+// traffic → proxy: the WAF refuses the abusive before anything else spends
+// on them, access closes the door the operator closed, and traffic counts
+// whatever came out, error pages included. The guard wraps nothing; it
+// only runs. These are the instances the API routes talk to (block,
+// policy, incidents), set when the app starts.
 var (
 	theWAF     *waf.WAF
 	theAccess  *access.Access
@@ -37,7 +38,12 @@ var (
 )
 
 func init() {
-	hookBuilders = append(hookBuilders, buildWAF, buildAccess, buildTraffic, buildGuard)
+	hookBuilders = append(hookBuilders,
+		hookBuilder{Name: "waf", Order: orderWAF, Build: buildWAF},
+		hookBuilder{Name: "access", Order: orderAccess, Build: buildAccess},
+		hookBuilder{Name: "traffic", Order: orderTraffic, Build: buildTraffic},
+		hookBuilder{Name: "guard", Order: orderGuard, Build: buildGuard},
+	)
 	subcommands["waf"] = wafCommand
 	subcommands["guard"] = guardCommand
 	extraUsage += `  waf block <ip> [duration] [reason]   block an address (default one day)
@@ -164,14 +170,19 @@ func guardSite(sn engine.Snapshot) guard.SiteInfo {
 
 // --- CLI ---
 
-// cliRoot parses the shared -root flag and returns the remaining args.
+// cliRoot parses the shared -root flag, wherever it sits (`waf list
+// --root /x` reads as naturally as the flag first), and returns the
+// remaining args. The first smoke run of the binary had every `--root`
+// after the verb silently ignored and the commands answering about
+// /srv/middleware.
 func cliRoot(name string, args []string) (string, []string, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	root := fs.String("root", "", "installation root (default $MIDDLEWARE_ROOT or /srv/middleware)")
-	if err := fs.Parse(args); err != nil {
+	rest, err := parseInterleaved(fs, args)
+	if err != nil {
 		return "", nil, err
 	}
-	return settings.Root(*root), fs.Args(), nil
+	return settings.Root(*root), rest, nil
 }
 
 // openWAF opens the block list from disk. The running supervisor notices

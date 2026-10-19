@@ -21,7 +21,7 @@ import (
 )
 
 func init() {
-	hookBuilders = append(hookBuilders, func(a *app.App) app.Hook { return modulesHook{} })
+	hookBuilders = append(hookBuilders, hookBuilder{Name: "modules", Order: orderModules, Build: func(a *app.App) app.Hook { return modulesHook{} }})
 	subcommands["modules"] = modulesCommand
 	extraUsage += `  modules                        list modules and their state
   modules verify <key> k=v…      probe credentials without saving them
@@ -67,6 +67,12 @@ func buildModules(root string, bus *events.Bus, restart func(context.Context, st
 	gh := github.New(mgr, bus, restart)
 	mgr.Register(cf)
 	mgr.Register(gh)
+	// The VPN and the agent modules are built in wire.go: they need the
+	// helper, the secrets box and the provider registry, which this file
+	// does not know about.
+	if err := registerExtraModules(mgr, root, bus); err != nil {
+		return nil, err
+	}
 	return &moduleSet{Manager: mgr, Cloudflare: cf, GitHub: gh}, nil
 }
 
@@ -99,7 +105,7 @@ func modulesCommand(args []string) error {
 		return err
 	}
 	mgr := set.Manager
-	if len(rest) == 0 {
+	if len(rest) == 0 || (len(rest) == 1 && rest[0] == "list") {
 		return listModules(mgr)
 	}
 	verb := rest[0]
