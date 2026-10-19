@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"testing"
 )
 
 // Iterations is the PBKDF2 work factor for new hashes. 600k rounds of
@@ -37,6 +38,14 @@ const MinPasswordLength = 8
 // iterations is what HashPassword uses; tests lower it because 600k rounds
 // under the race detector takes seconds per login.
 var iterations = Iterations
+
+// SetTestCost lowers the hash cost for the tests of other packages. It
+// does nothing outside `go test`, so no build can ship a cheap hash.
+func SetTestCost(n int) {
+	if testing.Testing() && n > 0 {
+		iterations = n
+	}
+}
 
 // ErrWeakPassword says the password is too short.
 var ErrWeakPassword = fmt.Errorf("password: at least %d characters", MinPasswordLength)

@@ -1,0 +1,383 @@
+// Package api is /api/v1: everything the panel and the CLI do, as JSON
+// over HTTP, on the panel domain, on the loopback listener and on the
+// unix socket. docs/api.md is the contract. Other packages add their own
+// routes through Handle and Mount; this one owns authentication, the
+// sites, the events and the system.
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/dcimorra/middleware-public/internal/auth"
+	"github.com/dcimorra/middleware-public/internal/engine"
+	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/middleware-public/internal/settings"
+	"github.com/dcimorra/middleware-public/internal/sites"
+)
+
+// Prefix is where the API lives.
+const Prefix = "/api/v1"
+
+// CSRFHeader must be sent, with CSRFValue, on every non-GET request that
+// authenticates with the cookie. A browser on another origin can make the
+// cookie travel but cannot set a custom header without a CORS preflight,
+// which this API never answers. Tokens and the socket do not need it.
+const (
+	CSRFHeader = "X-Requested-With"
+	CSRFValue  = "middleware"
+)
+
+// HandlerFunc answers a route: it returns what to encode as JSON, or an
+// error. An *Error carries its own status; any other error is a 500 with
+// a generic message, the details going to the log and the event bus.
+// Return Handled when the handler wrote the response itself.
+type HandlerFunc func(w http.ResponseWriter, r *http.Request) (any, error)
+
+// Handled is what a HandlerFunc returns when it has already written the
+// response (a stream, a file, text).
+var Handled = &handled{}
+
+type handled struct{}
+
+// Error is an HTTP error with a status.
+type Error struct {
+	Status  int
+	Message string
+}
+
+// Error implements error.
+func (e *Error) Error() string { return e.Message }
+
+// Errorf builds an *Error.
+func Errorf(status int, format string, args ...any) *Error {
+	return &Error{Status: status, Message: fmt.Sprintf(format, args...)}
+}
+
+// OK is the `{ok: true}` answer.
+var OK = map[string]bool{"ok": true}
+
+// Options wire a Server to the rest of the process.
+type Options struct {
+	Root     string
+	Version  string
+	Listen   string
+	Auth     *auth.Store
+	Sites    *sites.Manager
+	Engine   *engine.Engine
+	Bus      *events.Bus
+	Settings func() settings.Settings
+	// SaveSettings persists and applies new settings; nil makes PUT
+	// /settings a 501.
+	SaveSettings func(settings.Settings) error
+	// UI answers everything on the panel host that is not the API.
+	UI http.Handler
+	// Restart is what POST /system/restart does; nil sends SIGTERM to
+	// this process.
+	Restart func()
+	Started time.Time
+}
+
+// Route is one registered endpoint, for the OpenAPI document.
+type Route struct {
+	Method  string `json:"method"`
+	Path    string `json:"path"`
+	Summary string `json:"summary"`
+	Mounted bool   `json:"mounted,omitempty"`
+}
+
+// Server is the API.
+type Server struct {
+	opts Options
+	mux  *http.ServeMux
+	// UI answers non-API paths on the panel host; the lead sets the panel.
+	UI http.Handler
+	// Heartbeat is the SSE keep-alive interval.
+	Heartbeat time.Duration
+
+	mu     sync.Mutex
+	routes []Route
+	public map[string]bool
+}
+
+// New builds the server with every route of this package registered.
+func New(opts Options) *Server {
+	if opts.Started.IsZero() {
+		opts.Started = time.Now()
+	}
+	if opts.Bus == nil {
+		opts.Bus = events.New("")
+	}
+	if opts.Settings == nil {
+		d := settings.Defaults()
+		opts.Settings = func() settings.Settings { return d }
+	}
+	s := &Server{opts: opts, mux: http.NewServeMux(), UI: opts.UI, Heartbeat: 15 * time.Second, public: map[string]bool{}}
+	if s.UI == nil {
+		s.UI = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			fmt.Fprintf(w, "middleware api %s\n\nThe API is under %s; the OpenAPI document at %s/openapi.json.\n", opts.Version, Prefix, Prefix)
+		})
+	}
+	s.registerAuth()
+	s.registerSites()
+	s.registerEvents()
+	s.registerSystem()
+	s.Handle("GET", Prefix+"/openapi.json", "The OpenAPI description of every registered route", s.openAPI)
+	s.Public("GET", Prefix+"/openapi.json")
+	return s
+}
+
+// Handle registers a JSON route. pattern is a Go 1.22 ServeMux pattern
+// without the method, e.g. "/api/v1/sites/{domain}"; summary is one line
+// for the OpenAPI document.
+func (s *Server) Handle(method, pattern, summary string, h HandlerFunc) {
+	method = strings.ToUpper(method)
+	s.mu.Lock()
+	s.routes = append(s.routes, Route{Method: method, Path: pattern, Summary: summary})
+	s.mu.Unlock()
+	s.mux.HandleFunc(method+" "+pattern, func(w http.ResponseWriter, r *http.Request) {
+		v, err := h(w, r)
+		if err != nil {
+			s.writeError(w, r, err)
+			return
+		}
+		if v == Handled {
+			return
+		}
+		WriteJSON(w, http.StatusOK, v)
+	})
+}
+
+// Mount hands a whole subtree to another handler: prefix and everything
+// under it. The handler still sits behind authentication and the CSRF
+// check; it does its own JSON. Modules and the other parts of the house
+// plug in here.
+func (s *Server) Mount(prefix string, h http.Handler) {
+	prefix = strings.TrimSuffix(prefix, "/")
+	s.mu.Lock()
+	s.routes = append(s.routes, Route{Method: "ANY", Path: prefix + "/…", Mounted: true})
+	s.mu.Unlock()
+	s.mux.Handle(prefix, h)
+	s.mux.Handle(prefix+"/", h)
+}
+
+// Public exempts a route from authentication: the setup, the login, the
+// "who am I" and the OpenAPI document. Everything else needs a caller.
+func (s *Server) Public(method, pattern string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.public[strings.ToUpper(method)+" "+pattern] = true
+}
+
+// Routes lists what is registered.
+func (s *Server) Routes() []Route {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Route, len(s.routes))
+	copy(out, s.routes)
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+		return out[i].Method < out[j].Method
+	})
+	return out
+}
+
+// Panel returns the handler for the panel host: the API under Prefix,
+// the UI for everything else. It is what the hook puts on proxy.Panel
+// and what the socket serves.
+func (s *Server) Panel() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == Prefix || strings.HasPrefix(r.URL.Path, Prefix+"/") {
+			s.ServeHTTP(w, r)
+			return
+		}
+		s.UI.ServeHTTP(w, r)
+	})
+}
+
+// ServeHTTP implements http.Handler: resolve the caller, gate, dispatch.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	caller := auth.Caller{Via: auth.ViaSocket}
+	if s.opts.Auth != nil {
+		caller = s.opts.Auth.Resolve(r)
+	} else if !auth.IsSocket(r.Context()) {
+		caller = auth.Caller{}
+	}
+	r = r.WithContext(auth.WithCaller(r.Context(), caller))
+	_, pattern := s.mux.Handler(r)
+	if pattern == "" {
+		s.writeError(w, r, Errorf(http.StatusNotFound, "no such route"))
+		return
+	}
+	s.mu.Lock()
+	public := s.public[pattern]
+	s.mu.Unlock()
+	if !public && !caller.Authenticated() {
+		s.writeError(w, r, Errorf(http.StatusUnauthorized, "authentication required"))
+		return
+	}
+	if caller.Via == auth.ViaCookie && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && r.Header.Get(CSRFHeader) != CSRFValue {
+		s.writeError(w, r, Errorf(http.StatusForbidden, "cookie requests must send %s: %s", CSRFHeader, CSRFValue))
+		return
+	}
+	s.mux.ServeHTTP(w, r)
+}
+
+// WriteJSON encodes v with the status.
+func WriteJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(v)
+}
+
+// ReadJSON decodes the request body into v, refusing unknown fields and
+// bodies over a megabyte: a manifest is kilobytes and a token name is
+// a line.
+func ReadJSON(r *http.Request, v any) error {
+	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return Errorf(http.StatusBadRequest, "body: %v", err)
+	}
+	return nil
+}
+
+func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
+	status, msg := statusOf(err)
+	if status >= 500 {
+		s.opts.Bus.Emit(events.Event{Type: "api.error", Actor: "api", Level: "error", Message: err.Error(), Data: map[string]any{"method": r.Method, "path": r.URL.Path}})
+	}
+	if status == http.StatusTooManyRequests {
+		w.Header().Set("Retry-After", "60")
+	}
+	WriteJSON(w, status, map[string]string{"error": msg})
+}
+
+// statusOf maps the errors of the packages below to statuses. Unknown
+// errors are 500 with the message kept: this API talks to the operator,
+// not to the public, and "internal error" is the one answer that helps
+// nobody.
+func statusOf(err error) (int, string) {
+	var e *Error
+	if errors.As(err, &e) {
+		return e.Status, e.Message
+	}
+	switch {
+	case errors.Is(err, sites.ErrNotFound), errors.Is(err, auth.ErrNotFound), errors.Is(err, os.ErrNotExist):
+		return http.StatusNotFound, err.Error()
+	case errors.Is(err, sites.ErrExists):
+		return http.StatusConflict, err.Error()
+	case errors.Is(err, sites.ErrDeploying):
+		return http.StatusConflict, err.Error()
+	case errors.Is(err, sites.ErrOutside):
+		return http.StatusForbidden, err.Error()
+	case errors.Is(err, sites.ErrBadDomain), errors.Is(err, sites.ErrBadTemplate), errors.Is(err, sites.ErrUnmanaged), errors.Is(err, sites.ErrTooLarge), errors.Is(err, auth.ErrWeakPassword), errors.Is(err, auth.ErrTokenNameNeeded):
+		return http.StatusBadRequest, err.Error()
+	case errors.Is(err, auth.ErrBadCredentials), errors.Is(err, auth.ErrBadSetupCode):
+		return http.StatusUnauthorized, err.Error()
+	case errors.Is(err, auth.ErrNoOperator):
+		return http.StatusForbidden, err.Error()
+	case errors.Is(err, auth.ErrRateLimited):
+		return http.StatusTooManyRequests, err.Error()
+	case errors.Is(err, context.Canceled):
+		return 499, "client went away"
+	}
+	msg := err.Error()
+	if strings.HasPrefix(msg, "manifest:") || strings.HasPrefix(msg, "body:") {
+		return http.StatusBadRequest, msg
+	}
+	return http.StatusInternalServerError, msg
+}
+
+// domainOf reads the {domain} path value and validates it, so no handler
+// below ever builds a path from an unchecked name.
+func domainOf(r *http.Request) (string, error) {
+	d := strings.ToLower(strings.TrimSpace(r.PathValue("domain")))
+	if !manifest.ValidDomain(d) {
+		return "", Errorf(http.StatusBadRequest, "%q is not a domain", d)
+	}
+	return d, nil
+}
+
+// openAPI describes the registered routes. It is generated from the
+// registrations rather than written by hand so it cannot drift from what
+// the server answers.
+func (s *Server) openAPI(w http.ResponseWriter, r *http.Request) (any, error) {
+	paths := map[string]map[string]any{}
+	for _, rt := range s.Routes() {
+		if rt.Mounted {
+			paths[rt.Path] = map[string]any{"x-mounted": true, "description": "a subtree served by another component"}
+			continue
+		}
+		ops, ok := paths[rt.Path]
+		if !ok {
+			ops = map[string]any{}
+			paths[rt.Path] = ops
+		}
+		op := map[string]any{
+			"summary":     rt.Summary,
+			"operationId": operationID(rt.Method, rt.Path),
+			"responses":   map[string]any{"200": map[string]any{"description": "OK"}, "default": map[string]any{"description": "{\"error\": message}"}},
+		}
+		if params := pathParams(rt.Path); len(params) > 0 {
+			op["parameters"] = params
+		}
+		ops[strings.ToLower(rt.Method)] = op
+	}
+	return map[string]any{
+		"openapi": "3.0.3",
+		"info": map[string]any{
+			"title":       "middleware",
+			"version":     s.opts.Version,
+			"description": "The API of one middleware installation. Authenticate with `Authorization: Bearer <token>`, the `mw_session` cookie (plus `" + CSRFHeader + ": " + CSRFValue + "` on non-GET requests), or the unix socket data/api.sock.",
+		},
+		"servers": []map[string]any{{"url": "/"}},
+		"paths":   paths,
+		"components": map[string]any{"securitySchemes": map[string]any{
+			"bearer": map[string]any{"type": "http", "scheme": "bearer"},
+			"cookie": map[string]any{"type": "apiKey", "in": "cookie", "name": auth.CookieName},
+		}},
+		"security": []map[string]any{{"bearer": []string{}}, {"cookie": []string{}}},
+	}, nil
+}
+
+func pathParams(p string) []map[string]any {
+	var out []map[string]any
+	for _, seg := range strings.Split(p, "/") {
+		if strings.HasPrefix(seg, "{") && strings.HasSuffix(seg, "}") {
+			name := strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(seg, "{"), "}"), "...")
+			out = append(out, map[string]any{"name": name, "in": "path", "required": true, "schema": map[string]string{"type": "string"}})
+		}
+	}
+	return out
+}
+
+func operationID(method, p string) string {
+	p = strings.TrimPrefix(p, Prefix)
+	var b strings.Builder
+	b.WriteString(strings.ToLower(method))
+	for _, seg := range strings.Split(p, "/") {
+		seg = strings.Trim(seg, "{}.")
+		if seg == "" {
+			continue
+		}
+		b.WriteString(strings.ToUpper(seg[:1]))
+		b.WriteString(strings.ReplaceAll(seg[1:], "-", ""))
+	}
+	return b.String()
+}
