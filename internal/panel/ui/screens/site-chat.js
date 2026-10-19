@@ -1,0 +1,177 @@
+// Chat with the agent that works inside this site's folder. Turns come
+// from GET /chat; while a turn runs, progress arrives on the event stream
+// as agent.* events with the domain as subject: text deltas, tool calls,
+// cost, end. The shapes are tolerant on purpose: the adapter decides what
+// it puts in data, and a field the panel does not know is just not shown.
+
+import { h, clear } from "../lib/dom.js";
+import { t } from "../lib/i18n.js";
+import { api, enc } from "../lib/api.js";
+import { store } from "../lib/store.js";
+import { onEvent } from "../lib/stream.js";
+import { loading, errorBox } from "../components/page.js";
+import { confirm } from "../components/dialog.js";
+import { toastError } from "../components/toast.js";
+
+export function chatTab(domain) {
+  const turns = h("div", { class: "chat-turns", "aria-live": "polite" });
+  const text = h("textarea", { placeholder: t("chat.placeholder"), "aria-label": t("chat.message") });
+  const provider = h("select", { "aria-label": t("chat.provider") });
+  const model = h("select", { "aria-label": t("chat.model") });
+  const send = h("button", { type: "submit", class: "btn primary" }, t("chat.send"));
+  const stop = h("button", { type: "button", class: "btn danger", hidden: true }, t("chat.stop"));
+  const reset = h("button", { type: "button", class: "btn ghost sm" }, t("chat.new"));
+  const status = h("span", { class: "small muted", role: "status" });
+  const form = h("form", { class: "chat-form" }, text, h("div", { class: "row" }, provider, model, h("span", { class: "grow" }), status, reset, stop, send));
+  const el = h("div", { class: "chat" }, turns, form);
+  let agents = [];
+  let running = null; // {turnEl, textEl, textBuf}
+  const subs = [];
+
+  function turnEl(role, body, cost, at) {
+    const who = h("div", { class: "who" }, role === "user" ? t("chat.you") : t("chat.agent"), at ? h("span", { class: "muted" }, new Date(at).toLocaleTimeString()) : null, cost ? h("span", { class: "cost" }, fmtCost(cost)) : null);
+    const textEl = h("div", { class: "text" }, body || "");
+    const el = h("div", { class: "turn " + role }, who, textEl);
+    return { el, textEl, who };
+  }
+  function fmtCost(c) {
+    const n = Number(c);
+    return isNaN(n) ? String(c) : t("chat.cost", { usd: n.toFixed(4) });
+  }
+
+  async function loadAgents() {
+    try {
+      agents = await api.get("/agents");
+    } catch { agents = []; }
+    clear(provider);
+    for (const a of agents) provider.append(h("option", { value: a.provider, disabled: !a.available }, a.provider + (a.available ? "" : " " + t("chat.unavailable"))));
+    if (agents.length === 0) provider.append(h("option", { value: "" }, t("chat.noAgents")));
+    fillModels();
+  }
+  function fillModels() {
+    clear(model);
+    const a = agents.find((x) => x.provider === provider.value);
+    model.append(h("option", { value: "" }, t("chat.defaultModel")));
+    for (const m of (a && a.models) || []) model.append(h("option", { value: m }, m));
+  }
+
+  async function loadTurns() {
+    clear(turns).append(loading());
+    try {
+      const conv = await api.get(`/sites/${enc(domain)}/chat`);
+      clear(turns);
+      if (conv.provider && [...provider.options].some((o) => o.value === conv.provider)) provider.value = conv.provider;
+      fillModels();
+      if (conv.model) model.value = conv.model;
+      for (const tn of conv.turns || []) turns.append(turnEl(tn.role === "user" ? "user" : "agent", tn.text, tn.cost, tn.at).el);
+      if (!(conv.turns || []).length) turns.append(h("div", { class: "empty" }, h("strong", null, t("chat.emptyTitle")), t("chat.emptyHint")));
+      scroll();
+    } catch (e) {
+      clear(turns).append(errorBox(e));
+    }
+  }
+  function scroll() { turns.lastElementChild && turns.lastElementChild.scrollIntoView({ block: "end" }); }
+
+  function begin() {
+    const tu = turnEl("agent", "");
+    tu.textEl.classList.add("typing");
+    turns.append(tu.el);
+    running = { ...tu, buf: "", tools: new Map() };
+    stop.hidden = false;
+    send.disabled = true;
+    status.textContent = t("chat.working");
+    scroll();
+  }
+  function end(ev) {
+    if (!running) return;
+    running.textEl.classList.remove("typing");
+    const cost = ev && ev.data && (ev.data.cost ?? ev.data.cost_usd ?? ev.data.usd);
+    if (cost !== undefined) running.who.append(h("span", { class: "cost" }, fmtCost(cost)));
+    running = null;
+    stop.hidden = true;
+    send.disabled = false;
+    status.textContent = "";
+  }
+
+  // Events: agent.text (delta), agent.tool / agent.tool.result, agent.cost,
+  // agent.end / agent.error / agent.stopped.
+  subs.push(onEvent("agent.", (ev) => {
+    if (ev.subject !== domain) return;
+    const d = ev.data || {};
+    if (ev.type === "agent.start" || ev.type === "agent.turn.started") { if (!running) begin(); return; }
+    if (!running) begin();
+    if (ev.type === "agent.text" || ev.type === "agent.delta") {
+      const piece = d.delta ?? d.text ?? ev.message ?? "";
+      running.buf += piece;
+      running.textEl.textContent = running.buf;
+      scroll();
+    } else if (ev.type.startsWith("agent.tool")) {
+      const id = d.id || d.tool_id || d.name || ev.time;
+      let det = running.tools.get(id);
+      if (!det) {
+        det = h("details", null, h("summary", null, t("chat.tool", { name: d.name || d.tool || "tool" })), h("pre", null, ""));
+        running.tools.set(id, det);
+        // The row goes after the text streamed so far, and what the agent
+        // says next starts a fresh paragraph below it, in the order it
+        // happened.
+        running.textEl.classList.remove("typing");
+        if (!running.textEl.textContent) running.textEl.remove();
+        const next = h("div", { class: "text typing" });
+        running.el.append(det, next);
+        running.textEl = next;
+        running.buf = "";
+      }
+      const pre = det.querySelector("pre");
+      const input = d.input !== undefined ? JSON.stringify(d.input, null, 2) : "";
+      const output = d.output !== undefined ? (typeof d.output === "string" ? d.output : JSON.stringify(d.output, null, 2)) : "";
+      if (ev.type.includes("result") || output) pre.textContent = (input ? input + "\n\n" : "") + output;
+      else if (input) pre.textContent = input;
+      else if (ev.message) pre.textContent = ev.message;
+    } else if (ev.type === "agent.cost") {
+      running.who.append(h("span", { class: "cost" }, fmtCost(d.cost ?? d.usd ?? ev.message)));
+    } else if (ev.type === "agent.end" || ev.type === "agent.done" || ev.type === "agent.turn.ended" || ev.type === "agent.stopped") {
+      end(ev);
+    } else if (ev.type === "agent.error") {
+      running.el.append(h("div", { class: "level-error" }, ev.message || d.error || t("chat.failed")));
+      end(null);
+    }
+  }));
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = text.value.trim();
+    if (!msg || running) return;
+    turns.querySelector(".empty")?.remove();
+    turns.append(turnEl("user", msg).el);
+    text.value = "";
+    send.classList.add("busy");
+    try {
+      const s = store.site(domain);
+      const cur = (s && s.manifest && s.manifest.agent) || {};
+      if (provider.value && provider.value !== cur.provider) {
+        await api.patch(`/sites/${enc(domain)}/manifest`, { agent: { ...cur, provider: provider.value, model: model.value } });
+      }
+      await api.post(`/sites/${enc(domain)}/chat`, { text: msg, model: model.value || undefined });
+      if (!running) begin();
+    } catch (err) {
+      toastError(err);
+      end(null);
+    } finally {
+      send.classList.remove("busy");
+    }
+  });
+  text.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); form.requestSubmit(); }
+  });
+  provider.addEventListener("change", fillModels);
+  stop.addEventListener("click", async () => {
+    try { await api.post(`/sites/${enc(domain)}/chat/stop`); status.textContent = t("chat.stopping"); } catch (err) { toastError(err); }
+  });
+  reset.addEventListener("click", async () => {
+    if (!(await confirm({ title: t("chat.newQ"), body: t("chat.newBody"), confirmLabel: t("chat.new") }))) return;
+    try { await api.del(`/sites/${enc(domain)}/chat`); await loadTurns(); } catch (err) { toastError(err); }
+  });
+
+  loadAgents().then(loadTurns);
+  return { el, destroy() { subs.forEach((u) => u()); } };
+}

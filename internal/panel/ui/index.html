@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="same-origin">
+  <title>middleware</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%232563eb'/%3E%3Cpath d='M4 11V5l4 4 4-4v6' stroke='%23fff' stroke-width='2' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <div id="app" class="app" data-state="loading">
+    <header class="topbar" id="topbar" hidden>
+      <button class="icon-btn menu-btn" id="menu-btn" type="button" aria-label="Menu" aria-controls="sidebar" aria-expanded="false">
+        <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <a class="brand" href="#/sites">middleware</a>
+      <div class="topbar-spacer"></div>
+      <span class="stream-state" id="stream-state" role="status" aria-live="polite"></span>
+      <button class="icon-btn" id="theme-btn" type="button" aria-label="Theme"></button>
+      <button class="icon-btn" id="help-btn" type="button" aria-label="Keyboard shortcuts">?</button>
+    </header>
+    <nav class="sidebar" id="sidebar" aria-label="Sections" hidden></nav>
+    <div class="backdrop" id="backdrop" hidden></div>
+    <main class="main" id="main" tabindex="-1"></main>
+  </div>
+  <div id="toasts" class="toasts" aria-live="polite" aria-relevant="additions"></div>
+  <noscript>This console needs JavaScript.</noscript>
+  <script type="module" src="/assets/app.js"></script>
+</body>
+</html>

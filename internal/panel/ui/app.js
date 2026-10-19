@@ -1,0 +1,179 @@
+// The shell: strings, session, navigation, the one event stream, and the
+// routes. Screens live in ./screens and know nothing about each other;
+// what they share is in ./lib and ./components.
+
+import { h, clear } from "./lib/dom.js";
+import { t, loadStrings } from "./lib/i18n.js";
+import { api, onUnauthorized } from "./lib/api.js";
+import { store } from "./lib/store.js";
+import { connect, disconnect } from "./lib/stream.js";
+import { route, mount, navigate, currentPath, render as rerender } from "./lib/router.js";
+import { applyTheme, getTheme, setTheme, getLang } from "./lib/theme.js";
+import { installShortcuts, showShortcuts, GOTO } from "./components/shortcuts.js";
+import { toast } from "./components/toast.js";
+import { authScreen } from "./screens/auth.js";
+import { sitesScreen } from "./screens/sites.js";
+import { siteScreen } from "./screens/site.js";
+import { inboundScreen } from "./screens/inbound.js";
+import { wafScreen } from "./screens/waf.js";
+import { modulesScreen } from "./screens/modules.js";
+import { tasksScreen } from "./screens/tasks.js";
+import { eventsScreen } from "./screens/events.js";
+import { guardScreen } from "./screens/guard.js";
+import { settingsScreen } from "./screens/settings.js";
+import { systemScreen } from "./screens/system.js";
+
+const app = document.getElementById("app");
+const main = document.getElementById("main");
+const sidebar = document.getElementById("sidebar");
+const topbar = document.getElementById("topbar");
+const backdrop = document.getElementById("backdrop");
+const menuBtn = document.getElementById("menu-btn");
+const themeBtn = document.getElementById("theme-btn");
+const helpBtn = document.getElementById("help-btn");
+const streamState = document.getElementById("stream-state");
+
+applyTheme();
+
+const NAV = [
+  ["sites", "/sites", "g s"],
+  ["inbound", "/inbound", "g i"],
+  ["waf", "/waf", "g w"],
+  ["modules", "/modules", "g m"],
+  ["tasks", "/tasks", "g t"],
+  ["events", "/events", "g e"],
+  ["guard", "/guard", "g g"],
+  ["settings", "/settings", "g c"],
+  ["system", "/system", "g y"],
+];
+
+function buildSidebar() {
+  clear(sidebar);
+  for (const [key, href, k] of NAV) {
+    sidebar.append(h("a", { href: "#" + href, "data-path": href }, t("nav." + key), h("span", { class: "k", "aria-hidden": "true" }, k)));
+  }
+  sidebar.append(h("div", { class: "group" }, t("nav.session")));
+  const logout = h("a", { href: "#/logout" }, t("auth.signOut"));
+  logout.addEventListener("click", async (e) => {
+    e.preventDefault();
+    try { await api.post("/auth/logout", {}, { allow401: true }); } catch { /* the cookie is gone either way */ }
+    showAuth("login");
+  });
+  sidebar.append(logout);
+  markNav();
+}
+
+function markNav() {
+  const path = currentPath();
+  for (const a of sidebar.querySelectorAll("a[data-path]")) {
+    const on = path === a.dataset.path || path.startsWith(a.dataset.path + "/") || path.startsWith(a.dataset.path + "?");
+    if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  }
+  closeMenu();
+}
+
+function openMenu() { sidebar.classList.add("open"); backdrop.hidden = false; menuBtn.setAttribute("aria-expanded", "true"); }
+function closeMenu() { sidebar.classList.remove("open"); backdrop.hidden = true; menuBtn.setAttribute("aria-expanded", "false"); }
+menuBtn.addEventListener("click", () => (sidebar.classList.contains("open") ? closeMenu() : openMenu()));
+backdrop.addEventListener("click", closeMenu);
+
+function themeLabel() {
+  const v = getTheme();
+  themeBtn.textContent = v === "dark" ? "☽" : v === "light" ? "☀" : "A";
+  themeBtn.setAttribute("aria-label", t("theme.button", { theme: t("theme." + v) }));
+  themeBtn.title = themeBtn.getAttribute("aria-label");
+}
+themeBtn.addEventListener("click", () => {
+  const order = ["auto", "light", "dark"];
+  setTheme(order[(order.indexOf(getTheme()) + 1) % order.length]);
+  themeLabel();
+});
+helpBtn.addEventListener("click", showShortcuts);
+
+store.subscribe("streamState", (s) => {
+  streamState.dataset.state = s;
+  streamState.textContent = s === "live" ? t("stream.live") : s === "reconnecting" ? t("stream.reconnecting") : s === "connecting" ? t("stream.connecting") : "";
+});
+
+// ---- routes ----
+route("/sites", sitesScreen);
+route("/sites/:domain/:tab?", siteScreen);
+route("/inbound", inboundScreen);
+route("/waf", wafScreen);
+route("/modules", modulesScreen);
+route("/tasks", tasksScreen);
+route("/events", eventsScreen);
+route("/guard", guardScreen);
+route("/settings", settingsScreen);
+route("/system", systemScreen);
+
+let authView = null;
+let authed = false;
+let mounted = false;
+
+// The skip link targets #main, which the hash router would otherwise read
+// as a route; focusing by hand keeps the hash as it is.
+document.querySelector(".skip").addEventListener("click", (e) => { e.preventDefault(); main.focus(); });
+
+function showAuth(mode) {
+  authed = false;
+  disconnect();
+  app.dataset.state = "auth";
+  sidebar.hidden = true;
+  topbar.hidden = false;
+  clear(main);
+  authView = authScreen({ mode, onDone: boot });
+  main.append(authView.el);
+  document.title = t("app.title");
+}
+
+async function boot() {
+  let me;
+  try {
+    me = await api.get("/auth/me", { allow401: true });
+  } catch (e) {
+    if (e.status === 401 || e.status === 403) me = { authenticated: false, ...(e.body || {}) };
+    else { showAuth("login"); toast(e.message, "bad"); return; }
+  }
+  store.set("me", me);
+  const needsSetup = me && (me.needs_setup || me.setup_required || me.setup === true);
+  if (!me || !me.authenticated) { showAuth(needsSetup ? "setup" : "login"); return; }
+  authed = true;
+  app.dataset.state = "ready";
+  topbar.hidden = false;
+  sidebar.hidden = false;
+  buildSidebar();
+  connect();
+  if (!mounted) {
+    mounted = true;
+    mount(main, (path) => (path === "/" || path === "/logout" ? "/sites" : path));
+  } else {
+    rerender();
+  }
+}
+
+onUnauthorized(() => { if (authed) { showAuth("login"); toast(t("auth.expired"), "bad"); } });
+document.addEventListener("route", () => {
+  markNav();
+  const path = currentPath();
+  const key = NAV.find(([, href]) => path === href || path.startsWith(href + "/"))?.[0];
+  const site = /^\/sites\/([^/?]+)/.exec(path);
+  document.title = (site ? decodeURIComponent(site[1]) : key ? t("nav." + key) : "") + " · " + t("app.title");
+});
+installShortcuts();
+
+(async () => {
+  try {
+    await loadStrings(getLang());
+  } catch (e) {
+    main.textContent = "Cannot load the string catalog: " + e.message;
+    return;
+  }
+  themeLabel();
+  helpBtn.setAttribute("aria-label", t("keys.title"));
+  menuBtn.setAttribute("aria-label", t("nav.menu"));
+  await boot();
+})();
+
+// Exposed for the console: handy when debugging a live installation.
+window.mw = { api, store, navigate, GOTO };
