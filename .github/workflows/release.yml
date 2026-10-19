@@ -1,0 +1,68 @@
+name: release
+
+# A tag v* builds the two Linux binaries the install script downloads,
+# writes a sha256 next to each, and publishes a GitHub release with them.
+# The version inside the binary is the tag, so `middleware version` on a
+# server names the release it came from.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: no third-party dependencies in the core
+        run: test "$(go list -m all | wc -l)" = "1"
+      - name: test
+        run: go test -race ./...
+      - name: build
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: "0"
+        run: |
+          set -eu
+          name="middleware-linux-${{ matrix.arch }}"
+          go build -trimpath -ldflags "-s -w -X main.Version=${GITHUB_REF_NAME}" -o "dist/$name" ./cmd/middleware
+          # sha256sum's own format ("<hash>  <name>"), which is what
+          # scripts/install.sh parses and what `sha256sum -c` accepts.
+          (cd dist && sha256sum "$name" > "$name.sha256")
+          cat "dist/$name.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: middleware-linux-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: list
+        run: ls -l dist && cat dist/*.sha256
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            Install or update on a Linux server:
+
+                curl -fsSL https://raw.githubusercontent.com/dcimorra/middleware-public/main/scripts/install.sh | sh
+
+            Each binary has a `.sha256` next to it; the script verifies it before running anything.

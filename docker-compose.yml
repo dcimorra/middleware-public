@@ -1,0 +1,48 @@
+# middleware in a container. Good for trying it out and for hosts without
+# systemd. What you do NOT get here: the privileged helper, so the layer-3
+# firewall, the WireGuard vpn module and the port reservation sysctl are
+# unavailable (layer-7 WAF, ACME, deploys and the docker runtime still
+# work). On a real server prefer `middleware install`; see docs/install.md.
+#
+#   cp .env.example .env   # or: echo "MIDDLEWARE_SECRET_KEY=$(openssl rand -hex 32)" > .env
+#   docker compose up -d
+#   docker compose exec middleware middleware setup
+#   open http://127.0.0.1:46100
+
+services:
+  middleware:
+    build:
+      context: .
+      args:
+        VERSION: ${MIDDLEWARE_VERSION:-dev}
+    image: middleware:${MIDDLEWARE_VERSION:-dev}
+    restart: unless-stopped
+    environment:
+      MIDDLEWARE_ROOT: /srv/middleware
+      # Encrypts module credentials at rest. Without it the key is generated
+      # into data/modules-key inside the volume, which is fine as long as the
+      # volume is backed up with it; set it here to keep the two apart.
+      MIDDLEWARE_SECRET_KEY: ${MIDDLEWARE_SECRET_KEY:?set MIDDLEWARE_SECRET_KEY in .env}
+    volumes:
+      # Everything: sites, tasks, data, modules. One volume so a backup is
+      # one thing.
+      - root:/srv/middleware
+      # Uncomment to let the docker runtime start site containers on the
+      # host's daemon. This hands the container root-equivalent access to
+      # the host; only do it on a machine where that is acceptable.
+      # - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      # Panel and API, loopback only. Reach it through an SSH tunnel
+      # (ssh -L 46100:127.0.0.1:46100 host) or put a tunnel in front.
+      - "127.0.0.1:46100:46100"
+      # The ports door. Commented because a fresh installation has no
+      # certificates and no domains yet; enable inbound-ports in the panel
+      # with the door on 8080/8443 (unprivileged inside the container), then
+      # uncomment so the host's 80 and 443 reach them.
+      # - "80:8080"
+      # - "443:8443"
+    # tini in the image reaps site processes; init: true would add a second.
+    stop_grace_period: 30s
+
+volumes:
+  root:
