@@ -16,6 +16,7 @@ import (
 
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/helper"
+	"github.com/dcimorra/middleware-public/internal/modules"
 	"github.com/dcimorra/middleware-public/internal/modules/vpn"
 	"github.com/dcimorra/middleware-public/internal/settings"
 )
@@ -155,7 +156,10 @@ func vpnCommand(args []string) error {
 		return errors.New("usage: middleware vpn status | peer add <name> | peer remove <name>")
 	}
 	r := settings.Root(*root)
-	secrets, err := vpn.NewFileSecrets(r)
+	// The same box the service uses, so a key the panel wrote is readable
+	// here and the other way round; vpn's own FileSecrets writes another
+	// format under the same key and the two would not read each other.
+	secrets, err := modules.OpenBoxSecrets(r)
 	if err != nil {
 		return err
 	}
