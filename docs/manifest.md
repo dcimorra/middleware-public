@@ -1,0 +1,144 @@
+# The manifest: `site.json`
+
+One file per site, at `sites/<domain>/site.json`. Every field is optional
+except `version`. Durations are Go durations (`8s`, `2m`). Commands are arrays,
+never shell strings. Paths are relative to the site folder.
+
+```json
+{
+  "version": 2,
+
+  "static": { "root": "public", "spa": false },
+
+  "run": {
+    "command": ["./server", "--port", "$PORT"],
+    "cwd": ".",
+    "env": { "NODE_ENV": "production" },
+    "env_file": ".env",
+    "env_from_file": { "NEXT_DIST_DIR": ".next-current" },
+    "health": { "path": "/", "timeout": "60s" },
+    "drain": "8s",
+    "restart": { "max_backoff": "60s" },
+    "runtime": "process",
+    "docker": {
+      "image": "ghcr.io/acme/app:latest",
+      "build": "Dockerfile",
+      "volumes": ["data:/app/data"],
+      "memory": "512m"
+    }
+  },
+
+  "upstream": "http://127.0.0.1:8090",
+
+  "workers": {
+    "api": { "command": ["./bin/api"], "port": 8090, "env": {} }
+  },
+
+  "disabled": false,
+  "hold": { "enabled": false, "title": "", "message": "" },
+
+  "access": {
+    "password": "",
+    "allow": ["10.0.0.0/8"],
+    "deny_countries": ["XX"],
+    "routes": { "/admin": { "allow": ["10.0.0.0/8"] } }
+  },
+
+  "waf": {
+    "rate": { "requests": 600, "window": "1m", "burst": 100 },
+    "max_body": "20m",
+    "under_attack": false
+  },
+
+  "cache": { "static_max_age": "1h" },
+  "headers": { "X-Frame-Options": "DENY" },
+
+  "deploy": {
+    "github": {
+      "repository": "acme/app",
+      "branch": "main",
+      "build": [["npm", "ci"], ["npm", "run", "build"]],
+      "pointer": ".next-current"
+    }
+  },
+
+  "agent": { "provider": "claude", "model": "" },
+
+  "app": ""
+}
+```
+
+## What answers a request
+
+Exactly one of these decides, checked in this order:
+
+1. `disabled: true` → the "stopped" page. No process runs.
+2. `hold.enabled: true` → the holding page. No process runs.
+3. `run` → the supervised instance. Started, health-checked, handed over.
+4. `upstream` → a process the middleware does not supervise (a fixed port
+   someone else owns). Proxied as is.
+5. `static` → files from `static.root` (default `public`, then the folder
+   itself). `spa: true` serves `index.html` for unknown paths.
+
+A folder with no `site.json` is **not served** and the panel lists it as
+"unmanaged", because a folder that serves silently and a folder that is
+ignored silently look the same from outside.
+
+## Variables
+
+In `run.command`, `run.env` values, `upstream` and `workers.*.command`:
+
+| variable | value |
+| --- | --- |
+| `$PORT` | the port the instance must listen on (assigned by the engine) |
+| `$DOMAIN` | the site's domain |
+| `$SITE_DIR` | absolute path of the site folder |
+
+The process also receives `PORT`, `HOST=127.0.0.1`, `MIDDLEWARE_DOMAIN`,
+`MIDDLEWARE_SITE_DIR` and `HOME` (a per-site home under `data/homes/`).
+
+## `env_from_file`: deploying by pointer
+
+Each entry sets a variable to the **contents of a file**, trimmed. The file is
+re-read on every tick, and a change in its contents changes the instance's
+revision, which triggers a handover. A deployment is then:
+
+```
+build into .next-2026-10-19T10-00/   (while the current build keeps serving)
+echo .next-2026-10-19T10-00 > .next-current
+```
+
+Rolling back is writing the previous name.
+
+## Revision
+
+The revision is a hash of everything the instance was born from: the resolved
+command, the resolved environment (including `env_from_file` contents and
+`env_file`), the runtime and docker settings. Anything else in the manifest
+(`access`, `waf`, `headers`, `hold`) is applied live and does not restart the
+process.
+
+## Workers
+
+A worker is a process that must always be up and answers no domain: a backend
+behind a frontend, an internal API. It is declared inside the site it belongs
+to and its port **is written**, because whoever calls it already knows it.
+Workers are supervised like instances but are never handed over by pointer:
+they restart.
+
+## Tasks: `tasks/<name>.json`
+
+```json
+{
+  "version": 2,
+  "schedule": "0 3 * * *",
+  "site": "example.com",
+  "command": ["./scripts/backup.sh"],
+  "timeout": "1h",
+  "overlap": "skip"
+}
+```
+
+`site` makes the command run inside that site's folder with that site's
+environment. Without it, the task runs from the root directory. `overlap` is
+`skip` (default) or `queue`.
