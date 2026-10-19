@@ -1,0 +1,392 @@
+// Package access decides who gets into a site, from the manifest's `access`
+// section: networks that may enter, countries that may not, and a password
+// for the whole site or for some paths. It runs after the WAF (which has
+// already refused the abusive) and before the proxy, so a site process
+// never sees a request its operator closed the door on.
+//
+// Routes narrow the site's rules by path prefix; the longest matching prefix
+// wins. A route with `allow` replaces the site's allow list for that prefix.
+// A route with `password: true` means the site password is required there;
+// when any route says so, the rest of the site is open, because "password
+// on /admin only" is what an operator writing routes wants, and a password
+// for the whole site needs no routes at all.
+package access
+
+import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"html/template"
+	"net"
+	"net/http"
+	"net/netip"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/middleware-public/internal/pages"
+)
+
+// Site is what access needs to know about the site a request is for.
+type Site struct {
+	Domain string
+	Access *manifest.Access
+}
+
+// Lookup resolves a host to its site.
+type Lookup func(host string) (Site, bool)
+
+// Options configure Access.
+type Options struct {
+	// DataDir is data/; the session key lives at data/access/key.
+	DataDir string
+	Lookup  Lookup
+	// ClientIP resolves the visitor's address; nil uses RemoteAddr only.
+	ClientIP func(r *http.Request) net.IP
+	// Country resolves an address to a country code; nil means "".
+	Country func(ip net.IP) string
+	Now     func() time.Time
+}
+
+// Access is the per-site door.
+type Access struct {
+	opts Options
+	now  func() time.Time
+	key  []byte
+
+	// verified caches positive password checks by digest of (hash, plain)
+	// so a tool sending HTTP basic auth on every request does not pay a
+	// key derivation each time. Only successes are cached: a wrong guess
+	// must cost the full derivation every time.
+	mu       sync.Mutex
+	verified map[[32]byte]struct{}
+}
+
+const (
+	sessionCookie = "mw_access"
+	sessionTTL    = 7 * 24 * time.Hour
+	// LoginPath is where the form posts. It is under a prefix no site
+	// uses, and it is answered only when the site has a password.
+	LoginPath  = "/__mw/login"
+	LogoutPath = "/__mw/logout"
+)
+
+// New loads or creates the session key. The key is kept on disk, unlike the
+// WAF's challenge key, because a restart of the supervisor must not log
+// every visitor out of every protected site.
+func New(opts Options) (*Access, error) {
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
+	a := &Access{opts: opts, now: opts.Now, verified: map[[32]byte]struct{}{}}
+	path := filepath.Join(opts.DataDir, "access", "key")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !fsx.IsNotExist(err) {
+			return nil, err
+		}
+		data = make([]byte, 32)
+		if _, err := rand.Read(data); err != nil {
+			return nil, err
+		}
+		if err := fsx.WriteAtomic(path, data, 0o600); err != nil {
+			return nil, err
+		}
+	}
+	if len(data) < 16 {
+		return nil, os.ErrInvalid
+	}
+	a.key = data
+	return a, nil
+}
+
+func (a *Access) clientIP(r *http.Request) net.IP {
+	if a.opts.ClientIP != nil {
+		return a.opts.ClientIP(r)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	return net.ParseIP(strings.Trim(host, "[]"))
+}
+
+// Wrap implements the hook.
+func (a *Access) Wrap(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.opts.Lookup == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		site, ok := a.opts.Lookup(hostOf(r))
+		if !ok || site.Access == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ac := site.Access
+		route := matchRoute(ac.Routes, r.URL.Path)
+		allow := ac.Allow
+		if route != nil && len(route.Allow) > 0 {
+			allow = route.Allow
+		}
+		ip := a.clientIP(r)
+		if len(allow) > 0 && !inAny(ip, allow) {
+			pages.Write(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if len(ac.DenyCountries) > 0 && a.opts.Country != nil && ip != nil {
+			cc := strings.ToUpper(a.opts.Country(ip))
+			for _, d := range ac.DenyCountries {
+				if cc != "" && cc == strings.ToUpper(d) {
+					pages.Write(w, "forbidden", http.StatusForbidden)
+					return
+				}
+			}
+		}
+		if !passwordRequired(ac, route) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		switch r.URL.Path {
+		case LoginPath:
+			a.login(w, r, site)
+			return
+		case LogoutPath:
+			a.clearSession(w)
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+		if a.hasSession(r, site) || a.basicAuth(r, ac.Password) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		a.askPassword(w, r, false)
+	})
+}
+
+// passwordRequired applies the route rule described in the package comment.
+func passwordRequired(ac *manifest.Access, route *manifest.RouteAccess) bool {
+	if ac.Password == "" {
+		return false
+	}
+	anyRoute := false
+	for _, ra := range ac.Routes {
+		if ra != nil && ra.Password {
+			anyRoute = true
+			break
+		}
+	}
+	if !anyRoute {
+		return true
+	}
+	return route != nil && route.Password
+}
+
+// matchRoute returns the route with the longest prefix matching path, on
+// segment boundaries: "/admin" matches "/admin" and "/admin/x", never
+// "/administrator", which is the mistake plain HasPrefix would make.
+func matchRoute(routes map[string]*manifest.RouteAccess, path string) *manifest.RouteAccess {
+	var best *manifest.RouteAccess
+	bestLen := -1
+	for prefix, ra := range routes {
+		if ra == nil {
+			continue
+		}
+		p := strings.TrimSuffix(prefix, "/")
+		if p == "" {
+			if bestLen < 0 {
+				best, bestLen = ra, 0
+			}
+			continue
+		}
+		if (path == p || strings.HasPrefix(path, p+"/")) && len(p) > bestLen {
+			best, bestLen = ra, len(p)
+		}
+	}
+	return best
+}
+
+func inAny(ip net.IP, cidrs []string) bool {
+	if ip == nil {
+		return false
+	}
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+	addr = addr.Unmap()
+	for _, c := range cidrs {
+		c = strings.TrimSpace(c)
+		if p, err := netip.ParsePrefix(c); err == nil {
+			if p.Contains(addr) {
+				return true
+			}
+			continue
+		}
+		if a, err := netip.ParseAddr(c); err == nil && a.Unmap() == addr {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *Access) basicAuth(r *http.Request, hash string) bool {
+	_, pw, ok := r.BasicAuth()
+	return ok && a.check(hash, pw)
+}
+
+func (a *Access) check(hash, plain string) bool {
+	if hash == "" || plain == "" {
+		return false
+	}
+	k := sha256.Sum256([]byte(hash + "\x00" + plain))
+	a.mu.Lock()
+	_, hit := a.verified[k]
+	a.mu.Unlock()
+	if hit {
+		return true
+	}
+	if !CheckPassword(hash, plain) {
+		return false
+	}
+	a.mu.Lock()
+	if len(a.verified) > 256 {
+		a.verified = map[[32]byte]struct{}{}
+	}
+	a.verified[k] = struct{}{}
+	a.mu.Unlock()
+	return true
+}
+
+// Session cookies are signed with the on-disk key over the domain, the
+// stored hash and the expiry, so changing the password ends every session
+// without keeping a list of them.
+func (a *Access) sign(site Site, exp int64) string {
+	mac := hmac.New(sha256.New, a.key)
+	mac.Write([]byte(site.Domain))
+	mac.Write([]byte{0})
+	mac.Write([]byte(site.Access.Password))
+	mac.Write([]byte{0})
+	mac.Write([]byte(strconv.FormatInt(exp, 10)))
+	return strconv.FormatInt(exp, 10) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (a *Access) hasSession(r *http.Request, site Site) bool {
+	c, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return false
+	}
+	expStr, _, ok := strings.Cut(c.Value, ".")
+	if !ok {
+		return false
+	}
+	exp, err := strconv.ParseInt(expStr, 10, 64)
+	if err != nil || exp < a.now().Unix() {
+		return false
+	}
+	return hmac.Equal([]byte(a.sign(site, exp)), []byte(c.Value))
+}
+
+func (a *Access) setSession(w http.ResponseWriter, r *http.Request, site Site) {
+	exp := a.now().Add(sessionTTL).Unix()
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookie, Value: a.sign(site, exp), Path: "/",
+		MaxAge: int(sessionTTL.Seconds()), HttpOnly: true, SameSite: http.SameSiteLaxMode,
+		Secure: r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"),
+	})
+}
+
+func (a *Access) clearSession(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+}
+
+func (a *Access) login(w http.ResponseWriter, r *http.Request, site Site) {
+	if r.Method != http.MethodPost {
+		a.askPassword(w, r, false)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		a.askPassword(w, r, true)
+		return
+	}
+	if !a.check(site.Access.Password, r.PostForm.Get("password")) {
+		// A wrong password costs a full derivation; a flood of them is
+		// the WAF's business, which runs before this.
+		a.askPassword(w, r, true)
+		return
+	}
+	a.setSession(w, r, site)
+	http.Redirect(w, r, safeNext(r.PostForm.Get("next")), http.StatusSeeOther)
+}
+
+// safeNext keeps the redirect on this site: a path, never a URL with a
+// host, never a protocol-relative "//evil".
+func safeNext(next string) string {
+	if next == "" || next[0] != '/' || strings.HasPrefix(next, "//") || strings.ContainsAny(next, "\\\r\n") {
+		return "/"
+	}
+	return next
+}
+
+// askPassword answers 401. Browsers get the form; anything that does not
+// ask for HTML (curl, a deploy script) gets a Basic challenge instead,
+// because the form would only get in its way.
+func (a *Access) askPassword(w http.ResponseWriter, r *http.Request, failed bool) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !strings.Contains(r.Header.Get("Accept"), "text/html") {
+		w.Header().Set("WWW-Authenticate", `Basic realm="site", charset="UTF-8"`)
+		http.Error(w, "password required", http.StatusUnauthorized)
+		return
+	}
+	next := r.URL.RequestURI()
+	if r.URL.Path == LoginPath {
+		next = r.FormValue("next")
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusUnauthorized)
+	_ = loginTpl.Execute(w, map[string]any{"Action": LoginPath, "Next": safeNext(next), "Failed": failed})
+}
+
+func hostOf(r *http.Request) string {
+	h := r.Host
+	if i := strings.LastIndexByte(h, ':'); i > 0 && !strings.Contains(h[i:], "]") {
+		h = h[:i]
+	}
+	return strings.ToLower(strings.TrimSuffix(h, "."))
+}
+
+// The form follows the visitor pages' look so a protected site and a held
+// site feel like the same house. It has no assets and no script.
+var loginTpl = template.Must(template.New("login").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Password required</title>
+<style>
+:root{color-scheme:light dark;--fg:#1b1b1f;--bg:#f6f6f8;--mute:#6b6b75;--line:#d4d4da;--err:#b3261e}
+@media(prefers-color-scheme:dark){:root{--fg:#e8e8ec;--bg:#121216;--mute:#9a9aa6;--line:#3a3a44;--err:#f2b8b5}}
+html,body{height:100%;margin:0}
+body{display:grid;place-items:center;background:var(--bg);color:var(--fg);
+font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;padding:24px;box-sizing:border-box}
+main{max-width:22rem;width:100%;text-align:center}
+h1{font-size:1.5rem;font-weight:600;margin:0 0 .5rem}
+p{margin:0 0 1.25rem;color:var(--mute)}
+.mark{width:40px;height:40px;border-radius:12px;background:currentColor;opacity:.12;margin:0 auto 1.25rem}
+input,button{font:inherit;width:100%;box-sizing:border-box;padding:.6rem .8rem;border-radius:8px;border:1px solid var(--line);background:transparent;color:inherit}
+button{margin-top:.75rem;cursor:pointer;font-weight:600}
+.err{color:var(--err)}
+</style></head>
+<body><main><div class="mark"></div><h1>Password required</h1>
+{{if .Failed}}<p class="err">That password is not right.</p>{{else}}<p>This site is private. Enter its password to continue.</p>{{end}}
+<form method="post" action="{{.Action}}">
+<input type="hidden" name="next" value="{{.Next}}">
+<input type="password" name="password" autocomplete="current-password" autofocus required aria-label="Password">
+<button type="submit">Enter</button>
+</form></main></body></html>
+`))
