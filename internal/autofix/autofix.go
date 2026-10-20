@@ -92,6 +92,11 @@ type Fixer struct {
 	opts   Options
 	mu     sync.Mutex
 	faults map[string]*fault
+	// pending is what finished turns spent and repairs.jsonl does not
+	// say yet (the line is written once the site is judged, minutes
+	// later). Counted at once, or a second repair in between would pass
+	// the daily cap.
+	pending float64
 }
 
 // New builds a fixer.
@@ -146,7 +151,9 @@ func (f *Fixer) Repairs() []Repair {
 
 func (f *Fixer) spentToday() float64 {
 	today := f.opts.Now().UTC().Format("2006-01-02")
-	sum := 0.0
+	f.mu.Lock()
+	sum := f.pending
+	f.mu.Unlock()
 	for _, r := range f.Repairs() {
 		if r.At.UTC().Format("2006-01-02") == today {
 			sum += r.CostUSD
@@ -257,6 +264,9 @@ func (f *Fixer) finished(e events.Event) {
 	ft.turn = ""
 	f.mu.Unlock()
 	r.CostUSD, _ = e.Data["cost"].(float64)
+	f.mu.Lock()
+	f.pending += r.CostUSD
+	f.mu.Unlock()
 	r.Outcome = lastLine(fmt.Sprint(e.Data["text"]))
 	if e.Type == "agent.error" {
 		r.Outcome = "the turn failed: " + e.Message
@@ -275,7 +285,10 @@ func (f *Fixer) finished(e events.Event) {
 			}
 		}
 		r.Recovered = &back
+		f.mu.Lock()
 		f.write(r)
+		f.pending -= r.CostUSD
+		f.mu.Unlock()
 		level, msg := "", "repaired: "+r.Outcome
 		if !back {
 			level, msg = "error", "still down after the repair: "+r.Outcome

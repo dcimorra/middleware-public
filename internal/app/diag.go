@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/middleware-public/internal/fsx"
 )
 
 // Diagnostics on SIGUSR1: `kill -USR1 <pid>` writes data/diag/<time>.txt
@@ -55,12 +57,11 @@ func (a *App) writeDiag() (string, error) {
 		return "", err
 	}
 	path := filepath.Join(dir, time.Now().UTC().Format("20060102T150405")+".txt")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return "", err
-	}
-	a.Diagnose(f)
-	if err := f.Close(); err != nil {
+	// Written whole and renamed into place: whoever opens the report sees
+	// all of it or none, never the first half.
+	var buf bytes.Buffer
+	a.Diagnose(&buf)
+	if err := fsx.WriteAtomic(path, buf.Bytes(), 0o600); err != nil {
 		return "", err
 	}
 	if old, _ := filepath.Glob(filepath.Join(dir, "*.txt")); len(old) > keepDiag {
