@@ -39,6 +39,8 @@ type Turn struct {
 	At        time.Time `json:"at"`
 	SessionID string    `json:"session_id,omitempty"`
 	Tools     []string  `json:"tools,omitempty"`
+	// Questions are the decisions the agent asked for in this turn.
+	Questions []Question `json:"questions,omitempty"`
 }
 
 // Conversation is data/chat/<domain>.json.
@@ -457,10 +459,20 @@ func (m *Manager) follow(domain, turnID string, s Settings, run agent.Run, cance
 	var all []agent.Event
 	var text strings.Builder
 	var tools []string
+	var questions []Question
 	var cost float64
 	sessionID := ""
 	var errText string
 	ended := false
+	// Each text event is one complete piece of what the agent said, so a
+	// question in it is whole and goes out as the piece arrives, not when
+	// the turn ends: the operator can answer while the agent still works.
+	ask := func(piece string) {
+		for _, q := range ParseQuestions(piece) {
+			questions = append(questions, q)
+			m.emit("agent.question", domain, "", q.Question, map[string]any{"turn_id": turnID, "question": q.Question, "options": q.Options, "recommended": q.Recommended})
+		}
+	}
 	for ev := range run.Events() {
 		all = append(all, ev)
 		if ev.SessionID != "" {
@@ -473,6 +485,7 @@ func (m *Manager) follow(domain, turnID string, s Settings, run agent.Run, cance
 			}
 			text.WriteString(ev.Text)
 			m.emit("agent.text", domain, "", "", map[string]any{"turn_id": turnID, "text": ev.Text})
+			ask(ev.Text)
 		case agent.KindTool:
 			tools = append(tools, ev.Tool)
 			m.emit("agent.tool", domain, "", "", map[string]any{"turn_id": turnID, "tool": ev.Tool, "input": ev.Input})
@@ -487,6 +500,7 @@ func (m *Manager) follow(domain, turnID string, s Settings, run agent.Run, cance
 			}
 			if text.Len() == 0 {
 				text.WriteString(ev.Text)
+				ask(ev.Text)
 			}
 		case agent.KindError:
 			ended = true
@@ -514,7 +528,7 @@ func (m *Manager) follow(domain, turnID string, s Settings, run agent.Run, cance
 	if sessionID != "" {
 		c.SessionID = sessionID
 	}
-	turn := Turn{ID: turnID, Role: "assistant", Text: text.String(), Cost: cost, At: time.Now(), SessionID: sessionID, Tools: tools}
+	turn := Turn{ID: turnID, Role: "assistant", Text: text.String(), Cost: cost, At: time.Now(), SessionID: sessionID, Tools: tools, Questions: questions}
 	if errText != "" {
 		turn.Role = "error"
 		if turn.Text == "" {
@@ -593,6 +607,10 @@ func Preamble(domain, workdir string, j agent.Jail) string {
 		b.WriteString("You must not read, write or run anything outside it: other sites, the middleware's data, its tasks or its root are off limits, and every tool call is audited for that.\n")
 	}
 	b.WriteString("Do not start long-running processes: the middleware supervises the site's process from its manifest, and a change to the manifest or to a pointer file is how a deployment happens.\n")
+	b.WriteString("When this turn ends, its whole process group is killed. Anything that takes longer than a turn (a build, an install, a deployment) must be started detached, exactly like this: `setsid nohup <cmd> >/tmp/<name>.log 2>&1 </dev/null &`, and your reply must state the log's path so the next message can check how it went.\n")
+	b.WriteString("When you need the operator to decide something, ask with a fenced block the panel turns into buttons; two to four short options, the one you would pick as recommended, or an empty options list for a free-text answer:\n")
+	b.WriteString("```question\n{\"question\": \"Which database?\", \"options\": [\"SQLite\", \"Postgres\"], \"recommended\": \"SQLite\"}\n```\n")
+	b.WriteString("Ask one thing at a time, then end your turn; the answer arrives as the next message.\n")
 	if len(j.Deny) > 0 {
 		b.WriteString("Paths you must not touch:\n")
 		for _, d := range j.Deny {

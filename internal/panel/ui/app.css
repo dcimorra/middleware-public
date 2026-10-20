@@ -435,6 +435,9 @@ dialog form.dlg { display: flex; flex-direction: column; max-height: calc(100vh 
 .chat-head { display: flex; justify-content: flex-end; min-height: 1em; }
 .chat-capacity.full { color: var(--warn); font-weight: 600; }
 .chat-notice { margin: 0; }
+.chat-question { margin: 8px 0 4px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.chat-question .q { font-weight: 600; margin-bottom: 6px; }
+.chat-question .row { display: flex; gap: 6px; flex-wrap: wrap; }
 .chat-turns { flex: 1; display: flex; flex-direction: column; gap: 10px; }
 .turn { max-width: 100%; padding: 10px 12px; border-radius: var(--radius-lg); background: var(--surface-2); overflow-wrap: anywhere; }
 .turn.user { background: var(--accent-soft); align-self: flex-end; max-width: 85%; }

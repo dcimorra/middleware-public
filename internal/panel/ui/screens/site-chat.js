@@ -57,9 +57,37 @@ export function chatTab(domain) {
 
   function turnEl(role, body, cost, at) {
     const who = h("div", { class: "who" }, role === "user" ? t("chat.you") : t("chat.agent"), at ? h("span", { class: "muted" }, new Date(at).toLocaleTimeString()) : null, cost ? h("span", { class: "cost" }, fmtCost(cost)) : null);
-    const textEl = h("div", { class: "text" }, body || "");
+    const textEl = h("div", { class: "text" }, role === "user" ? (body || "") : stripQuestions(body || ""));
     const el = h("div", { class: "turn " + role }, who, textEl);
     return { el, textEl, who };
+  }
+
+  // A question block is shown as its buttons, not as the JSON the agent
+  // wrote; the text around it stays.
+  function stripQuestions(s) {
+    return s.replace(/^[ \t]*```question[ \t]*\n[\s\S]*?\n[ \t]*```[ \t]*$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  // The buttons answer by sending the option as the next message; the
+  // last one opens the box. Once one is pressed the group is disabled so
+  // the same question is not answered twice by accident. No options means
+  // the agent wants words, so only the box is offered.
+  function questionEl(q) {
+    const group = h("div", { class: "chat-question", role: "group", "aria-label": q.question });
+    group.append(h("div", { class: "q" }, q.question));
+    const row = h("div", { class: "row" });
+    const settle = () => { for (const b of row.querySelectorAll("button")) b.disabled = true; };
+    for (const opt of q.options || []) {
+      const label = opt === q.recommended ? t("chat.recommended", { option: opt }) : opt;
+      const b = h("button", { type: "button", class: "btn sm" + (opt === q.recommended ? " primary" : "") }, label);
+      b.addEventListener("click", () => { if (running) return; settle(); text.value = opt; form.requestSubmit(); });
+      row.append(b);
+    }
+    const other = h("button", { type: "button", class: "btn sm ghost" }, t("chat.somethingElse"));
+    other.addEventListener("click", () => { settle(); text.focus(); });
+    row.append(other);
+    group.append(row);
+    return group;
   }
   function fmtCost(c) {
     const n = Number(c);
@@ -92,7 +120,14 @@ export function chatTab(domain) {
       if (conv.provider && [...provider.options].some((o) => o.value === conv.provider)) provider.value = conv.provider;
       fillModels();
       if (conv.model) model.value = conv.model;
-      for (const tn of conv.turns || []) turns.append(turnEl(tn.role === "user" ? "user" : "agent", tn.text, tn.cost, tn.at).el);
+      const list = conv.turns || [];
+      list.forEach((tn, i) => {
+        const tu = turnEl(tn.role === "user" ? "user" : "agent", tn.text, tn.cost, tn.at);
+        // Only the last turn's questions are still open; earlier ones
+        // were answered by whatever came after them.
+        if (i === list.length - 1 && tn.role !== "user" && !conv.running) for (const q of tn.questions || []) tu.el.append(questionEl(q));
+        turns.append(tu.el);
+      });
       if (!(conv.turns || []).length) turns.append(h("div", { class: "empty" }, h("strong", null, t("chat.emptyTitle")), t("chat.emptyHint")));
       scroll();
     } catch (e) {
@@ -132,7 +167,7 @@ export function chatTab(domain) {
     if (ev.type === "agent.text" || ev.type === "agent.delta") {
       const piece = d.delta ?? d.text ?? ev.message ?? "";
       running.buf += piece;
-      running.textEl.textContent = running.buf;
+      running.textEl.textContent = stripQuestions(running.buf);
       scroll();
     } else if (ev.type.startsWith("agent.tool")) {
       const id = d.id || d.tool_id || d.name || ev.time;
@@ -156,6 +191,15 @@ export function chatTab(domain) {
       if (ev.type.includes("result") || output) pre.textContent = (input ? input + "\n\n" : "") + output;
       else if (input) pre.textContent = input;
       else if (ev.message) pre.textContent = ev.message;
+    } else if (ev.type === "agent.question") {
+      // After the text that carried it, before whatever the agent says next.
+      running.textEl.classList.remove("typing");
+      if (!running.textEl.textContent) running.textEl.remove();
+      const next = h("div", { class: "text typing" });
+      running.el.append(questionEl(d), next);
+      running.textEl = next;
+      running.buf = "";
+      scroll();
     } else if (ev.type === "agent.cost") {
       running.who.append(h("span", { class: "cost" }, fmtCost(d.cost ?? d.usd ?? ev.message)));
     } else if (ev.type === "agent.end" || ev.type === "agent.done" || ev.type === "agent.turn.ended" || ev.type === "agent.stopped") {

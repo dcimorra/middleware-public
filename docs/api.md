@@ -183,7 +183,7 @@ The routes answer 503 when the WAF did not start (a broken block list); the
 | --- | --- | --- |
 | GET | `/agents` | → `{providers: [{provider, available, where, models: []}], capacity}` (`where` is the binary's path, or why it cannot run) |
 | GET | `/agents/capacity` | → `{used, max, reserved_for_house, providers: {claude: {used, max}}, running: [{domain, provider, started, turn_id}]}`; a provider's `max` of 0 means no cap of its own |
-| GET | `/sites/{domain}/chat` | → `{domain, provider, model, session_id, running, turns: [{id, role, text, cost, at}]}` |
+| GET | `/sites/{domain}/chat` | → `{domain, provider, model, session_id, running, turns: [{id, role, text, cost, at, tools, questions: [{question, options, recommended}]}]}` |
 | POST | `/sites/{domain}/chat` | `{text, model?}` → `{turn_id}`; progress on `/events/stream` as `agent.*`; 409 while a turn runs in this conversation; 429 when the house, or the provider, has no free slot (the message says how many of how many; `agent.capacity` is emitted with the numbers) |
 | POST | `/sites/{domain}/chat/stop` | → `{ok}`; 409 when nothing runs |
 | DELETE | `/sites/{domain}/chat` | → `{ok}` (new conversation) |
@@ -195,8 +195,23 @@ subject and `turn_id` in `data`: `agent.started` (`provider`, `model`),
 (`tool`, `input`), `agent.done` (`cost`, `session_id`, `text`, `tools`),
 `agent.error` (level `error`; the turn ended badly), `agent.jail_violation`
 (`paths` the agent referred to and must not have), `agent.cost_cap` (the
-site's monthly cap refused the turn) and `agent.capacity` (level `warn`; a
-send was refused for lack of a slot: `used`, `max`, `provider`, `providers`).
+site's monthly cap refused the turn), `agent.capacity` (level `warn`; a
+send was refused for lack of a slot: `used`, `max`, `provider`, `providers`)
+and `agent.question` (`question`, `options`, `recommended`: the agent asked
+for a decision).
+
+**Questions.** An agent that needs a decision writes a fenced block in its
+text:
+
+```question
+{"question": "Which database?", "options": ["SQLite", "Postgres"], "recommended": "SQLite"}
+```
+
+The block is parsed as the text arrives, emitted as `agent.question` and
+kept on the turn as `questions`; the panel shows it as buttons (plus
+"Something else…" for a typed answer; an empty `options` list means only
+the text box) and the chosen text is sent as the next message. A block that
+is not valid JSON is left in the text and ignored.
 
 ## Tasks
 
