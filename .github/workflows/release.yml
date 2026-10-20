@@ -8,18 +8,57 @@ name: release
 on:
   push:
     tags: ["v*"]
+  # Manual releases from the Actions tab: the workflow creates the tag
+  # itself, so a release never depends on whoever is cutting it being able
+  # to push tags from their machine.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to create and release (v2.0.0-alpha.1)"
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 jobs:
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: pick
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -eu
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            case "$INPUT_TAG" in v[0-9]*) ;; *) echo "tag must look like v2.0.0" >&2; exit 1 ;; esac
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            if git rev-parse -q --verify "refs/tags/$INPUT_TAG" >/dev/null; then
+              echo "tag $INPUT_TAG already exists" >&2; exit 1
+            fi
+            git tag -a "$INPUT_TAG" -m "$INPUT_TAG"
+            git push origin "refs/tags/$INPUT_TAG"
+            echo "version=$INPUT_TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: tag
     runs-on: ubuntu-latest
     strategy:
       matrix:
         arch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.tag.outputs.version }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -35,7 +74,7 @@ jobs:
         run: |
           set -eu
           name="middleware-linux-${{ matrix.arch }}"
-          go build -trimpath -ldflags "-s -w -X main.Version=${GITHUB_REF_NAME}" -o "dist/$name" ./cmd/middleware
+          go build -trimpath -ldflags "-s -w -X main.Version=${{ needs.tag.outputs.version }}" -o "dist/$name" ./cmd/middleware
           # sha256sum's own format ("<hash>  <name>"), which is what
           # scripts/install.sh parses and what `sha256sum -c` accepts.
           (cd dist && sha256sum "$name" > "$name.sha256")
@@ -47,7 +86,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: build
+    needs: [tag, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -58,6 +97,8 @@ jobs:
         run: ls -l dist && cat dist/*.sha256
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.tag.outputs.version }}
+          prerelease: ${{ contains(needs.tag.outputs.version, '-') }}
           files: dist/*
           generate_release_notes: true
           body: |
