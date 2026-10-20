@@ -212,7 +212,10 @@ process.
   `allow` narrows the site's, `deny` adds to it, and a zone's own `password`
   is asked for after the site's. Each password gives a pass valid for its own
   zone only. Rules decide on the cleaned, case-folded path, which is what the
-  site will serve. Passwords are stored hashed; set them from the panel or
+  site will serve. Every `allow` and `deny` entry is an address or a CIDR;
+  one that is neither rejects the whole manifest rather than being skipped,
+  because a skipped entry can leave an allow list empty, and an empty one
+  admits everyone. Passwords are stored hashed; set them from the panel or
   the API, which hash what they are given.
 - `aliases` are served exactly like the site. A name that is already a site,
   or that two sites claim, is served by neither, and an event says so.

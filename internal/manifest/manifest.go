@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -474,6 +475,25 @@ func (m *Manifest) Validate() error {
 			}
 		}
 	}
+	if a := m.Access; a != nil {
+		if err := validAddrs("access.allow", a.Allow); err != nil {
+			return err
+		}
+		if err := validAddrs("access.deny", a.Deny); err != nil {
+			return err
+		}
+		for prefix, r := range a.Routes {
+			if r == nil {
+				continue
+			}
+			if err := validAddrs("access.routes."+prefix+".allow", r.Allow); err != nil {
+				return err
+			}
+			if err := validAddrs("access.routes."+prefix+".deny", r.Deny); err != nil {
+				return err
+			}
+		}
+	}
 	if m.WAF != nil && m.WAF.Rate != nil {
 		if m.WAF.Rate.Requests <= 0 || m.WAF.Rate.Window <= 0 {
 			return errors.New("waf.rate: requests and window must be positive")
@@ -561,6 +581,31 @@ func (m *Manifest) Mode() Mode {
 var userRe = regexp.MustCompile(`^[0-9]{1,10}(:[0-9]{1,10})?$`)
 var envKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+// validAddrs rejects a list with an entry the door could not read. The
+// door used to skip such an entry, which fails open: "10.0.0/8" in an
+// allow list that held nothing else left the list empty, and an empty
+// allow list lets everyone in. A typo in a deny list just as quietly
+// stopped denying. Refusing the manifest keeps the previous one in force
+// and the engine says why.
+func validAddrs(field string, list []string) error {
+	for _, s := range list {
+		if !ValidAddr(s) {
+			return fmt.Errorf("%s: %q is not an address or CIDR", field, s)
+		}
+	}
+	return nil
+}
+
+// ValidAddr is whether s is an address or a CIDR as the door reads them.
+func ValidAddr(s string) bool {
+	s = strings.TrimSpace(s)
+	if _, err := netip.ParsePrefix(s); err == nil {
+		return true
+	}
+	_, err := netip.ParseAddr(s)
+	return err == nil
+}
 
 func validEnvKey(s string) bool { return envKeyRe.MatchString(s) }
 func validName(s string) bool   { return nameRe.MatchString(s) }

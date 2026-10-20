@@ -186,3 +186,30 @@ func TestAnExpectedStatusIsTheOnlyHealthyOne(t *testing.T) {
 		t.Fatal("expect_status")
 	}
 }
+
+func TestAnUnreadableAddressRejectsTheManifest(t *testing.T) {
+	good := []string{
+		`{"version":2,"access":{"allow":["10.0.0.0/8"," 192.168.1.4 ","::1","2001:db8::/32"]}}`,
+		`{"version":2,"access":{"routes":{"/admin":{"allow":["10.1.0.0/16"],"deny":["10.1.2.3"]}}}}`,
+	}
+	for _, in := range good {
+		if _, err := Parse([]byte(in)); err != nil {
+			t.Errorf("%s: %v", in, err)
+		}
+	}
+	// Each of these used to be skipped by the door. The first one is the
+	// dangerous shape: an allow list whose only entry is skipped is an
+	// empty allow list, and that admits everyone.
+	bad := []string{
+		`{"version":2,"access":{"allow":["10.0.0/8"]}}`,
+		`{"version":2,"access":{"deny":["10.9.9.9","nope"]}}`,
+		`{"version":2,"access":{"allow":[""]}}`,
+		`{"version":2,"access":{"routes":{"/admin":{"allow":["10.1.0.0/33"]}}}}`,
+		`{"version":2,"access":{"routes":{"/admin":{"deny":["300.1.1.1"]}}}}`,
+	}
+	for _, in := range bad {
+		if _, err := Parse([]byte(in)); err == nil {
+			t.Errorf("%s parsed", in)
+		}
+	}
+}

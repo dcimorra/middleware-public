@@ -32,7 +32,6 @@ What the tests only fake, to be run for real:
 
 - A brake on site password checks (per domain, zone and address) and at
   most two key derivations at once.
-- An unreadable CIDR rejects the manifest instead of being skipped.
 - The `security` block: bot families, browser lists, country allow lists,
   per-site paths, built-in probe paths (`/.env`, `/.git`…), recent blocks.
 - Attack mode with proof of work, a key that survives restarts, `skip`
@@ -106,6 +105,8 @@ cgroup above.
   real API with a throwaway tunnel and name.
 - **§3 Visitor pages**: V1's seven designs, starting vs not answering, hold
   modes, JSON for API clients, 503 instead of 502.
+- **§3 The door**: an unreadable address or CIDR in `access` rejects the
+  manifest instead of being skipped.
 - **§4 Engine**: docker sites behind V1's walls at their own paths
   (proven on a rootless daemon), `middleware exec`, `needs`, task runs
   re-adopted and stoppable, agent turns in a cgroup of their own, rename,
