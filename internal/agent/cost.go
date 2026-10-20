@@ -24,6 +24,12 @@ type LedgerFile struct {
 	Domain string             `json:"domain"`
 	Days   map[string]float64 `json:"days"` // "2006-01-02" → USD
 	Total  float64            `json:"total"`
+	// Turns and Models keep, per day, how many turns cost something and
+	// what each model cost: the days are kept, not only today, so what a
+	// project spent in a month can be read back (V1 reset at midnight and
+	// lost it).
+	Turns  map[string]int                `json:"turns,omitempty"`
+	Models map[string]map[string]float64 `json:"models,omitempty"`
 }
 
 // NewLedger returns a ledger under dataDir.
@@ -47,6 +53,11 @@ func (l *Ledger) read(domain string) LedgerFile {
 // are ignored: a provider that reports no cost must not create a file that
 // reads as "free".
 func (l *Ledger) Add(domain string, usd float64, at time.Time) error {
+	return l.AddTurn(domain, "", usd, at)
+}
+
+// AddTurn records one turn's cost with its model.
+func (l *Ledger) AddTurn(domain, model string, usd float64, at time.Time) error {
 	if usd <= 0 {
 		return nil
 	}
@@ -56,7 +67,34 @@ func (l *Ledger) Add(domain string, usd float64, at time.Time) error {
 	day := at.UTC().Format("2006-01-02")
 	f.Days[day] += usd
 	f.Total += usd
+	if f.Turns == nil {
+		f.Turns = map[string]int{}
+	}
+	f.Turns[day]++
+	if model != "" {
+		if f.Models == nil {
+			f.Models = map[string]map[string]float64{}
+		}
+		if f.Models[day] == nil {
+			f.Models[day] = map[string]float64{}
+		}
+		f.Models[day][model] += usd
+	}
 	return fsx.WriteJSON(l.path(domain), f, 0o644)
+}
+
+// Day is what domain spent on the day of at.
+func (l *Ledger) Day(domain string, at time.Time) float64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.read(domain).Days[at.UTC().Format("2006-01-02")]
+}
+
+// File is domain's whole record, for the panel.
+func (l *Ledger) File(domain string) LedgerFile {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.read(domain)
 }
 
 // Month sums the domain's cost for the month containing at.

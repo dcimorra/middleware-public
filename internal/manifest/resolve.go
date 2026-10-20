@@ -28,9 +28,15 @@ type Spec struct {
 	Runtime string
 	Docker  *Docker
 	// Port is the written port, or 0 for one the engine assigns.
-	Port     int
+	Port int
+	// Mounts are more folders a container sees at their own path (the
+	// site door's socket folder).
+	Mounts   []string
 	Revision string
 }
+
+// Rehash recomputes the revision after the engine added to the spec.
+func (s *Spec) Rehash() { s.Revision = s.hash() }
 
 // Resolve turns a manifest into the spec of the instance it describes.
 // `$PORT` is left in place: the port is chosen at start, and the revision
@@ -143,6 +149,7 @@ func (s *Spec) hash() string {
 	for _, k := range keys {
 		w(k, s.Env[k])
 	}
+	w(s.Mounts...)
 	if s.Docker != nil {
 		w(s.Docker.Image, s.Docker.Build, s.Docker.Memory, s.Docker.User,
 			strconv.Itoa(s.Docker.Pids), strconv.FormatFloat(s.Docker.CPUs, 'f', -1, 64), strconv.Itoa(s.Docker.CPUWeight))

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -27,6 +28,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/pages"
 	"github.com/dcimorra/middleware-public/internal/publish"
 	"github.com/dcimorra/middleware-public/internal/settings"
+	"github.com/dcimorra/middleware-public/internal/sitetoken"
 )
 
 // The order of the hooks is the shape of the process, so it is written
@@ -134,6 +136,9 @@ func buildWire(a *app.App) app.Hook {
 	pages.SetHouseTheme(a.Settings.VisitorTheme)
 	srv.OnSettingsSaved(func(st settings.Settings) { pages.SetHouseTheme(st.VisitorTheme) })
 	srv.RegisterAgents(api.AgentsOptions{Registry: providers(), Chat: chatManager})
+	if chatManager != nil {
+		wireSiteDoor(a, srv, set)
+	}
 	if taskScheduler != nil {
 		srv.RegisterTasks(api.TasksOptions{Scheduler: taskScheduler, Root: a.Root})
 	}
@@ -387,4 +392,70 @@ func buildPublisher(a *app.App, set *moduleSet) *publish.Publisher {
 		return nil
 	}
 	return p
+}
+
+// wireSiteDoor opens the site door: tokens derived from data/site-door.key,
+// put in the environment of every site whose manifest has claude_api, and
+// a socket of its own for sites in containers, where 127.0.0.1 is the
+// container's and the loopback listener cannot be reached. The socket's
+// folder is mounted, not the file: the socket is recreated at every start,
+// and a container holding the file would keep the dead inode. Through that
+// socket only the site door answers, never the panel: what calls it is
+// what answers requests from the internet.
+func wireSiteDoor(a *app.App, srv *api.Server, set *moduleSet) {
+	tokens := sitetoken.New(dataDir(a))
+	runDir := filepath.Join(dataDir(a), "run")
+	sock := filepath.Join(runDir, "site.sock")
+	listen := a.Settings.Listen
+	a.Engine.SetSiteEnv(func(domain string, m *manifest.Manifest) (map[string]string, []string) {
+		env := map[string]string{}
+		var mounts []string
+		if m.ClaudeAPI != nil {
+			if tok, err := tokens.Token(domain); err == nil {
+				env["MIDDLEWARE_TOKEN"] = tok
+				env["MIDDLEWARE_API"] = "http://" + listen + api.Prefix
+				if m.Run != nil && m.Run.Runtime == "docker" {
+					env["MIDDLEWARE_API"] = "http://localhost" + api.Prefix
+					env["MIDDLEWARE_API_SOCKET"] = sock
+					mounts = append(mounts, runDir)
+				}
+			}
+		}
+		if m.Claude && set != nil {
+			// The house's subscription token, for a site that runs the CLI
+			// itself: it reaches as far as the subscription does.
+			if cfg, err := set.Manager.Config(agents.ClaudeKey); err == nil && cfg["oauth_token"] != "" {
+				env["CLAUDE_CODE_OAUTH_TOKEN"] = cfg["oauth_token"]
+			}
+		}
+		return env, mounts
+	})
+	srv.RegisterSiteDoor(api.SiteDoorOptions{
+		Chat:   chatManager,
+		Tokens: tokens,
+		Lookup: func(domain string) (*manifest.Manifest, bool) {
+			sn, ok := a.Engine.Lookup(domain)
+			if !ok || sn.Domain != domain {
+				return nil, false
+			}
+			return sn.Manifest, sn.Manifest != nil
+		},
+		HouseDaily: func() float64 { return a.Settings.Agents.SiteDaily() },
+		Spent:      chatManager.Ledger().Day,
+	})
+	ln, err := api.ListenSocket(sock)
+	if err != nil {
+		a.Bus.Emit(events.Event{Type: "sitedoor.socket_failed", Actor: "api", Level: "error", Message: err.Error()})
+		return
+	}
+	_ = os.Chmod(sock, 0o666)
+	h := srv.Panel()
+	door := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != api.Prefix+"/site" && !strings.HasPrefix(r.URL.Path, api.Prefix+"/site/") {
+			http.NotFound(w, r)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+	go func() { _ = (&http.Server{Handler: door, ReadHeaderTimeout: 15 * time.Second}).Serve(ln) }()
 }

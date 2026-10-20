@@ -99,6 +99,12 @@ func (p *Provider) Args(req agent.Request, settingsFile string) []string {
 	if settingsFile != "" {
 		args = append(args, "--settings", settingsFile)
 	}
+	if req.Tools != nil {
+		args = append(args, "--tools", strings.Join(req.Tools, ","))
+	}
+	if len(req.Disallowed) > 0 {
+		args = append(args, "--disallowed-tools", strings.Join(req.Disallowed, ","))
+	}
 	return append(args, p.cfg.ExtraArgs...)
 }
 
@@ -125,6 +131,11 @@ func Settings(j agent.Jail) map[string]any {
 	for _, c := range j.Commands {
 		deny = append(deny, fmt.Sprintf("Bash(%s:*)", c))
 	}
+	for _, s := range j.Secrets {
+		for _, tool := range []string{"Read", "Grep", "Glob"} {
+			deny = append(deny, fmt.Sprintf("%s(/%s)", tool, s))
+		}
+	}
 	return map[string]any{"permissions": map[string]any{"deny": deny}}
 }
 
@@ -140,12 +151,19 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 		return nil, err
 	}
 	settingsFile := ""
-	if len(req.Jail.Deny) > 0 {
+	if len(req.Jail.Deny) > 0 || len(req.Jail.Secrets) > 0 || len(req.Jail.Commands) > 0 {
 		dir := req.Jail.Home
 		if dir == "" {
 			dir = req.Workdir
 		}
-		settingsFile = filepath.Join(dir, ".middleware", "claude-settings.json")
+		// One per conversation: two conversations of one site with different
+		// tool levels used to rewrite each other's file without a single
+		// error anywhere (V1). A '#' is fine in a file name.
+		file := "claude-settings.json"
+		if req.Name != "" && strings.Contains(req.Name, "#") {
+			file = "claude-settings-" + strings.ReplaceAll(req.Name, "/", "_") + ".json"
+		}
+		settingsFile = filepath.Join(dir, ".middleware", file)
 		if err := fsx.WriteJSON(settingsFile, Settings(req.Jail), 0o600); err != nil {
 			return nil, err
 		}

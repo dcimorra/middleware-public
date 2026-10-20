@@ -155,6 +155,8 @@ func Convert(name string, data []byte) Result {
 	}
 	m.Needs = in.Needs
 	m.Notice = c.notice
+	m.ClaudeAPI = c.claudeAPI
+	m.Claude = in.Claude
 	if len(r.Blockers) > 0 {
 		return r
 	}
@@ -167,8 +169,9 @@ func Convert(name string, data []byte) Result {
 }
 
 type converter struct {
-	r      *Result
-	notice *manifest.Notice
+	r         *Result
+	notice    *manifest.Notice
+	claudeAPI *manifest.ClaudeAPI
 }
 
 // themeKeys maps V1's design names to V2's: the same seven designs.
@@ -243,11 +246,27 @@ func (c *converter) blockers(in *v1) {
 	if present(in.Chat) {
 		c.block("chat (loans to the conversation; parity §5)")
 	}
-	if in.Claude {
-		c.block("claude: true (agent token for the site; parity §5)")
-	}
 	if present(in.ClaudeAPI) {
-		c.block("claude_api (the site door; parity §5)")
+		var ca struct {
+			Tools      string  `json:"tools"`
+			DailyUSD   float64 `json:"daily_usd"`
+			Concurrent int     `json:"concurrent"`
+			MaxChats   int     `json:"max_chats"`
+			Model      string  `json:"model"`
+			HideChats  bool    `json:"hide_chats"`
+		}
+		dec := json.NewDecoder(bytes.NewReader(in.ClaudeAPI))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&ca); err != nil {
+			c.block("claude_api: %v", err)
+		} else {
+			if ca.Concurrent != 0 {
+				// V1 stopped honouring it on 29 September 2026; only the
+				// house's capacity limits turns now, in both versions.
+				c.note("claude_api.concurrent dropped: V1 no longer applied it either")
+			}
+			c.claudeAPI = &manifest.ClaudeAPI{Tools: ca.Tools, DailyUSD: ca.DailyUSD, MaxChats: ca.MaxChats, Model: ca.Model, HideChats: ca.HideChats}
+		}
 	}
 	if in.Health.Expect != 0 {
 		c.block("health.expect_status %d (parity §4)", in.Health.Expect)

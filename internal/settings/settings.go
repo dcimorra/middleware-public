@@ -63,6 +63,17 @@ type Agents struct {
 	PerProvider map[string]int `json:"per_provider"`
 	// DefaultProvider runs a conversation whose manifest names none.
 	DefaultProvider string `json:"default_provider"`
+	// SiteDailyUSD is what a site may spend through the site door in a
+	// day when its manifest says nothing (claude_api.daily_usd).
+	SiteDailyUSD float64 `json:"site_daily_usd,omitempty"`
+}
+
+// SiteDaily is SiteDailyUSD with its default.
+func (a Agents) SiteDaily() float64 {
+	if a.SiteDailyUSD > 0 {
+		return a.SiteDailyUSD
+	}
+	return 5
 }
 
 // MaxAgents is the ceiling of MaxConcurrent.

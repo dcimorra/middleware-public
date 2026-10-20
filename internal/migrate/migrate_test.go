@@ -84,7 +84,6 @@ func TestAProxySiteKeepsEverythingItHad(t *testing.T) {
 func TestWhatV2CannotDoYetBlocksTheSite(t *testing.T) {
 	cases := map[string]string{
 		`{"kind":"static","vpn":{"devices":["phone"]}}`:                      "vpn",
-		`{"kind":"proxy","command":["x"],"claude_api":{"daily_usd":1}}`:      "claude_api",
 		`{"kind":"static","attack":{"on":true}}`:                             "attack mode on",
 		`{"kind":"static","cache":{"rules":[{"path":"/","mode":"origen"}]}}`: "cache rules",
 		`{"kind":"static","hold":{"mode":"302"}}`:                            "hold mode",
@@ -204,5 +203,19 @@ func TestTheDesignAndTheHoldModeAreCarried(t *testing.T) {
 	m := r.Manifest
 	if m.Notice == nil || m.Notice.Theme != "card" || m.Hold.Mode != "410" || m.Hold.Until != "2026-12-01T10:00:00Z" || m.Hold.Message != "Closed for good" {
 		t.Fatalf("%+v %+v", m.Notice, m.Hold)
+	}
+}
+
+func TestTheSiteDoorAndTheClaudeTokenAreCarried(t *testing.T) {
+	r := Convert("a.example", []byte(`{"kind":"proxy","command":["x"],"claude":true,"claude_api":{"tools":"read","daily_usd":1000,"concurrent":1,"max_chats":20,"model":"sonnet","hide_chats":true}}`))
+	if !r.Ready() {
+		t.Fatalf("%v", r.Blockers)
+	}
+	ca := r.Manifest.ClaudeAPI
+	if !r.Manifest.Claude || ca == nil || ca.Tools != "read" || ca.DailyUSD != 1000 || ca.MaxChats != 20 || ca.Model != "sonnet" || !ca.HideChats {
+		t.Fatalf("%+v %+v", r.Manifest, ca)
+	}
+	if !strings.Contains(strings.Join(r.Notes, "\n"), "concurrent") {
+		t.Fatalf("notes: %v", r.Notes)
 	}
 }

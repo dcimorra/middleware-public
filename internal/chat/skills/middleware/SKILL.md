@@ -559,6 +559,21 @@ Each password gives its own pass, valid only for its zone. The client
 address is the real one: edge headers are believed only from the door they
 belong to, so a hand-written `X-Forwarded-For` opens nothing.
 
+**The site's code needs Claude** (draft, classify, answer with JSON) → open
+the site door with `"claude_api": {}` and call it from the code; never
+install or call the `claude` CLI from the site, and never put an API key in
+the project:
+
+```sh
+curl -s "$MIDDLEWARE_API/site/claude/ask" -H "Authorization: Bearer $MIDDLEWARE_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"prompt": "Summarise: …", "format": "json"}'
+```
+
+The default level has no tools; `read`, `web` and `write` are a person's
+decision, not yours. Each site has a daily cap (`claude_api.daily_usd`); a
+429 says it was reached. In a docker site, call it over
+`$MIDDLEWARE_API_SOCKET` (curl `--unix-socket`).
+
 **Too much automated traffic** → `waf`:
 
 ```json

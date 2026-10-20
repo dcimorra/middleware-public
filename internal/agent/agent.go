@@ -52,6 +52,13 @@ type Request struct {
 	// can; otherwise it is prepended to the prompt.
 	System string
 	Jail   Jail
+	// Tools, when not nil, is every tool the turn has (empty: none);
+	// nil is every tool, behind the jail. Disallowed are refused on top.
+	Tools      []string
+	Disallowed []string
+	// Name is the conversation's name, for files that must be one per
+	// conversation and not one per site.
+	Name string
 }
 
 // Run is one turn in progress.

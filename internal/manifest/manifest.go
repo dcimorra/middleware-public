@@ -50,9 +50,17 @@ type Manifest struct {
 	Cache   *Cache            `json:"cache,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
 	Notice  *Notice           `json:"notice,omitempty"`
-	Deploy  *Deploy           `json:"deploy,omitempty"`
-	Agent   *Agent            `json:"agent,omitempty"`
-	App     string            `json:"app,omitempty"`
+	// ClaudeAPI opens the site door: the site's own code may talk to Claude
+	// through the house (see docs/api.md, "The site door").
+	ClaudeAPI *ClaudeAPI `json:"claude_api,omitempty"`
+	// Claude passes the house's Claude subscription token to the site's
+	// process (CLAUDE_CODE_OAUTH_TOKEN), for a site that runs the CLI
+	// itself. Prefer claude_api: the token reaches as far as the
+	// subscription does, the site door only as far as its level.
+	Claude bool    `json:"claude,omitempty"`
+	Deploy *Deploy `json:"deploy,omitempty"`
+	Agent  *Agent  `json:"agent,omitempty"`
+	App    string  `json:"app,omitempty"`
 }
 
 // Static serves files.
@@ -137,6 +145,27 @@ type Hold struct {
 	// Until is when the site is due back (RFC 3339): shown on the page
 	// and sent as Retry-After.
 	Until string `json:"until,omitempty"`
+}
+
+// ClaudeAPI is the site door's rules for this site. An empty block is a
+// site that may ask and nothing else: no tools, no files, no web, which is
+// what nine cases in ten need (draft, summarise, classify, answer with JSON
+// that fits a schema).
+type ClaudeAPI struct {
+	// Tools is none (default), read, web or write. Raising it is a serious
+	// decision: the site's process answers the internet, and what an
+	// injected prompt can reach depends on this word.
+	Tools string `json:"tools,omitempty"`
+	// DailyUSD caps a day's spending through the door; 0 is the house's
+	// (agents.site_daily_usd). Traffic decides this spending, not a person.
+	DailyUSD float64 `json:"daily_usd,omitempty"`
+	// MaxChats caps the conversations the site keeps open; 0 is 20.
+	MaxChats int `json:"max_chats,omitempty"`
+	// Model is the default model of the site's conversations.
+	Model string `json:"model,omitempty"`
+	// HideChats keeps the site's conversations out of the panel's list;
+	// they are still kept, costed and readable.
+	HideChats bool `json:"hide_chats,omitempty"`
 }
 
 // Notice is how the visitor pages of this site look.
@@ -367,6 +396,16 @@ func (m *Manifest) Validate() error {
 			if _, err := time.Parse(time.RFC3339, m.Hold.Until); err != nil {
 				return fmt.Errorf("hold.until: %q is not an RFC 3339 time", m.Hold.Until)
 			}
+		}
+	}
+	if c := m.ClaudeAPI; c != nil {
+		switch strings.ToLower(c.Tools) {
+		case "", "none", "read", "web", "write":
+		default:
+			return fmt.Errorf("claude_api.tools: %q is not none, read, web or write", c.Tools)
+		}
+		if c.DailyUSD < 0 || c.MaxChats < 0 {
+			return errors.New("claude_api: daily_usd and max_chats cannot be negative")
 		}
 	}
 	if m.Notice != nil && !pages.IsTheme(m.Notice.Theme) {

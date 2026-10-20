@@ -27,6 +27,9 @@ type Jail struct {
 	// which on a rootless daemon mounts the supervisor's whole HOME) and
 	// what cannot be undone on a shared remote (a forced push).
 	Commands []string
+	// Secrets are path patterns that may not be read even inside the
+	// site's own folder (its .env, for a conversation that cannot write).
+	Secrets []string
 }
 
 // machineSecrets are the supervisor's own keys, under its real HOME (not

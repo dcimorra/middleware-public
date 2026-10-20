@@ -48,6 +48,8 @@ never shell strings. Paths are relative to the site folder.
   "disabled": false,
   "hold": { "enabled": false, "title": "", "message": "", "mode": "maintenance", "until": "" },
   "notice": { "theme": "card" },
+  "claude_api": { "tools": "none", "daily_usd": 0, "max_chats": 20, "model": "", "hide_chats": false },
+  "claude": false,
   "needs": ["api.example.com", "worker@shop.example.com"],
 
   "access": {
@@ -131,6 +133,17 @@ is shown and sent as `Retry-After`.
 `needs` names what the site needs up: another site, or `worker@site`. A first
 start waits up to a minute for them, then starts anyway and says so; the
 panel names whatever is missing now.
+
+## The site door: `claude_api` and `claude`
+
+`claude_api` lets the site's own code ask Claude through the house (see
+api.md, "The site door"): tool level, daily cap, conversations kept, model.
+Raising `tools` above `none` is a decision that matters: the site's process
+answers the internet, and what an injected prompt can reach depends on it.
+
+`claude: true` puts the house's Claude subscription token in the site's
+environment (`CLAUDE_CODE_OAUTH_TOKEN`) for a site that runs the CLI itself.
+It reaches as far as the subscription does; prefer `claude_api`.
 
 ## Docker
 

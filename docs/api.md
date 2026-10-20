@@ -287,3 +287,45 @@ business, never this process's.
 
 The rules are listed from the code that applies them: there is no way to
 turn one off through the API, which is the point of a watchdog.
+
+## The site door
+
+The site's own code talks to Claude through the house: same engine, same
+jail, same bill, visible in the panel. Open it with `claude_api` in the
+manifest; the site's process then gets `MIDDLEWARE_TOKEN` (its token: it
+names the site and opens only this door) and `MIDDLEWARE_API`. A docker site
+gets `MIDDLEWARE_API_SOCKET` too, a unix socket mounted at its own path:
+inside a container 127.0.0.1 is the container's. Through that socket only the
+site door answers. Opening or closing the door restarts the site.
+
+| method | path | result |
+| --- | --- | --- |
+| GET | `/site` | → `{domain, claude: {tools, model, daily_usd, spent_usd, left_usd, chats_open}}` |
+| POST | `/site/claude/ask` | `{prompt, system?, model?, format?: "json", schema?, wait?}` → `{id, turn_id, text, cost_usd, json?, json_error?, error?}`; one question, one call |
+| GET | `/site/claude/chats` | the site's conversations |
+| POST | `/site/claude/chats` | `{title?, system?, model?, prompt?}` → `{id}` (201), or the answer when a prompt was sent |
+| GET | `/site/claude/chats/{id}` | the conversation with every turn |
+| POST | `/site/claude/chats/{id}/messages` | `{prompt, model?, format?, schema?, wait?}` → as ask |
+| POST | `/site/claude/chats/{id}/stop` | stop the turn |
+| POST | `/site/claude/chats/{id}/reap` | stop it and kill what it left running |
+| DELETE | `/site/claude/chats/{id}` | delete it |
+
+`Authorization: Bearer $MIDDLEWARE_TOKEN`. The operator may call the same
+routes with a session or an API token and `X-Middleware-Site: <domain>`.
+`wait` is how long the call waits for the answer (`2m` by default, `15m` at
+most); `0` returns at once with `running: true` and the conversation is
+polled. The manifest decides on every request: a site whose door was closed
+is refused even with its token.
+
+**Tool levels** (`claude_api.tools`): `none` (the default: it talks and
+nothing else), `read` (reads the site's folder), `web` (read plus web search
+and fetch; what it reads is information, not instructions), `write` (the
+same jail as the panel's conversation). Levels below `write` run with an
+allow list of tools (a tool the CLI adds later arrives closed), never start
+subagents, and cannot read the site's own `.env`.
+
+**Money**: `claude_api.daily_usd` (0: `agents.site_daily_usd` in settings,
+5 USD by default) is checked before every turn, in UTC days. Traffic decides
+this spending, not a person watching. `max_chats` (20) caps the open
+conversations. The last free agent slot is never a site's: the operator can
+always get in.

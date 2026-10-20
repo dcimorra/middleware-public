@@ -66,6 +66,7 @@ func (e *Engine) reconcileWorkers(ctx context.Context, s *Site, m *manifest.Mani
 			continue
 		}
 		spec := workerSpec(s.Domain, s.Dir, name, def)
+		e.addSiteEnv(s.Domain, m, spec)
 		w, ok := s.Workers[name]
 		if !ok {
 			w = &worker{name: name}

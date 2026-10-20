@@ -195,7 +195,11 @@ func siteMounts(spec *manifest.Spec, home string) ([]string, error) {
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return nil, err
 	}
-	return []string{"-v", real + ":" + spec.SiteDir, "-v", home + ":" + home}, nil
+	out := []string{"-v", real + ":" + spec.SiteDir, "-v", home + ":" + home}
+	for _, m := range spec.Mounts {
+		out = append(out, "-v", m+":"+m)
+	}
+	return out, nil
 }
 
 // containerEnv is buildEnv for inside a container: the image's PATH, not

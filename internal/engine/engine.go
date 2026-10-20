@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/events"
@@ -29,7 +30,16 @@ type Options struct {
 	Ports    *ports.Allocator
 	Bus      *events.Bus
 	Tick     time.Duration
+	// SiteEnv adds what the house gives a site's processes beyond its
+	// manifest (the site door's token and address, folders to mount in a
+	// container). It is part of the revision: opening or closing the door
+	// restarts the site, or its process would keep a token the manifest
+	// no longer grants.
+	SiteEnv func(domain string, m *manifest.Manifest) (env map[string]string, mounts []string)
 }
+
+// SiteEnvFunc is Options.SiteEnv's type.
+type SiteEnvFunc func(domain string, m *manifest.Manifest) (env map[string]string, mounts []string)
 
 // Engine supervises every site under SitesDir.
 type Engine struct {
@@ -40,6 +50,7 @@ type Engine struct {
 	// each tick from the manifests.
 	aliases        map[string]string
 	aliasConflicts map[string]string // said once, until resolved
+	siteEnv        atomic.Pointer[SiteEnvFunc]
 	wg             sync.WaitGroup
 }
 
@@ -199,6 +210,13 @@ func (e *Engine) emit(typ, domain, level, msg string, data map[string]any) {
 	e.opts.Bus.Emit(events.Event{Type: typ, Subject: domain, Actor: "engine", Level: level, Message: msg, Data: data})
 }
 
+// SetSiteEnv installs Options.SiteEnv after the engine was built: the
+// wiring that knows the tokens and the modules runs after the app made
+// the engine. Read on every reconcile.
+func (e *Engine) SetSiteEnv(f SiteEnvFunc) {
+	e.siteEnv.Store(&f)
+}
+
 // tick is one reconcile pass.
 func (e *Engine) tick(ctx context.Context) {
 	entries, err := os.ReadDir(e.opts.SitesDir)
@@ -314,6 +332,7 @@ func (e *Engine) reconcile(ctx context.Context, domain, dir string) {
 		e.mu.Unlock()
 		return
 	}
+	e.addSiteEnv(domain, m, spec)
 	if spec.Port != 0 {
 		// Held for as long as it is declared, also while the site is down,
 		// so the allocator never hands it to another site in between.
@@ -645,4 +664,24 @@ func (e *Engine) reapContainers(ctx context.Context) {
 	for _, name := range d.Reap(rctx, keep) {
 		e.emit("container.reaped", "", "warn", name+": left by an earlier supervisor and claimed by no site", nil)
 	}
+}
+
+// addSiteEnv applies Options.SiteEnv to a spec and rehashes it.
+func (e *Engine) addSiteEnv(domain string, m *manifest.Manifest, spec *manifest.Spec) {
+	f := SiteEnvFunc(e.opts.SiteEnv)
+	if p := e.siteEnv.Load(); p != nil {
+		f = *p
+	}
+	if f == nil {
+		return
+	}
+	env, mounts := f(domain, m)
+	if len(env) == 0 && len(mounts) == 0 {
+		return
+	}
+	for k, v := range env {
+		spec.Env[k] = v
+	}
+	spec.Mounts = append(spec.Mounts, mounts...)
+	spec.Rehash()
 }

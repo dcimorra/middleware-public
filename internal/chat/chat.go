@@ -1,9 +1,16 @@
-// Package chat is one conversation per site, plus the reserved one named
-// "middleware" about the installation itself. A turn is a provider run
-// inside the site's jail; its events are re-emitted on the bus with the
-// domain as subject so the panel streams them, and both sides of the
-// exchange are written to data/chat/<domain>.json with the provider's
-// session id, so the next turn resumes where this one ended.
+// Package chat runs the conversations with the agents: the panel's one per
+// site, the reserved one named "middleware" about the installation itself,
+// and the ones a site's own code opens through the site door.
+//
+// A conversation has a name. The panel's is the domain; the others are
+// "<domain>#<id>". Everything else (the jail, the caps, the processes a
+// turn leaves behind, the cost) follows from the name, so one machinery
+// serves all of them and none runs silently on the side. A turn is a
+// provider run inside the site's jail; its events are re-emitted on the bus
+// with the name as subject, and both sides of the exchange are written to
+// data/chat/<domain>.json (the panel's) or data/chat/<domain>/<id>.json
+// with the provider's session id, so the next turn resumes where this one
+// ended.
 package chat
 
 import (
@@ -43,9 +50,30 @@ type Turn struct {
 	Questions []Question `json:"questions,omitempty"`
 }
 
-// Conversation is data/chat/<domain>.json.
+// Origin says who opened a conversation.
+const (
+	OriginPanel = "panel"
+	// OriginSite is the site's own code, through the site door: a program,
+	// not a person, on the other side.
+	OriginSite = "site"
+)
+
+// Conversation is one conversation's file.
 type Conversation struct {
-	Domain    string `json:"domain"`
+	Domain string `json:"domain"`
+	// ID is empty for the panel's conversation of a site.
+	ID      string    `json:"id,omitempty"`
+	Origin  string    `json:"origin,omitempty"`
+	Title   string    `json:"title,omitempty"`
+	Created time.Time `json:"created,omitzero"`
+	// System, when set, replaces the house's preamble: a site door
+	// conversation says who Claude is for it.
+	System string `json:"system,omitempty"`
+	// Tools is the tool level of a site door conversation (see Levels).
+	Tools string `json:"tools,omitempty"`
+	// Hidden keeps it out of the panel's list; it is still kept, costed
+	// and readable by its name.
+	Hidden    bool   `json:"hidden,omitempty"`
 	Provider  string `json:"provider"`
 	Model     string `json:"model,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
@@ -85,9 +113,40 @@ type Manager struct {
 type running struct {
 	turnID   string
 	provider string
+	origin   string
+	model    string
 	started  time.Time
 	run      agent.Run
 	cancel   context.CancelFunc
+	// done closes when the turn is written and its slot free.
+	done chan struct{}
+}
+
+// Name is a conversation's name: the domain for the panel's, and
+// "<domain>#<id>" for the others.
+func Name(domain, id string) string {
+	if id == "" {
+		return domain
+	}
+	return domain + "#" + id
+}
+
+// split takes a name apart.
+func split(name string) (domain, id string) {
+	domain, id, _ = strings.Cut(name, "#")
+	return domain, id
+}
+
+func validID(id string) bool {
+	if id == "" || len(id) > 32 {
+		return id == ""
+	}
+	for _, c := range id {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // ErrBusy says a turn is already running for that conversation.
@@ -222,11 +281,17 @@ func (m *Manager) capacityLocked() Capacity {
 // admit decides, under the lock, whether a turn for domain on provider
 // may start now. The house keeps its reserved slots: a site is refused
 // once used reaches max minus reserved, the house once it reaches max.
-func (m *Manager) admit(domain, provider string) error {
+func (m *Manager) admit(domain, provider, origin string) error {
 	used := len(m.running)
 	limit := m.limits.MaxConcurrent
 	if domain != Middleware {
 		limit -= m.limits.ReservedForHouse
+	}
+	if origin == OriginSite {
+		// The last free slot is never a site's: if a loop in a site's code
+		// could take every one, whoever is at the panel at three in the
+		// morning would have no way in to stop it.
+		limit--
 	}
 	if used >= limit {
 		return &ErrCapacity{Used: used, Max: m.limits.MaxConcurrent}
@@ -245,14 +310,22 @@ func (m *Manager) admit(domain, provider string) error {
 	return nil
 }
 
-func (m *Manager) file(domain string) string {
-	return filepath.Join(m.opts.Root, "data", "chat", domain+".json")
+func (m *Manager) file(name string) string {
+	domain, id := split(name)
+	if id == "" {
+		return filepath.Join(m.opts.Root, "data", "chat", domain+".json")
+	}
+	return filepath.Join(m.opts.Root, "data", "chat", domain, id+".json")
 }
 
 // workdir resolves where a conversation runs and fails for anything that
 // is not a site folder or the reserved name: a domain that merely looks
 // right must not open a conversation in a folder that does not exist.
-func (m *Manager) workdir(domain string) (string, error) {
+func (m *Manager) workdir(name string) (string, error) {
+	domain, id := split(name)
+	if !validID(id) {
+		return "", fmt.Errorf("%q is not a conversation", name)
+	}
 	if domain == Middleware {
 		return m.opts.Root, nil
 	}
@@ -277,9 +350,11 @@ type Settings struct {
 	Jail     agent.Jail
 }
 
-// Resolve computes the settings for domain without starting anything.
-func (m *Manager) Resolve(domain string) (Settings, error) {
-	dir, err := m.workdir(domain)
+// Resolve computes the settings for a conversation without starting
+// anything.
+func (m *Manager) Resolve(name string) (Settings, error) {
+	domain, _ := split(name)
+	dir, err := m.workdir(name)
 	if err != nil {
 		return Settings{}, err
 	}
@@ -316,12 +391,12 @@ func (m *Manager) History(domain string) (Conversation, error) {
 	return c, nil
 }
 
-func (m *Manager) load(domain string) Conversation {
+func (m *Manager) load(name string) Conversation {
 	var c Conversation
-	if err := fsx.ReadJSON(m.file(domain), &c); err != nil {
+	if err := fsx.ReadJSON(m.file(name), &c); err != nil {
 		c = Conversation{}
 	}
-	c.Domain = domain
+	c.Domain, c.ID = split(name)
 	if c.Turns == nil {
 		c.Turns = []Turn{}
 	}
@@ -330,7 +405,7 @@ func (m *Manager) load(domain string) Conversation {
 
 func (m *Manager) save(c Conversation) error {
 	c.Running = false
-	return fsx.WriteJSON(m.file(c.Domain), c, 0o600)
+	return fsx.WriteJSON(m.file(Name(c.Domain, c.ID)), c, 0o600)
 }
 
 // Reset forgets the conversation: the next turn starts a new session.
@@ -375,14 +450,32 @@ func (m *Manager) Stop(domain string) error {
 // Send starts a turn and returns at once with its id; progress arrives on
 // the bus. At most one turn runs per conversation: two agents editing the
 // same folder at the same time would each undo the other.
-func (m *Manager) Send(domain, text, model string) (string, error) {
+func (m *Manager) Send(name, text, model string) (string, error) {
+	return m.SendWith(name, text, SendOptions{Model: model})
+}
+
+// SendOptions are a turn's own choices.
+type SendOptions struct {
+	Model string
+}
+
+// SendWith is Send with options.
+func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return "", errors.New("empty message")
 	}
-	s, err := m.Resolve(domain)
+	domain, _ := split(name)
+	s, err := m.Resolve(name)
 	if err != nil {
 		return "", err
+	}
+	c := m.load(name)
+	if c.Origin == OriginSite {
+		// The site door is Claude's: the levels below are Claude Code's
+		// tools, and a site's code gets the same engine whatever provider
+		// its own conversation in the panel uses.
+		s.Provider = "claude"
 	}
 	provider, err := m.opts.Registry.Get(s.Provider)
 	if err != nil {
@@ -392,36 +485,42 @@ func (m *Manager) Send(domain, text, model string) (string, error) {
 		return "", fmt.Errorf("%s: %s", s.Provider, why)
 	}
 	if err := m.opts.Ledger.Allow(domain, s.Cap, time.Now()); err != nil {
-		m.emit("agent.cost_cap", domain, "warn", err.Error(), map[string]any{"cap": s.Cap})
+		m.emit("agent.cost_cap", name, "warn", err.Error(), map[string]any{"cap": s.Cap})
 		return "", err
+	}
+	model := o.Model
+	if model == "" {
+		model = c.Model
 	}
 	if model == "" {
 		model = s.Model
 	}
 	m.mu.Lock()
-	if _, busy := m.running[domain]; busy {
+	if _, busy := m.running[name]; busy {
 		m.mu.Unlock()
 		return "", ErrBusy
 	}
-	if err := m.admit(domain, s.Provider); err != nil {
+	if err := m.admit(domain, s.Provider, c.Origin); err != nil {
 		cap := m.capacityLocked()
 		m.mu.Unlock()
-		m.emit("agent.capacity", domain, "warn", err.Error(), map[string]any{"used": cap.Used, "max": cap.Max, "provider": s.Provider, "providers": cap.Providers})
+		m.emit("agent.capacity", name, "warn", err.Error(), map[string]any{"used": cap.Used, "max": cap.Max, "provider": s.Provider, "providers": cap.Providers})
 		return "", err
 	}
 	turnID := newID()
 	ctx, cancel := context.WithTimeout(context.Background(), TurnLimit)
-	m.running[domain] = &running{turnID: turnID, provider: s.Provider, started: time.Now(), cancel: cancel}
+	m.running[name] = &running{turnID: turnID, provider: s.Provider, origin: c.Origin, model: model, started: time.Now(), cancel: cancel, done: make(chan struct{})}
 	m.mu.Unlock()
 
 	fail := func(err error) (string, error) {
 		cancel()
 		m.mu.Lock()
-		delete(m.running, domain)
+		if r := m.running[name]; r != nil {
+			close(r.done)
+		}
+		delete(m.running, name)
 		m.mu.Unlock()
 		return "", err
 	}
-	c := m.load(domain)
 	c.Provider, c.Model = s.Provider, model
 	c.Turns = append(c.Turns, Turn{ID: turnID, Role: "user", Text: text, At: time.Now()})
 	if err := m.save(c); err != nil {
@@ -432,39 +531,56 @@ func (m *Manager) Send(domain, text, model string) (string, error) {
 	if err := installSkillFor(s.Jail.Home, s.Provider); err != nil {
 		return fail(fmt.Errorf("skill not installed: %w", err))
 	}
-	system := Preamble(domain, s.Workdir, s.Jail)
-	if s.Provider == "gemini" {
-		system = SkillHint + "\n\n" + system
-	}
+	var system string
 	req := agent.Request{
 		Workdir:   s.Workdir,
 		Prompt:    text,
 		Model:     model,
 		SessionID: c.SessionID,
-		System:    system,
 		Jail:      s.Jail,
-		Env:       map[string]string{"PATH": m.agentPath(), MarkVar: domain},
+		Env:       map[string]string{"PATH": m.agentPath(), MarkVar: name},
+		Name:      name,
 	}
+	if c.Origin == OriginSite {
+		system = SiteSystem(c)
+		level := Level(c.Tools)
+		req.Tools = level.Tools
+		req.Disallowed = level.Disallowed
+		if !level.Writes {
+			// The jail closes every other site's .env, and with permissions
+			// skipped what is not denied is allowed: a level that cannot
+			// write must not read this site's own secrets either. V1's "web"
+			// level read and quoted its own .env before this.
+			req.Jail.Secrets = append(req.Jail.Secrets, filepath.Join(s.Workdir, "**", ".env*"))
+		}
+	} else {
+		system = Preamble(domain, s.Workdir, s.Jail)
+		if s.Provider == "gemini" {
+			system = SkillHint + "\n\n" + system
+		}
+	}
+	req.System = system
 	run, err := provider.Start(ctx, req)
 	if err != nil {
-		m.emit("agent.error", domain, "error", err.Error(), map[string]any{"turn_id": turnID})
+		m.emit("agent.error", name, "error", err.Error(), map[string]any{"turn_id": turnID})
 		return fail(err)
 	}
 	m.mu.Lock()
-	m.running[domain].run = run
+	m.running[name].run = run
 	m.mu.Unlock()
-	m.emit("agent.started", domain, "", "", map[string]any{"turn_id": turnID, "provider": s.Provider, "model": model})
-	go m.follow(domain, turnID, s, run, cancel)
+	m.emit("agent.started", name, "", "", map[string]any{"turn_id": turnID, "provider": s.Provider, "model": model})
+	go m.follow(name, turnID, s, run, cancel)
 	return turnID, nil
 }
 
 // follow consumes a run to its end and records the outcome.
-func (m *Manager) follow(domain, turnID string, s Settings, run agent.Run, cancel context.CancelFunc) {
+func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel context.CancelFunc) {
 	defer cancel()
-	started := time.Now()
+	domain, _ := split(name)
+	started, origin, model := time.Now(), "", s.Model
 	m.mu.Lock()
-	if r := m.running[domain]; r != nil {
-		started = r.started
+	if r := m.running[name]; r != nil {
+		started, origin, model = r.started, r.origin, r.model
 	}
 	m.mu.Unlock()
 	var all []agent.Event
@@ -481,7 +597,7 @@ func (m *Manager) follow(domain, turnID string, s Settings, run agent.Run, cance
 	ask := func(piece string) {
 		for _, q := range ParseQuestions(piece) {
 			questions = append(questions, q)
-			m.emit("agent.question", domain, "", q.Question, map[string]any{"turn_id": turnID, "question": q.Question, "options": q.Options, "recommended": q.Recommended})
+			m.emit("agent.question", name, "", q.Question, map[string]any{"turn_id": turnID, "question": q.Question, "options": q.Options, "recommended": q.Recommended})
 		}
 	}
 	for ev := range run.Events() {
@@ -495,11 +611,11 @@ func (m *Manager) follow(domain, turnID string, s Settings, run agent.Run, cance
 				text.WriteString("\n\n")
 			}
 			text.WriteString(ev.Text)
-			m.emit("agent.text", domain, "", "", map[string]any{"turn_id": turnID, "text": ev.Text})
+			m.emit("agent.text", name, "", "", map[string]any{"turn_id": turnID, "text": ev.Text})
 			ask(ev.Text)
 		case agent.KindTool:
 			tools = append(tools, ev.Tool)
-			m.emit("agent.tool", domain, "", "", map[string]any{"turn_id": turnID, "tool": ev.Tool, "input": ev.Input})
+			m.emit("agent.tool", name, "", "", map[string]any{"turn_id": turnID, "tool": ev.Tool, "input": ev.Input})
 		case agent.KindCost:
 			if ev.Cost > cost {
 				cost = ev.Cost
@@ -526,20 +642,25 @@ func (m *Manager) follow(domain, turnID string, s Settings, run agent.Run, cance
 	}
 	if time.Since(started) >= TurnLimit {
 		errText = fmt.Sprintf("the turn ran for %s and was cut off; what it left running is listed under its processes", TurnLimit)
-		m.emit("agent.turn_limit", domain, "error", errText, map[string]any{"turn_id": turnID})
+		m.emit("agent.turn_limit", name, "error", errText, map[string]any{"turn_id": turnID})
 	}
 	if cost > 0 {
-		if err := m.opts.Ledger.Add(domain, cost, time.Now()); err != nil {
-			m.emit("agent.error", domain, "warn", "cost not recorded: "+err.Error(), map[string]any{"turn_id": turnID})
+		if origin == OriginSite {
+			// The site door's own book: its daily cap is decided by
+			// traffic, not by a person watching, so it is counted apart.
+			_ = m.opts.Ledger.AddTurn(SiteDoorBook(domain), model, cost, time.Now())
+		}
+		if err := m.opts.Ledger.AddTurn(domain, model, cost, time.Now()); err != nil {
+			m.emit("agent.error", name, "warn", "cost not recorded: "+err.Error(), map[string]any{"turn_id": turnID})
 		}
 	}
 	// The audit runs on every turn, finished or not: a stopped turn may
 	// already have read what it should not have.
 	if v := s.Jail.Violations(agent.Transcript(all)); len(v) > 0 {
-		m.emit("agent.jail_violation", domain, "error", fmt.Sprintf("the agent referred to %d denied path(s)", len(v)), map[string]any{"turn_id": turnID, "paths": v})
+		m.emit("agent.jail_violation", name, "error", fmt.Sprintf("the agent referred to %d denied path(s)", len(v)), map[string]any{"turn_id": turnID, "paths": v})
 	}
 
-	c := m.load(domain)
+	c := m.load(name)
 	if sessionID != "" {
 		c.SessionID = sessionID
 	}
@@ -554,24 +675,30 @@ func (m *Manager) follow(domain, turnID string, s Settings, run agent.Run, cance
 	}
 	c.Turns = append(c.Turns, turn)
 	if err := m.save(c); err != nil {
-		m.emit("agent.error", domain, "error", "conversation not saved: "+err.Error(), map[string]any{"turn_id": turnID})
+		m.emit("agent.error", name, "error", "conversation not saved: "+err.Error(), map[string]any{"turn_id": turnID})
 	}
 	// The turn counts as running until its file is written, and the final
 	// event goes out only after that: whoever reacts to agent.done can
 	// Send again and read the turn from History at once.
 	m.mu.Lock()
-	delete(m.running, domain)
+	if r := m.running[name]; r != nil {
+		close(r.done)
+	}
+	delete(m.running, name)
 	m.mu.Unlock()
 	if errText != "" {
-		m.emit("agent.error", domain, "error", errText, map[string]any{"turn_id": turnID, "cost": cost})
+		m.emit("agent.error", name, "error", errText, map[string]any{"turn_id": turnID, "cost": cost})
 		return
 	}
-	m.emit("agent.done", domain, "", "", map[string]any{"turn_id": turnID, "cost": cost, "session_id": sessionID, "text": text.String(), "tools": len(tools)})
+	m.emit("agent.done", name, "", "", map[string]any{"turn_id": turnID, "cost": cost, "session_id": sessionID, "text": text.String(), "tools": len(tools)})
 }
 
 func (m *Manager) emit(typ, domain, level, msg string, data map[string]any) {
 	m.opts.Bus.Emit(events.Event{Type: typ, Subject: domain, Actor: "agent", Level: level, Message: msg, Data: data})
 }
+
+// Ledger is the cost record the manager writes.
+func (m *Manager) Ledger() *agent.Ledger { return m.opts.Ledger }
 
 // SetPath replaces the PATH source a turn runs with.
 func (m *Manager) SetPath(f func() string) {

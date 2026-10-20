@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/ports"
 	"github.com/dcimorra/middleware-public/internal/runtime"
 )
@@ -281,11 +282,14 @@ func TestAWorkerWithoutAPortGetsOneAndIsReAdopted(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "site.json"), []byte(m), 0o644)
 	ctx, cancel := context.WithCancel(context.Background())
 	go e.Run(ctx)
-	sn := waitFor(t, e, "g.test", func(s Snapshot) bool { return s.Workers["api"].Alive && s.Workers["api"].Port != 0 })
+	// Alive is not listening: a worker has no readiness check, so the
+	// test waits for the answer itself.
+	sn := waitFor(t, e, "g.test", func(s Snapshot) bool {
+		body, err := get(s.Workers["api"].Port)
+		return s.Workers["api"].Alive && s.Workers["api"].Port != 0 && err == nil && body == "w1"
+	})
 	port := sn.Workers["api"].Port
-	if body, err := get(port); err != nil || body != "w1" {
-		t.Fatalf("the worker on its assigned port said %q, %v", body, err)
-	}
+	_ = port
 	pid := workerPID(e, "g.test", "api")
 	cancel()
 	time.Sleep(300 * time.Millisecond)
@@ -436,4 +440,32 @@ func TestASiteWaitsForWhatItNeedsAndSaysWhatIsMissing(t *testing.T) {
 	if api, _ := e.Lookup("api.test"); !api.Alive {
 		t.Fatal("front started before api")
 	}
+}
+
+// Opening the site door puts the token in the process's environment, and
+// closing it restarts the site: a process must not keep a token its
+// manifest no longer grants.
+func TestOpeningTheSiteDoorRestartsTheSiteWithItsToken(t *testing.T) {
+	e, sites := newTestEngine(t)
+	e.SetSiteEnv(func(domain string, m *manifest.Manifest) (map[string]string, []string) {
+		if m.ClaudeAPI == nil {
+			return nil, nil
+		}
+		return map[string]string{"BUILD": "token-for-" + domain}, nil
+	})
+	dir := filepath.Join(sites, "door.test")
+	os.MkdirAll(dir, 0o755)
+	base := fmt.Sprintf(`{"version":2,"run":{"command":[%q],"env":{"MW_TEST_SERVER":"1","BUILD":"none"}}%%s}`, os.Args[0])
+	os.WriteFile(filepath.Join(dir, "site.json"), []byte(fmt.Sprintf(base, "")), 0o644)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	waitFor(t, e, "door.test", func(s Snapshot) bool { body, err := get(s.Port); return s.Alive && err == nil && body == "none" })
+	os.WriteFile(filepath.Join(dir, "site.json"), []byte(fmt.Sprintf(base, `,"claude_api":{}`)), 0o644)
+	waitFor(t, e, "door.test", func(s Snapshot) bool {
+		body, err := get(s.Port)
+		return s.Alive && err == nil && body == "token-for-door.test"
+	})
+	os.WriteFile(filepath.Join(dir, "site.json"), []byte(fmt.Sprintf(base, "")), 0o644)
+	waitFor(t, e, "door.test", func(s Snapshot) bool { body, err := get(s.Port); return s.Alive && err == nil && body == "none" })
 }
