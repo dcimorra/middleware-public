@@ -39,7 +39,6 @@ cgroup above.
 
 ## 5. The agent conversation
 
-- Push when a turn ends (needs §6's notifications).
 - A human-readable `/docs/api` page in the panel (today: `docs/api.md`,
   kept in step with the routes by a test, and `/api/v1/openapi.json`).
 
@@ -52,8 +51,6 @@ cgroup above.
 - Call the agent on an incident once it is contained.
 - A daily `npm audit` (critical and new), a dependencies screen, and
   `vulnerable` on publish (docs/security.md claims it).
-- Push notifications (web push, VAPID) for intrusions, criticals and repo
-  failures.
 - The browser reaper: respect open CDP connections, 30 minutes, a JSONL
   log, a cap for browsers started by conversations.
 - Log rotation and a size cap; `SIGUSR1` diagnostics; resource episodes and
@@ -121,6 +118,10 @@ cgroup above.
   re-adopted and stoppable, agent turns in a cgroup of their own, rename,
   faithful archives with restore and download, a site folder as a zip,
   site pictures (proven with headless Chromium), one deploy runner.
+- **Push notifications**: web push to the operator's devices, VAPID and
+  aes128gcm against the standard library (RFC 8291's example reproduced
+  byte for byte), for intrusions, criticals, repositories that stop
+  pulling and turns that end in the panel's conversations (§5, §6).
 - **§5 Agents**: a jail that holds, two-hour turns, the processes a
   conversation leaves listed and killed, several conversations per site,
   the site door, loans, attachments, queued messages, turns that survive a

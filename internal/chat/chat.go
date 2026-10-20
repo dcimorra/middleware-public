@@ -786,10 +786,10 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 		}()
 	}
 	if errText != "" {
-		m.emit("agent.error", name, "error", errText, map[string]any{"turn_id": turnID, "cost": cost})
+		m.emit("agent.error", name, "error", errText, map[string]any{"turn_id": turnID, "cost": cost, "origin": c.Origin})
 		return
 	}
-	m.emit("agent.done", name, "", "", map[string]any{"turn_id": turnID, "cost": cost, "session_id": sessionID, "text": text.String(), "tools": len(tools)})
+	m.emit("agent.done", name, "", "", map[string]any{"turn_id": turnID, "cost": cost, "session_id": sessionID, "text": text.String(), "tools": len(tools), "origin": c.Origin})
 }
 
 func (m *Manager) emit(typ, domain, level, msg string, data map[string]any) {

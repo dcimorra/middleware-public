@@ -28,6 +28,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/modules/vpn"
 	"github.com/dcimorra/middleware-public/internal/pages"
 	"github.com/dcimorra/middleware-public/internal/publish"
+	"github.com/dcimorra/middleware-public/internal/push"
 	"github.com/dcimorra/middleware-public/internal/repos"
 	"github.com/dcimorra/middleware-public/internal/settings"
 	"github.com/dcimorra/middleware-public/internal/shots"
@@ -106,6 +107,7 @@ type wireHook struct {
 	publisher *publish.Publisher
 	shots     *shots.Shotter
 	repos     *repos.Manager
+	notifier  *push.Notifier
 }
 
 func buildWire(a *app.App) app.Hook {
@@ -204,6 +206,23 @@ func buildWire(a *app.App) app.Hook {
 	}})
 	srv.RegisterRepos(rm)
 	w.repos = rm
+	// Web push to the operator's devices, and the notifier that decides
+	// which events become one (internal/push).
+	subject := "mailto:operator@localhost"
+	if a.Settings.PanelDomain != "" {
+		subject = "https://" + a.Settings.PanelDomain
+	}
+	ps, err := push.New(push.Options{DataDir: dataDir(a), Subject: subject})
+	if err != nil {
+		a.Bus.Emit(events.Event{Type: "push.error", Actor: "engine", Level: "error", Message: "push notifications are off: " + err.Error()})
+		ps = nil
+	}
+	srv.RegisterPush(ps)
+	if ps != nil {
+		w.notifier = &push.Notifier{Bus: a.Bus, Sender: ps, OnError: func(err error) {
+			a.Bus.Emit(events.Event{Type: "push.failed", Actor: "engine", Level: "warn", Message: err.Error()})
+		}}
+	}
 	// A block at layer 7 is pushed to the kernel through the helper, so
 	// a flood stops before it reaches Go. Without the helper the firewall
 	// says so once and the block stays at layer 7.
@@ -243,6 +262,9 @@ func (w *wireHook) Run(ctx context.Context, a *app.App) error {
 	}
 	if w.repos != nil {
 		go w.repos.Run(ctx)
+	}
+	if w.notifier != nil {
+		go w.notifier.Run(ctx)
 	}
 	var enabled []string
 	if w.set != nil {

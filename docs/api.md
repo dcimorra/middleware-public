@@ -141,6 +141,22 @@ failure of a streak is a `repo.failed` event. Pulling is not deploying.
 | POST | `/repos/{id}/pull` | → the repository after a fetch and merge now |
 | PUT | `/repos/{id}/auto` | `{enabled}` → the repository; marking pulls once at once. Kept in `data/repos.json` |
 
+## Push notifications
+
+Web push (VAPID, aes128gcm) to the operator's devices. What is pushed is a
+closed list: an intrusion (`guard.intrusion`), a critical (`middleware.panic`,
+`deps.critical`), a repository that stopped pulling (`repo.failed`, the first
+of a streak) and a turn that ended in the panel's conversations (not the site
+door's). A device chooses among those kinds; a push service that says a
+device is gone (404, 410) gets it forgotten.
+
+| method | path | result |
+| --- | --- | --- |
+| GET | `/push` | → `{public_key, kinds, devices: [{endpoint, service, name, kinds, created, last_sent, last_error}]}` |
+| POST | `/push/subscriptions` | `{endpoint, keys: {p256dh, auth}, name?, kinds?}` (the browser's PushSubscription) → `{ok}`; the same endpoint updates |
+| DELETE | `/push/subscriptions` | `?endpoint=<the device's endpoint>` → `{ok}` |
+| POST | `/push/test` | → `{sent, error?}` to every device, whatever it chose |
+
 ## Events
 
 | method | path | result |

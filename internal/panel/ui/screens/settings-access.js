@@ -71,7 +71,7 @@ export function panelAccessCard() {
     const save = h("button", { type: "button", class: "btn primary" }, t("common.save"));
     const mine = suggest(a.your_address);
     const addMine = h("button", { type: "button", class: "btn sm" }, t("panelAccess.addMine", { ip: mine || "" }));
-    addMine.hidden = !mine;
+    addMine.hidden = !mine || a.from_machine;
     addMine.addEventListener("click", () => { allow.value = (allow.value.trim() ? allow.value.trim() + "\n" : "") + mine; });
     save.addEventListener("click", async () => {
       err.hidden = true;
@@ -84,7 +84,7 @@ export function panelAccessCard() {
       } catch (e) { err.textContent = e.message; err.hidden = false; }
       finally { save.classList.remove("busy"); }
     });
-    clear(el).append(
+    clear(el).append(...[
       h("h2", null, t("panelAccess.title")),
       h("p", { class: "small muted" }, t("panelAccess.hint")),
       a.open_until ? notice("bad", t("panelAccess.openNow", { at: fmtTime(a.open_until) })) : null,
@@ -94,7 +94,7 @@ export function panelAccessCard() {
       h("div", { class: "field" }, only.el, h("div", { class: "hint" }, t("panelAccess.passkeyOnlyHint"))),
       err,
       h("div", { class: "form-actions" }, save),
-    );
+    ].filter(Boolean)); // a native append writes null as the text "null"
     return null;
   }
   load(el, render);
