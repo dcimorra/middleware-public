@@ -20,6 +20,7 @@ Four kinds, and choosing wrong shows at once.
 | --- | --- | --- |
 | something that answers a domain | a **site** | `sites/<domain>/` with a `site.json` |
 | a process that must always be up and answers no domain (an API behind a frontend, a queue consumer) | a **worker** | `workers` inside the site it belongs to |
+| workers, tasks and a conversation with no domain at all (a bot, a pipeline) | a **project** | `sites/<name>/`, a name without a dot, with only `workers` in its `site.json` |
 | something that happens because it is time (backup, purge, sync, prune old builds) | a **task** | `tasks/<name>.json` |
 | something not every installation wants (DNS at a provider, deploy on push, a VPN, an agent) | a **module** | already shipped: enable it, never reimplement it in a site |
 
@@ -279,11 +280,13 @@ already knows it; the worker restarts, it is not handed over):
 }
 ```
 
-Worker names match `^[a-z0-9][a-z0-9-]{0,62}$`. A worker's port must be
-free of the engine's own range (ask `GET /api/v1/system/ports`) and is the
-only port you ever write: **never pick a port for a site**; the engine
-assigns one and passes `$PORT`. A project that reads its port from another
-name maps it: `"env": { "APP_PORT": "$PORT" }`.
+Worker names match `^[a-z0-9][a-z0-9-]{0,62}$`. Leave a worker's `port`
+out unless something already has it written: the engine then assigns one and
+passes `$PORT`, as for a site. A written port must be free of the engine's
+own range (ask `GET /api/v1/system/ports`). **Never pick a port for a site**;
+`run.port` exists only for a port someone outside the house already knows,
+and it costs the handover. A project that reads its port from another name
+maps it: `"env": { "APP_PORT": "$PORT" }`.
 
 ### Live versus restart
 

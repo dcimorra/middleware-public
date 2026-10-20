@@ -1,12 +1,17 @@
 # The manifest: `site.json`
 
-One file per site, at `sites/<domain>/site.json`. Every field is optional
-except `version`. Durations are Go durations (`8s`, `2m`). Commands are arrays,
+One file per site, at `sites/<domain>/site.json`. A folder whose name has no
+dot (`sites/tools/`) is a **project**: its workers, its tasks and its
+conversation, and nothing that answers a hostname, so `static`, `run`,
+`upstream` and `aliases` are refused there. Every field is optional except
+`version`. Durations are Go durations (`8s`, `2m`). Commands are arrays,
 never shell strings. Paths are relative to the site folder.
 
 ```json
 {
   "version": 2,
+  "title": "Shop",
+  "aliases": ["shop.example.org"],
 
   "static": { "root": "public", "spa": false },
 
@@ -14,9 +19,10 @@ never shell strings. Paths are relative to the site folder.
     "command": ["./server", "--port", "$PORT"],
     "cwd": ".",
     "env": { "NODE_ENV": "production" },
-    "env_files": [".env"],
+    "env_files": [".env", ".env.local"],
     "env_from_file": { "NEXT_DIST_DIR": ".next-current" },
-    "health": { "path": "/", "timeout": "60s" },
+    "port": 0,
+    "health": { "path": "/", "timeout": "60s", "interval": "30s" },
     "drain": "8s",
     "restart": { "max_backoff": "60s" },
     "runtime": "process",
@@ -31,7 +37,8 @@ never shell strings. Paths are relative to the site folder.
   "upstream": "http://127.0.0.1:8090",
 
   "workers": {
-    "api": { "command": ["./bin/api"], "port": 8090, "env": {} }
+    "api": { "command": ["./bin/api"], "cwd": "backend", "port": 8090, "env": {},
+             "env_files": [".env"], "env_from_file": {}, "disabled": false, "note": "" }
   },
 
   "disabled": false,
@@ -39,9 +46,13 @@ never shell strings. Paths are relative to the site folder.
 
   "access": {
     "password": "",
+    "message": "Ask Ana for the password",
     "allow": ["10.0.0.0/8"],
+    "deny": ["10.9.9.9"],
     "deny_countries": ["XX"],
-    "routes": { "/admin": { "allow": ["10.0.0.0/8"] } }
+    "routes": {
+      "/admin": { "password": "", "message": "", "allow": ["10.1.0.0/16"], "deny": [], "note": "back office" }
+    }
   },
 
   "waf": {
@@ -127,13 +138,37 @@ command, the resolved environment (including `env_from_file` contents and
 (`access`, `waf`, `headers`, `hold`) is applied live and does not restart the
 process.
 
+## Fields worth a line
+
+- `env_files` are read in order, a later file overriding an earlier one, and
+  `env` over all of them. `KEY=VALUE` lines, or a `.json` object of strings.
+  A missing file is not an error.
+- `run.port` is written only when something outside the house already knows
+  it. Such a site cannot hand over (one port holds one generation), so a
+  change stops the old process before starting the new one.
+- `health.timeout` is how long a new generation has to get ready.
+  `health.interval` is how often a running one is asked afterwards (default
+  30s, stretched up to four times while it keeps answering, back to the
+  interval on the first failure). Static sites are checked for their
+  `index.html`. The panel shows the last checks; every change is an event.
+- `access`: every rule narrows the one above it, never widens it. A zone's
+  `allow` narrows the site's, `deny` adds to it, and a zone's own `password`
+  is asked for after the site's. Each password gives a pass valid for its own
+  zone only. Rules decide on the cleaned, case-folded path, which is what the
+  site will serve. Passwords are stored hashed; set them from the panel or
+  the API, which hash what they are given.
+- `aliases` are served exactly like the site. A name that is already a site,
+  or that two sites claim, is served by neither, and an event says so.
+
 ## Workers
 
 A worker is a process that must always be up and answers no domain: a backend
-behind a frontend, an internal API. It is declared inside the site it belongs
-to and its port **is written**, because whoever calls it already knows it.
-Workers are supervised like instances but are never handed over by pointer:
-they restart.
+behind a frontend, an internal API, a queue consumer. It is declared inside
+the site (or project) it belongs to. With no `port`, one is assigned and
+passed in `$PORT`; write it only when whoever calls the worker already knows
+it. Workers are supervised like instances, saved to `data/state` and
+re-adopted after a supervisor restart, but never handed over: they restart.
+`disabled` stops one without deleting it.
 
 ## Tasks: `tasks/<name>.json`
 

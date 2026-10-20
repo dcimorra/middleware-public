@@ -92,8 +92,20 @@ step did not happen.
 
 ## From v1
 
-v1 was a different program with a different manifest. There is no automatic
-migration: create the site with `middleware site create` and translate the
-old manifest by hand with [manifest.md](manifest.md) open. The directory
-layout (`sites/<domain>/` as the whole project) is the same, so the folders
-can be moved as they are.
+The directory layout (`sites/<domain>/` as the whole project) is the same, so
+the folders stay where they are; only the manifests change shape.
+
+```
+middleware migrate --sites /path/to/sites          # report, writes nothing
+middleware migrate --sites /path/to/sites --apply  # convert the ready ones
+```
+
+Each site is reported as **ready** (with notes on what changed and why
+nothing is lost) or **blocked** by the V1 settings it uses that V2 cannot
+honour yet. A blocked site is not touched: converting it without the setting
+would publish something that looks migrated and has quietly lost a door, a
+VPN rule or its container. `--apply` keeps the original as `site.v1.json`
+next to the new one and never overwrites that backup, so it can be run again
+as V2 gains features, and going back is renaming a file. V1 password hashes
+are carried as they are (same algorithm); passwords written in the clear are
+hashed. Folders V1 ignored (`_retirado-…`) are reported and skipped.

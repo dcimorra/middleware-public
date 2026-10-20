@@ -109,13 +109,23 @@ func (r *holdingRun) Stop()                      { r.once.Do(func() { close(r.st
 func TestAFullHouseAnswers429AndANewCapFromSettingsAppliesAtOnce(t *testing.T) {
 	f := newFixture(t).withToken()
 	release := make(chan struct{})
-	defer close(release)
 	reg := agent.NewRegistry()
 	reg.Register(holdingProvider{key: "claude", release: release})
 	for _, d := range []string{"a.test", "b.test"} {
 		os.MkdirAll(filepath.Join(f.root, "sites", d), 0o755)
 	}
 	m := chat.New(chat.Options{Root: f.root, Bus: f.bus, Registry: reg, Limits: settings.Agents{MaxConcurrent: 2, ReservedForHouse: 1, DefaultProvider: "claude"}})
+	// The held turns finish after the test body and write the conversation
+	// under data/chat; waiting for them here, before the temp dir goes,
+	// is what kept this test from failing one run in ten.
+	t.Cleanup(func() {
+		close(release)
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+			if !m.Running("a.test") && !m.Running("b.test") {
+				return
+			}
+		}
+	})
 	f.srv.RegisterAgents(AgentsOptions{Registry: reg, Chat: m})
 	var saved settings.Settings
 	f.srv.opts.SaveSettings = func(s settings.Settings) error { saved = s; return nil }

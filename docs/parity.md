@@ -22,13 +22,17 @@ test that proves it.
 - Route rules decide on the cleaned, case-folded path.
 - Access fails closed: without its key, protected sites answer 503.
 - The engine no longer panics when a running site loses its `run` section.
+- Adoption checks the pid's start time (a reused pid is not adopted).
 
 ## 1. Migration
 
-- `middleware migrate`: read a V1 `site.json` and write the V2 one, refusing
-  (not guessing) what has no V2 equivalent yet. Dry-run by default.
-- Projects without a domain (a folder without a dot): workers and a
-  conversation, no hostname.
+Done: `middleware migrate` (report, `--apply`, `site.v1.json` backup), and the
+manifest gained what V1 sites use: `title`, `aliases`, `env_files`, a written
+`run.port`, `health.interval` with continuous checks, workers with an
+assigned port, `env_from_file`, `disabled`, `note` (saved and re-adopted),
+zones with their own password and deny lists, `access.message` and `deny`,
+projects without a domain. What still blocks a V1 site is listed by
+`middleware migrate` itself, with the section here that brings it.
 
 ## 2. Getting a site online
 
@@ -40,7 +44,7 @@ test that proves it.
 - Detect the public IP for the 80/443 door; serialize door moves.
 - ACME DNS-01 through Cloudflare TXT, so a domain still on the tunnel can get
   its certificate before its DNS moves.
-- Manifest `aliases` and `www: false`.
+- Publish and certify `aliases` (they are served already); `www: false`.
 - House response cache (`cache` modes in the manifest), behind the door.
 - VPN-only sites and the VPN's own DNS.
 - Cloudflare extras: edge purge and cache rules, DNS record editor, Access
@@ -50,8 +54,7 @@ test that proves it.
 
 - Brake on site password checks (per domain, zone and address) and at most
   two key derivations at once.
-- Per-zone passwords with the zone in the cookie; per-site and per-route IP
-  `deny`; an unreadable CIDR rejects the manifest.
+- An unreadable CIDR rejects the manifest.
 - The `security` block: bot families, browser lists, country allow lists,
   per-site paths, built-in probe paths (`/.env`, `/.git`, ...), recent blocks.
 - Attack mode with proof of work, a key that survives restarts, `skip` paths,
@@ -64,14 +67,12 @@ test that proves it.
 
 ## 4. The engine
 
-- Health checked continuously, not only at start.
-- Workers saved and re-adopted; `$PORT` for workers without a fixed one;
-  `env_from_file` and `disabled` for workers.
-- PID-reuse check on adoption; task runs re-adopted.
+- Task runs re-adopted after a restart.
+- `health.expect_status`; health shown in the panel's site list.
 - Containers: cap-drop, no-new-privileges, pids, cpus, cpu weight, user;
   cgroups for sites and conversations; `$SITE_DIR` valid inside the
   container; logs after adoption; orphan-container reaper; `middleware exec`.
-- `needs`, `notice`, `group`, `hold.until`, fixed main port, `title`.
+- `needs`, `notice`, `group`, `hold.until`.
 - Rename a site; archive as one file with restore and download; download a
   site folder; screenshots.
 - One deploy implementation (`internal/sites/deploy.go` and
