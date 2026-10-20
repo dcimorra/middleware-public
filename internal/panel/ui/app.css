@@ -302,6 +302,7 @@ input[type="checkbox"], input[type="radio"] { width: 15px; height: 15px; accent-
 .local-addrs { margin-top: 12px; }
 pre.log.help { min-height: 0; max-height: 360px; font-size: 11.5px; }
 .check-col { width: 32px; }
+.card > .actions + .form-row, .card > .actions + .notice { margin-top: 12px; }
 .bulk-bar { align-items: center; }
 pre.log.exec-out { min-height: 0; max-height: 50vh; }
 @media (max-width: 760px) { .grid-2 { grid-template-columns: 1fr; } }

@@ -4,7 +4,7 @@
 
 import { icon } from "../lib/icons.js";
 import { h, clear, copy } from "../lib/dom.js";
-import { t, LANGUAGES, currentLang } from "../lib/i18n.js";
+import { t, LANGUAGES, LANGUAGE_NAMES, currentLang } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
 import { page, load, table, cell, empty, kv } from "../components/page.js";
 import { open, confirm, field, toggle, checkbox } from "../components/dialog.js";
@@ -212,7 +212,7 @@ export function settingsScreen() {
   // ---- local ----
   const theme = h("select", { "aria-label": t("settings.theme") }, ...["auto", "light", "dark"].map((v) => h("option", { value: v, selected: getTheme() === v }, t("theme." + v))));
   theme.addEventListener("change", () => setTheme(theme.value));
-  const lang = h("select", { "aria-label": t("settings.language") }, ...LANGUAGES.map((v) => h("option", { value: v, selected: currentLang() === v }, v)));
+  const lang = h("select", { "aria-label": t("settings.language") }, ...LANGUAGES.map((v) => h("option", { value: v, selected: currentLang() === v }, LANGUAGE_NAMES[v] || v)));
   lang.addEventListener("change", () => { setLang(lang.value); location.reload(); });
   localCard.append(h("h2", null, t("settings.thisBrowser")), h("div", { class: "form-row" }, field(t("settings.theme"), theme, t("settings.themeHint")), field(t("settings.language"), lang, t("settings.languageHint"))));
 

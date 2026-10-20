@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -230,5 +231,70 @@ func TestThePanelIsInstallable(t *testing.T) {
 	}
 	if shell := get(t, h, "/").Body.String(); !strings.Contains(shell, `rel="manifest" href="/manifest.webmanifest"`) {
 		t.Fatal("the shell does not link the manifest")
+	}
+}
+
+// TestEveryCatalogSaysTheSameThings keeps the other languages in step
+// with en.json: the same keys, no empty value, and the same {placeholders}
+// in each string. A key missing in es.json would show as the key itself,
+// and a placeholder translated by mistake would show as "{domain}" to the
+// operator; both only on screen, never in an error.
+func TestEveryCatalogSaysTheSameThings(t *testing.T) {
+	read := func(name string) map[string]string {
+		data, err := fs.ReadFile(FS, "i18n/"+name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var c map[string]string
+		if err := json.Unmarshal(data, &c); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return c
+	}
+	en := read("en.json")
+	entries, err := fs.ReadDir(FS, "i18n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	holes := regexp.MustCompile(`\{\w+\}`)
+	others := 0
+	for _, e := range entries {
+		if e.Name() == "en.json" || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		others++
+		c := read(e.Name())
+		for k, v := range en {
+			tr, ok := c[k]
+			switch {
+			case !ok:
+				t.Errorf("%s: %q is missing", e.Name(), k)
+			case strings.TrimSpace(tr) == "":
+				t.Errorf("%s: %q is empty", e.Name(), k)
+			default:
+				a, b := holes.FindAllString(v, -1), holes.FindAllString(tr, -1)
+				sort.Strings(a)
+				sort.Strings(b)
+				if strings.Join(a, ",") != strings.Join(b, ",") {
+					t.Errorf("%s: %q has %v, en.json has %v", e.Name(), k, b, a)
+				}
+			}
+		}
+		for k := range c {
+			if _, ok := en[k]; !ok {
+				t.Errorf("%s: %q is not in en.json", e.Name(), k)
+			}
+		}
+	}
+	if others == 0 {
+		t.Fatal("no catalogue besides en.json")
+	}
+	// The list the panel offers names every catalogue there is.
+	i18n, _ := fs.ReadFile(FS, "lib/i18n.js")
+	for _, e := range entries {
+		code := strings.TrimSuffix(e.Name(), ".json")
+		if !strings.Contains(string(i18n), `"`+code+`"`) {
+			t.Errorf("lib/i18n.js does not offer %s", code)
+		}
 	}
 }

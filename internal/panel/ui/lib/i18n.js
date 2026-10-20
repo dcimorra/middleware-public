@@ -6,7 +6,11 @@
 let strings = {};
 let lang = "en";
 
-export const LANGUAGES = ["en"];
+export const LANGUAGES = ["en", "es"];
+
+// Each language by its own name, which is how someone looking for theirs
+// recognises it.
+export const LANGUAGE_NAMES = { en: "English", es: "Español" };
 
 export async function loadStrings(code) {
   const want = LANGUAGES.includes(code) ? code : "en";

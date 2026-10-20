@@ -65,7 +65,6 @@ cgroup above.
 ## 7. The panel
 
 - Per site: a cache screen (waits for §2's house cache).
-- A Spanish catalogue beside `en.json`.
 
 ## 8. Apps
 
@@ -114,7 +113,8 @@ cgroup above.
   repositories inside the sites and a pull watcher that only ever fetches
   and merges, undoing a merge that collides; an installable panel (web
   manifest, icons, a worker at the root that caches nothing and is ready
-  for §6's push), with no installability errors in Chromium.
+  for §6's push), with no installability errors in Chromium; a Spanish
+  catalogue, kept in step with en.json by a test (keys and placeholders).
 - **§4 Engine**: docker sites behind V1's walls at their own paths
   (proven on a rootless daemon), `middleware exec`, `needs`, task runs
   re-adopted and stoppable, agent turns in a cgroup of their own, rename,
