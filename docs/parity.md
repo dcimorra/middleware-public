@@ -66,18 +66,21 @@ Left:
   `until`, counters, and panel exemptions.
 - Panel: passkeys (docs claim them), passkey-only, panel IP allow list,
   emergency open/close from the shell, CSRF across sibling subdomains.
-- Visitor pages: starting vs crashed, hold modes (404/410/500) with `until`,
-  JSON replies for API clients, themes, `X-Robots-Tag`, 503 instead of 502
-  (Cloudflare replaces 502 pages), a page on panic.
+- A visitor page on panic (the rest of the visitor pages is done: seven
+  designs, starting vs not answering, hold modes and `until`, JSON for API
+  clients, `X-Robots-Tag`, 503 instead of 502).
 
 ## 4. The engine
 
-- Task runs re-adopted after a restart.
-- `health.expect_status`; health shown in the panel's site list.
-- Containers: cap-drop, no-new-privileges, pids, cpus, cpu weight, user;
-  cgroups for sites and conversations; `$SITE_DIR` valid inside the
-  container; logs after adoption; orphan-container reaper; `middleware exec`.
-- `needs`, `notice`, `group`, `hold.until`.
+Done: docker sites behind V1's walls at their own paths (cap-drop,
+no-new-privileges, pids, cpus, cpu weight, user, HOST=0.0.0.0 inside, house
+label and reaper, logs after adoption), `middleware exec`, `needs`,
+`notice`, `hold.mode`/`until`; proven against a real rootless daemon.
+
+Left:
+- Task runs re-adopted after a restart; `health.expect_status`.
+- cgroups for sites and conversations (memory and CPU for process sites).
+- `group` (panel grouping).
 - Rename a site; archive as one file with restore and download; download a
   site folder; screenshots.
 - One deploy implementation (`internal/sites/deploy.go` and
@@ -85,17 +88,22 @@ Left:
 
 ## 5. The agent conversation
 
-- Turn limits: 2-hour cap, reaping what escaped with `setsid` by its env
-  mark, turn table, kill a turn.
-- Jail: deny `~/.ssh`, `~/.aws`, `~/.claude`, `~/.cloudflare`, `sudo`,
-  `systemctl`, force-push; symlinked site folders; prove Bash works under
-  the permission mode used.
-- Attachments; loans (`chat.reads`, read-only folders lent to a site).
-- Several conversations per site, messages while a turn runs, subagent
-  threads, push when a turn ends, picking turns back up after a restart.
-- The `middleware` conversation in the panel.
+Done: two-hour cap per turn; the MIDDLEWARE_CHAT_ID mark, with the
+conversation's processes listed and killed one by one or all (setsid
+escapes included); deny rules that hold (`//path`, as Claude Code reads
+them), turns with permissions skipped so Bash works, the machine's keys and
+dangerous commands denied, linked and nested site folders; container sites
+told to use `middleware exec`.
+
+Left:
 - The site door: `/api/site`, site tokens, `claude_api` tool levels, the API
   socket in containers, `claude: true` token passthrough, cost per model.
+  Needs several conversations per site first.
+- Loans (`chat.reads`); attachments.
+- Several conversations per site, messages while a turn runs, subagent
+  threads, push when a turn ends, picking turns back up after a restart.
+- The `middleware` conversation in the panel; Gemini's jail beyond the
+  audit (it runs --yolo).
 - Account usage meter; cost per project and day in the panel.
 - `/docs/api` human pages, with a test that keeps them in step with routes.
 
