@@ -27,6 +27,13 @@ func (s *Server) registerSites() {
 	s.Handle("PATCH", p+"/{domain}/manifest", "Merge top-level keys into the manifest; null removes a key", s.sitesPatchManifest)
 	s.Handle("DELETE", p+"/{domain}", "Delete the folder, or move it to data/archive/ with ?archive=true", s.sitesDelete)
 	s.Handle("POST", p+"/{domain}/restart", "Force a handover", s.sitesRestart)
+	s.Handle("POST", p+"/{domain}/exec", "Run a command where the site runs and wait for it", s.sitesExec)
+	s.Handle("GET", p+"/{domain}/manifest/history", "The site's kept manifests, newest first", s.historyList)
+	s.Handle("GET", p+"/{domain}/manifest/history/{id}", "One kept manifest as it was written", s.historyGet)
+	s.Handle("POST", p+"/{domain}/manifest/history/{id}/restore", "Write a kept manifest back", s.historyRestore)
+	s.Handle("POST", p+"/{domain}/workers/{name}/restart", "Restart one worker now", s.workerRestart)
+	s.Handle("POST", p+"/{domain}/workers/{name}/stop", "Stop one worker (writes workers.<name>.disabled)", s.workerStop)
+	s.Handle("POST", p+"/{domain}/workers/{name}/start", "Start one worker (clears workers.<name>.disabled)", s.workerStart)
 	s.Handle("POST", p+"/{domain}/stop", "Stop the site (disabled: true)", s.sitesStop)
 	s.Handle("POST", p+"/{domain}/start", "Start the site (clears disabled)", s.sitesStart)
 	s.Handle("POST", p+"/{domain}/hold", "Put the site behind the holding page, or take it out", s.sitesHold)
@@ -241,6 +248,116 @@ func (s *Server) sitesRestart(w http.ResponseWriter, r *http.Request) (any, erro
 		return nil, Errorf(http.StatusConflict, "%v", err)
 	}
 	return OK, nil
+}
+
+func (s *Server) sitesExec(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := s.sitesManager()
+	if err != nil {
+		return nil, err
+	}
+	domain, err := domainOf(r)
+	if err != nil {
+		return nil, err
+	}
+	var body struct {
+		Command string `json:"command"`
+		Timeout string `json:"timeout"`
+	}
+	if err := ReadJSON(r, &body); err != nil {
+		return nil, err
+	}
+	// A minute by default and ten at most: this answers within one
+	// request, and anything longer belongs in a task or a deploy, which
+	// do not hang off a browser tab.
+	timeout := time.Minute
+	if body.Timeout != "" {
+		d, err := time.ParseDuration(body.Timeout)
+		if err != nil || d <= 0 || d > 10*time.Minute {
+			return nil, Errorf(http.StatusBadRequest, "timeout: %q is not a duration up to 10m", body.Timeout)
+		}
+		timeout = d
+	}
+	return m.Exec(r.Context(), domain, body.Command, timeout)
+}
+
+func (s *Server) historyList(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := s.sitesManager()
+	if err != nil {
+		return nil, err
+	}
+	domain, err := domainOf(r)
+	if err != nil {
+		return nil, err
+	}
+	return m.History(domain)
+}
+
+func (s *Server) historyGet(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := s.sitesManager()
+	if err != nil {
+		return nil, err
+	}
+	domain, err := domainOf(r)
+	if err != nil {
+		return nil, err
+	}
+	data, err := m.Version(domain, r.PathValue("id"))
+	if err != nil {
+		return nil, err
+	}
+	// As written, byte for byte: a diff against today's must not show
+	// changes a re-encoding made.
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(data)
+	return Handled, nil
+}
+
+func (s *Server) historyRestore(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := s.sitesManager()
+	if err != nil {
+		return nil, err
+	}
+	domain, err := domainOf(r)
+	if err != nil {
+		return nil, err
+	}
+	return m.RestoreVersion(domain, r.PathValue("id"))
+}
+
+func (s *Server) workerRestart(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := s.sitesManager()
+	if err != nil {
+		return nil, err
+	}
+	domain, err := domainOf(r)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.RestartWorker(r.Context(), domain, r.PathValue("name")); err != nil {
+		return nil, Errorf(http.StatusConflict, "%v", err)
+	}
+	return OK, nil
+}
+
+func (s *Server) workerStop(w http.ResponseWriter, r *http.Request) (any, error) {
+	return s.setWorkerDisabled(r, true)
+}
+
+func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) (any, error) {
+	return s.setWorkerDisabled(r, false)
+}
+
+func (s *Server) setWorkerDisabled(r *http.Request, disabled bool) (any, error) {
+	m, err := s.sitesManager()
+	if err != nil {
+		return nil, err
+	}
+	domain, err := domainOf(r)
+	if err != nil {
+		return nil, err
+	}
+	return m.SetWorkerDisabled(domain, r.PathValue("name"), disabled)
 }
 
 func (s *Server) sitesStop(w http.ResponseWriter, r *http.Request) (any, error) {

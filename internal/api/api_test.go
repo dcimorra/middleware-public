@@ -517,3 +517,33 @@ func TestTheUnixSocketIsTrustedWithoutCredentials(t *testing.T) {
 		t.Fatal("a live socket was replaced")
 	}
 }
+
+func TestACommandRunsInTheSiteFolderAndItsTimeoutKills(t *testing.T) {
+	f := newFixture(t).withToken()
+	if resp, body := f.call("POST", "/api/v1/sites", map[string]any{"domain": "ex.test"}); resp.StatusCode != 201 {
+		t.Fatalf("create: %d %v", resp.StatusCode, body)
+	}
+	resp, body := f.call("POST", "/api/v1/sites/ex.test/exec", map[string]any{"command": "echo hi; pwd; echo $HOME; exit 3"})
+	out, _ := body["output"].(string)
+	if resp.StatusCode != 200 || body["exit_code"] != float64(3) || !strings.Contains(out, "hi") ||
+		!strings.Contains(out, filepath.Join("sites", "ex.test")) || !strings.Contains(out, filepath.Join("data", "homes", "ex.test")) {
+		t.Fatalf("exec: %d %v", resp.StatusCode, body)
+	}
+	// The child of the shell is killed with it, not left behind.
+	marker := filepath.Join(f.root, "survived")
+	start := time.Now()
+	resp, body = f.call("POST", "/api/v1/sites/ex.test/exec", map[string]any{"command": "(sleep 3; touch " + marker + ") & sleep 30", "timeout": "1s"})
+	if resp.StatusCode != 200 || body["timed_out"] != true || time.Since(start) > 10*time.Second {
+		t.Fatalf("timeout: %d %v after %s", resp.StatusCode, body, time.Since(start))
+	}
+	time.Sleep(3500 * time.Millisecond)
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a child of the command outlived its timeout")
+	}
+	if resp, _ := f.call("POST", "/api/v1/sites/ex.test/exec", map[string]any{"command": " "}); resp.StatusCode != 400 {
+		t.Fatalf("empty command: %d", resp.StatusCode)
+	}
+	if resp, _ := f.call("POST", "/api/v1/sites/ex.test/exec", map[string]any{"command": "true", "timeout": "1h"}); resp.StatusCode != 400 {
+		t.Fatalf("an hour: %d", resp.StatusCode)
+	}
+}

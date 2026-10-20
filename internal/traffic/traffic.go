@@ -130,6 +130,9 @@ type Domain struct {
 	ByStatus  map[string]int `json:"by_status"`
 	P50Ms     float64        `json:"p50_ms"`
 	P95Ms     float64        `json:"p95_ms"`
+	// Seconds is this domain's requests per second for the last minute,
+	// oldest first: the site's own sparkline.
+	Seconds []int `json:"seconds"`
 }
 
 // Snapshot is the last minute, what GET /waf/traffic returns.
@@ -152,7 +155,7 @@ func (r *Recorder) Snapshot() Snapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for domain, rg := range r.rings {
-		d := Domain{ByStatus: map[string]int{}}
+		d := Domain{ByStatus: map[string]int{}, Seconds: make([]int, window)}
 		var lat [nbuckets]int
 		for i := range rg.slots {
 			s := &rg.slots[i]
@@ -162,6 +165,7 @@ func (r *Recorder) Snapshot() Snapshot {
 			d.Requests += s.count
 			d.Bytes += s.bytes
 			out.Seconds[s.sec-oldest] += s.count
+			d.Seconds[s.sec-oldest] += s.count
 			for c, n := range s.status {
 				if n > 0 {
 					d.ByStatus[className(c)] += n

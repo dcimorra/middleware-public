@@ -322,7 +322,7 @@ func statusOf(err error) (int, string) {
 		return http.StatusConflict, err.Error()
 	case errors.Is(err, sites.ErrOutside):
 		return http.StatusForbidden, err.Error()
-	case errors.Is(err, sites.ErrBadDomain), errors.Is(err, sites.ErrBadTemplate), errors.Is(err, sites.ErrUnmanaged), errors.Is(err, sites.ErrTooLarge), errors.Is(err, auth.ErrWeakPassword), errors.Is(err, auth.ErrTokenNameNeeded):
+	case errors.Is(err, sites.ErrBadDomain), errors.Is(err, sites.ErrBadTemplate), errors.Is(err, sites.ErrInvalid), errors.Is(err, sites.ErrUnmanaged), errors.Is(err, sites.ErrTooLarge), errors.Is(err, auth.ErrWeakPassword), errors.Is(err, auth.ErrTokenNameNeeded):
 		return http.StatusBadRequest, err.Error()
 	case errors.Is(err, auth.ErrBadCredentials), errors.Is(err, auth.ErrBadSetupCode):
 		return http.StatusUnauthorized, err.Error()

@@ -28,6 +28,11 @@ type worker struct {
 	failures  int
 	nextStart time.Time
 	lastErr   string
+	// restarting is set while RestartWorker stops the old process outside
+	// the lock; without it a tick in between would start the new one
+	// while the old still holds a written port, and the new one would
+	// fail to bind and back off for a minute.
+	restarting bool
 }
 
 // workerKey is a worker's name in state files and the port allocator.
@@ -96,7 +101,7 @@ func (e *Engine) reconcileWorkers(ctx context.Context, s *Site, m *manifest.Mani
 			e.stopWorker(ctx, s.Domain, w)
 			e.emit("worker.changed", s.Domain, "", name+": definition changed, restarting", nil)
 		}
-		if w.inst != nil || time.Now().Before(w.nextStart) {
+		if w.inst != nil || w.restarting || time.Now().Before(w.nextStart) {
 			continue
 		}
 		port := def.Port
@@ -130,6 +135,44 @@ func (e *Engine) reconcileWorkers(ctx context.Context, s *Site, m *manifest.Mani
 		e.saveState(inst.State())
 		e.emit("worker.started", s.Domain, "", name, map[string]any{"port": port})
 	}
+}
+
+// RestartWorker stops a worker so the next tick starts it again, now and
+// without the backoff a crash would earn. Stopping and starting for good
+// is the manifest's `disabled`, because a decision that does not survive
+// a restart is not one; a restart is not a decision, so it lives here.
+func (e *Engine) RestartWorker(ctx context.Context, domain, name string) error {
+	e.mu.Lock()
+	s, ok := e.sites[domain]
+	var w *worker
+	if ok {
+		w = s.Workers[name]
+	}
+	if w == nil {
+		e.mu.Unlock()
+		return fmt.Errorf("%s: no worker %q running", domain, name)
+	}
+	if w.restarting {
+		e.mu.Unlock()
+		return fmt.Errorf("%s: %s is already restarting", domain, name)
+	}
+	inst := w.inst
+	w.inst, w.restarting = nil, true
+	e.mu.Unlock()
+
+	if inst != nil {
+		_ = inst.Stop(ctx, 5*time.Second)
+	}
+	e.mu.Lock()
+	if w.assigned && w.port != 0 {
+		e.opts.Ports.Release(w.port)
+		w.port, w.assigned = 0, false
+	}
+	w.restarting, w.failures, w.nextStart, w.lastErr = false, 0, time.Time{}, ""
+	e.mu.Unlock()
+	e.clearState(workerKey(domain, name))
+	e.emit("worker.restarting", domain, "", name, nil)
+	return nil
 }
 
 // adoptWorker attaches a worker a previous supervisor left running.

@@ -469,3 +469,35 @@ func TestOpeningTheSiteDoorRestartsTheSiteWithItsToken(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "site.json"), []byte(fmt.Sprintf(base, "")), 0o644)
 	waitFor(t, e, "door.test", func(s Snapshot) bool { body, err := get(s.Port); return s.Alive && err == nil && body == "none" })
 }
+
+func TestRestartingAWorkerOnAWrittenPortGivesANewProcessThatAnswers(t *testing.T) {
+	e, sites := newTestEngine(t)
+	dir := filepath.Join(sites, "w.test")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "build"), []byte("w1"), 0o644)
+	m := fmt.Sprintf(`{"version":2,"static":{},"workers":{"api":{"command":[%q],"port":41088,"env":{"MW_TEST_SERVER":"1"},"env_from_file":{"BUILD":"build"}}}}`, os.Args[0])
+	os.WriteFile(filepath.Join(dir, "site.json"), []byte(m), 0o644)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	waitFor(t, e, "w.test", func(s Snapshot) bool {
+		body, err := get(41088)
+		return s.Workers["api"].Alive && err == nil && body == "w1"
+	})
+	before := workerPID(e, "w.test", "api")
+	if err := e.RestartWorker(ctx, "w.test", "api"); err != nil {
+		t.Fatal(err)
+	}
+	// The old process held the written port; the new one must get it,
+	// not fail to bind and back off for a minute.
+	waitFor(t, e, "w.test", func(s Snapshot) bool {
+		body, err := get(41088)
+		return s.Workers["api"].Alive && err == nil && body == "w1" && workerPID(e, "w.test", "api") != before
+	})
+	if sn, _ := e.Lookup("w.test"); sn.Workers["api"].Error != "" {
+		t.Fatalf("the restart left an error: %s", sn.Workers["api"].Error)
+	}
+	if err := e.RestartWorker(ctx, "w.test", "nope"); err == nil {
+		t.Fatal("restarting a worker that does not exist")
+	}
+}

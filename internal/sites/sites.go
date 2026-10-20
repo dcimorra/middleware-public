@@ -33,6 +33,7 @@ var (
 	ErrUnmanaged   = errors.New("the folder has no site.json")
 	ErrOutside     = errors.New("path leaves the site folder")
 	ErrBadTemplate = errors.New("unknown template: want static, node, go or docker")
+	ErrInvalid     = errors.New("invalid manifest")
 )
 
 // Manager operates on the sites of one installation.
@@ -580,6 +581,7 @@ func (m *Manager) Rename(ctx context.Context, from, to string) (Site, error) {
 		{filepath.Join(data, "chat", from+".json"), filepath.Join(data, "chat", to+".json")},
 		{filepath.Join(data, "chat", from), filepath.Join(data, "chat", to)},
 		{filepath.Join(data, "agents", "cost", from+".json"), filepath.Join(data, "agents", "cost", to+".json")},
+		{filepath.Join(data, "history", from), filepath.Join(data, "history", to)},
 	} {
 		if fsx.Exists(pair[0]) && !fsx.Exists(pair[1]) {
 			_ = os.Rename(pair[0], pair[1])

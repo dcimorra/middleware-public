@@ -59,6 +59,13 @@ A site object:
 | PATCH | `/sites/{domain}/manifest` | partial, top-level keys merged → `site` |
 | DELETE | `/sites/{domain}` | `?archive=true` moves to `data/archive/` instead of deleting |
 | POST | `/sites/{domain}/restart` | → `{ok}` (forces a handover) |
+| POST | `/sites/{domain}/exec` | `{command, timeout?: "60s"}` → `{exit_code, output, truncated?, seconds, timed_out?}`; `sh -c command` where the site runs (its folder, environment and HOME, inside its container if it has one), stdin empty, output capped at 1 MB, a minute by default and 10m at most. Every run is a `site.exec` event with the command |
+| GET | `/sites/{domain}/manifest/history` | → `[{id, at, bytes}]`, newest first; the first is the manifest in force. The engine keeps every valid version it sees, whoever wrote it (50 per site, in `data/history/<domain>/`) |
+| GET | `/sites/{domain}/manifest/history/{id}` | the version as it was written |
+| POST | `/sites/{domain}/manifest/history/{id}/restore` | → `site`; written back through the same validation as a PUT (400 when it no longer validates), and kept as the newest version |
+| POST | `/sites/{domain}/workers/{name}/restart` | → `{ok}`; stops it and the engine starts it again on its next tick, without a crash's backoff (409 when it is not running) |
+| POST | `/sites/{domain}/workers/{name}/stop` | → `site`; writes `workers.<name>.disabled: true`, so it stays stopped across restarts |
+| POST | `/sites/{domain}/workers/{name}/start` | → `site`; clears it |
 | POST | `/sites/{domain}/stop` | → `site` (sets `disabled: true`) |
 | POST | `/sites/{domain}/start` | → `site` (clears `disabled`) |
 | POST | `/sites/{domain}/hold` | `{enabled, title?, message?}` → `site` |
@@ -223,7 +230,7 @@ through the house takes names off the internet.
 | POST | `/waf/block` | `{ip, duration?: "1h", reason?}` → `{ok}` (default one day; pushed to the kernel through the helper when it runs) |
 | DELETE | `/waf/block/{ip}` | → `{ok}` |
 | POST | `/waf/under-attack` | `{enabled, domain?, for?: "2h", bits?, life?, skip?, message?}` → `{ok}`; without `domain` the global policy, with it the site's manifest. Absent fields keep their value; `for` becomes `until` on this machine's clock and `"for": ""` is permanent (400 when the rules do not validate) |
-| GET | `/waf/traffic` | → `{per_second, requests, bytes, by_domain: {…}, by_status: {…}, seconds: []}` (last minute) |
+| GET | `/waf/traffic` | → `{per_second, requests, bytes, by_domain: {domain: {requests, per_second, bytes, by_status, p50_ms, p95_ms, seconds: []}}, by_status: {…}, seconds: []}` (last minute; `seconds` oldest first) |
 
 The routes answer 503 when the WAF did not start (a broken block list); the
 `waf.error` event says what to fix.

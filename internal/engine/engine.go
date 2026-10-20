@@ -67,10 +67,12 @@ type Site struct {
 
 	health     healthState
 	needsSince time.Time // first start waiting for its needs since
-	handing    bool
-	failures   int
-	nextStart  time.Time
-	lastErr    string
+	// manifestSum is the last manifest kept in the history (history.go).
+	manifestSum [32]byte
+	handing     bool
+	failures    int
+	nextStart   time.Time
+	lastErr     string
 }
 
 // Snapshot is what the proxy and the panel read: immutable, copied under
@@ -293,6 +295,9 @@ func (e *Engine) reconcile(ctx context.Context, domain, dir string) {
 	if s.Err != "" {
 		s.Err = ""
 		e.emit("manifest.valid", domain, "", "manifest readable again", nil)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, manifest.FileName)); err == nil {
+		e.recordManifest(s, data)
 	}
 	s.Manifest = m
 	s.Mode = m.ModeFor(domain)
