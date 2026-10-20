@@ -72,6 +72,15 @@ the credential. The panel answers through every door so closing the one you
 came in by cannot lock you out, and the VPN module can make it reachable
 through WireGuard only.
 
+**Password guessing.** Every password door (the panel's login, a site's,
+each zone's) goes through one brake (`internal/brake`): failures are counted
+per address (per /64 for IPv6), and five inside a minute lock that address
+out of that door for a minute, doubling with each lock (to a day for the
+panel, fifteen minutes for a site). A success forgets the count. Locked
+attempts get 429 with `Retry-After` and are not checked at all. On top of
+that, at most two key derivations run at once in the whole installation, so
+guesses spread over many addresses queue instead of taking every site's CPU.
+
 **WAF, in layers.** Layer 7 in the core, always on: rate limits per route
 with burst, body size limits, country and user-agent policies, a password or
 an allow list per route, and an "under attack" mode that challenges or

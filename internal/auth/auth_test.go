@@ -132,7 +132,7 @@ func TestFiveFailuresInAMinuteLockTheAddressAndTheLockDoubles(t *testing.T) {
 	s := newStore(t)
 	now := time.Now()
 	s.now = func() time.Time { return now }
-	s.limiter.now = s.now
+	s.limiter.Now = s.now
 	s.SetPassword("password-1")
 	for i := 0; i < 5; i++ {
 		if _, err := s.Login("wrong", "10.0.0.1"); err != ErrBadCredentials {

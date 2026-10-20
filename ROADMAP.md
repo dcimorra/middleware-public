@@ -30,8 +30,6 @@ What the tests only fake, to be run for real:
 
 ## 3. The door
 
-- A brake on site password checks (per domain, zone and address) and at
-  most two key derivations at once.
 - The `security` block: bot families, browser lists, country allow lists,
   per-site paths, built-in probe paths (`/.env`, `/.git`…), recent blocks.
 - Attack mode with proof of work, a key that survives restarts, `skip`
@@ -106,7 +104,9 @@ cgroup above.
 - **§3 Visitor pages**: V1's seven designs, starting vs not answering, hold
   modes, JSON for API clients, 503 instead of 502.
 - **§3 The door**: an unreadable address or CIDR in `access` rejects the
-  manifest instead of being skipped.
+  manifest instead of being skipped; one brake on password guessing for
+  the panel and every site door (per domain, zone and address, a /64 for
+  IPv6), and at most two key derivations at once.
 - **§4 Engine**: docker sites behind V1's walls at their own paths
   (proven on a rootless daemon), `middleware exec`, `needs`, task runs
   re-adopted and stoppable, agent turns in a cgroup of their own, rename,

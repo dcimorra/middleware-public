@@ -7,8 +7,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dcimorra/middleware-public/internal/manifest"
 )
@@ -362,5 +364,71 @@ func TestAZoneNarrowsTheSiteAndNeverWidensIt(t *testing.T) {
 		if got := do(h, req("GET", c.path, c.ip)).Code; got != c.want {
 			t.Errorf("%s from %s: got %d, want %d", c.path, c.ip, got, c.want)
 		}
+	}
+}
+
+func formLogin(h http.Handler, remote, zone, password string, html bool) *httptest.ResponseRecorder {
+	form := url.Values{"password": {password}, "next": {"/"}, "zone": {zone}}
+	r := httptest.NewRequest("POST", "http://p.example"+LoginPath, strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if html {
+		r.Header.Set("Accept", "text/html")
+	}
+	r.RemoteAddr = remote
+	return do(h, r)
+}
+
+func TestWrongPasswordsLockAnAddressOutOfThatDoorOnly(t *testing.T) {
+	site, _ := HashPassword("site pass")
+	zone, _ := HashPassword("zone pass")
+	a := newAccess(t, siteWith(&manifest.Access{Password: site, Routes: map[string]*manifest.RouteAccess{"/admin": {Password: zone}}}))
+	now := time.Now()
+	a.brake.Now = func() time.Time { return now }
+	h := a.Wrap(okHandler())
+
+	const guesser = "203.0.113.9:1"
+	for i := 0; i < 5; i++ {
+		if rec := formLogin(h, guesser, "", "guess", true); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("guess %d got %d", i, rec.Code)
+		}
+	}
+	// Now even the right password is not looked at, by form or by basic
+	// auth, and the visitor is told why and for how long.
+	rec := formLogin(h, guesser, "", "site pass", true)
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "60" || !strings.Contains(rec.Body.String(), "Try again in a minute") {
+		t.Fatalf("locked form got %d, Retry-After %q", rec.Code, rec.Header().Get("Retry-After"))
+	}
+	r := req("GET", "/", guesser)
+	r.SetBasicAuth("x", "site pass")
+	if rec := do(h, r); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("locked basic auth got %d", rec.Code)
+	}
+	// Someone else, and the same address at another door, are untouched.
+	if rec := formLogin(h, "203.0.113.10:1", "", "site pass", false); rec.Code != http.StatusSeeOther {
+		t.Fatalf("another address got %d", rec.Code)
+	}
+	if rec := formLogin(h, guesser, "/admin", "zone pass", false); rec.Code != http.StatusSeeOther {
+		t.Fatalf("the zone's door got %d", rec.Code)
+	}
+	// A pass already given still opens: the brake is on guessing, not on
+	// visitors who are inside.
+	now = now.Add(61 * time.Second)
+	if rec := formLogin(h, guesser, "", "site pass", false); rec.Code != http.StatusSeeOther {
+		t.Fatalf("after the lock got %d", rec.Code)
+	}
+}
+
+func TestAnIPv6GuesserCannotDodgeTheBrakeInsideItsSlash64(t *testing.T) {
+	site, _ := HashPassword("site pass")
+	a := newAccess(t, siteWith(&manifest.Access{Password: site}))
+	h := a.Wrap(okHandler())
+	for i := 1; i <= 5; i++ {
+		formLogin(h, "[2001:db8:1:2::"+strconv.Itoa(i)+"]:1", "", "guess", false)
+	}
+	if rec := formLogin(h, "[2001:db8:1:2::ffff]:1", "", "site pass", false); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("a neighbour in the /64 got %d", rec.Code)
+	}
+	if rec := formLogin(h, "[2001:db8:1:3::1]:1", "", "site pass", false); rec.Code != http.StatusSeeOther {
+		t.Fatalf("the next /64 got %d", rec.Code)
 	}
 }

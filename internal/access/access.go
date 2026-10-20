@@ -33,6 +33,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/brake"
 	"github.com/dcimorra/middleware-public/internal/edge"
 	"github.com/dcimorra/middleware-public/internal/fsx"
 	"github.com/dcimorra/middleware-public/internal/manifest"
@@ -74,7 +75,16 @@ type Access struct {
 	// must cost the full derivation every time.
 	mu       sync.Mutex
 	verified map[[32]byte]struct{}
+
+	// brake counts wrong passwords per domain, zone and address. Without
+	// it each guess was a free key derivation, by form or by basic auth.
+	brake *brake.Brake
 }
+
+// doorPolicy is gentler than the panel's at the top end: a site's
+// visitors are not its operator, and a day locked out of a shared family
+// album for some mistyping is the wrong price.
+var doorPolicy = brake.Policy{Failures: 5, Window: time.Minute, MaxLock: 15 * time.Minute}
 
 const (
 	sessionCookie = "mw_access"
@@ -92,7 +102,7 @@ func New(opts Options) (*Access, error) {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	a := &Access{opts: opts, now: opts.Now, verified: map[[32]byte]struct{}{}}
+	a := &Access{opts: opts, now: opts.Now, verified: map[[32]byte]struct{}{}, brake: brake.New(doorPolicy)}
 	path := filepath.Join(opts.DataDir, "access", "key")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -179,10 +189,21 @@ func (a *Access) Wrap(next http.Handler) http.Handler {
 			doors = append(doors, door{zone: zone, hash: route.Password, message: route.Message})
 		}
 		for _, d := range doors {
-			if !a.hasSession(r, site, d) && !a.basicAuth(r, d.hash) {
-				a.askPassword(w, r, site, d, false)
-				return
+			if a.hasSession(r, site, d) {
+				continue
 			}
+			if _, pw, ok := r.BasicAuth(); ok {
+				good, wait := a.attempt(r, site, d, pw)
+				if good {
+					continue
+				}
+				if wait > 0 {
+					a.tooMany(w, r, site, d, wait)
+					return
+				}
+			}
+			a.askPassword(w, r, site, d, false)
+			return
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -287,32 +308,53 @@ func inAny(ip net.IP, cidrs []string) bool {
 	return false
 }
 
-func (a *Access) basicAuth(r *http.Request, hash string) bool {
-	_, pw, ok := r.BasicAuth()
-	return ok && a.check(hash, pw)
-}
-
-func (a *Access) check(hash, plain string) bool {
-	if hash == "" || plain == "" {
-		return false
+// attempt checks one password at one door. wait > 0 means it was not
+// checked at all: the address is locked out of this door, or every
+// derivation slot in the house stayed busy.
+func (a *Access) attempt(r *http.Request, site Site, d door, plain string) (ok bool, wait time.Duration) {
+	if d.hash == "" || plain == "" {
+		return false, 0
 	}
-	k := sha256.Sum256([]byte(hash + "\x00" + plain))
+	k := sha256.Sum256([]byte(d.hash + "\x00" + plain))
 	a.mu.Lock()
 	_, hit := a.verified[k]
 	a.mu.Unlock()
 	if hit {
-		return true
+		return true, 0
 	}
-	if !CheckPassword(hash, plain) {
-		return false
+	who := a.guesser(r, site, d)
+	if blocked, left := a.brake.Blocked(who); blocked {
+		return false, left
 	}
+	ok, ran := brake.Derive(r.Context(), func() bool { return CheckPassword(d.hash, plain) })
+	if !ran {
+		return false, time.Second
+	}
+	if !ok {
+		a.brake.Failed(who)
+		return false, 0
+	}
+	a.brake.Passed(who)
 	a.mu.Lock()
 	if len(a.verified) > 256 {
 		a.verified = map[[32]byte]struct{}{}
 	}
 	a.verified[k] = struct{}{}
 	a.mu.Unlock()
-	return true
+	return true, 0
+}
+
+// guesser is who a wrong password is counted against: per door, so a
+// lockout on one site or zone does not close another, and per address
+// (a /64 for IPv6, see brake.Key).
+func (a *Access) guesser(r *http.Request, site Site, d door) string {
+	who := r.RemoteAddr
+	if ip := a.clientIP(r); ip != nil {
+		if addr, ok := netip.AddrFromSlice(ip); ok {
+			who = brake.Key(addr)
+		}
+	}
+	return site.Domain + "\x00" + d.zone + "\x00" + who
 }
 
 // Passes are signed with the on-disk key over the domain, the zone, the
@@ -388,9 +430,12 @@ func (a *Access) login(w http.ResponseWriter, r *http.Request, site Site, d door
 		a.askPassword(w, r, site, d, true)
 		return
 	}
-	if !a.check(d.hash, r.PostForm.Get("password")) {
-		// A wrong password costs a full derivation; a flood of them is
-		// the WAF's business, which runs before this.
+	good, wait := a.attempt(r, site, d, r.PostForm.Get("password"))
+	if wait > 0 {
+		a.tooMany(w, r, site, d, wait)
+		return
+	}
+	if !good {
 		a.askPassword(w, r, site, d, true)
 		return
 	}
@@ -431,12 +476,43 @@ func (a *Access) askPassword(w http.ResponseWriter, r *http.Request, site Site, 
 	pages.Render(w, r, n)
 }
 
+// tooMany answers 429 to an attempt the brake refused. A browser gets the
+// form again, saying why and for how long, so the visitor is not left
+// guessing whether the password or the site is wrong.
+func (a *Access) tooMany(w http.ResponseWriter, r *http.Request, site Site, d door, wait time.Duration) {
+	secs := int(wait.Round(time.Second).Seconds())
+	if secs < 1 {
+		secs = 1
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	if !strings.Contains(r.Header.Get("Accept"), "text/html") {
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		http.Error(w, "too many wrong passwords; try again later", http.StatusTooManyRequests)
+		return
+	}
+	n := pages.ForSite("password", site.Title, site.Domain, site.Theme)
+	n.Status, n.RetryAfter = http.StatusTooManyRequests, secs
+	if d.message != "" {
+		n.Line = d.message
+	}
+	next := r.URL.RequestURI()
+	if r.URL.Path == LoginPath {
+		next = r.FormValue("next")
+	}
+	minutes := (secs + 59) / 60
+	var form strings.Builder
+	_ = formTpl.Execute(&form, map[string]any{"Action": LoginPath, "Next": safeNext(next), "Zone": d.zone, "Minutes": minutes})
+	n.Extra = template.HTML(form.String())
+	pages.Render(w, r, n)
+}
+
 // formTpl is the password form every design styles (.password, .wrong).
 var formTpl = template.Must(template.New("form").Parse(`<form class="password" method="post" action="{{.Action}}">
 <input type="hidden" name="next" value="{{.Next}}"><input type="hidden" name="zone" value="{{.Zone}}">
 <input type="password" name="password" autocomplete="current-password" autofocus required aria-label="Password" placeholder="Password">
 <button type="submit">Enter</button>
 {{if .Failed}}<p class="wrong">That password is not right.</p>{{end}}
+{{with .Minutes}}<p class="wrong">Too many wrong passwords. Try again in {{if eq . 1}}a minute{{else}}{{.}} minutes{{end}}.</p>{{end}}
 </form>`))
 
 func hostOf(r *http.Request) string {

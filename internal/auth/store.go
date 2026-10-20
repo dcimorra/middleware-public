@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/brake"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/fsx"
 )
@@ -42,7 +44,7 @@ type Store struct {
 	sessions map[string]Session
 	tokens   []Token
 	loaded   bool
-	limiter  *limiter
+	limiter  *brake.Brake
 }
 
 // Session is one cookie session.
@@ -70,12 +72,18 @@ type Public struct {
 	LastUsed time.Time `json:"last_used,omitempty"`
 }
 
+// loginPolicy: five failures inside a minute lock the address out for a
+// minute, and every further lock doubles. Five per minute lets a person
+// mistype a few times and makes an online guess of an 8-character
+// password take centuries.
+var loginPolicy = brake.Policy{Failures: 5, Window: time.Minute, MaxLock: 24 * time.Hour}
+
 // New opens the store under root/data/auth. bus may be nil for tests.
 func New(root string, bus *events.Bus) *Store {
 	if bus == nil {
 		bus = events.New("")
 	}
-	return &Store{dir: filepath.Join(root, "data", "auth"), bus: bus, now: time.Now, limiter: newLimiter(time.Now)}
+	return &Store{dir: filepath.Join(root, "data", "auth"), bus: bus, now: time.Now, limiter: brake.New(loginPolicy)}
 }
 
 func (s *Store) passwordPath() string  { return filepath.Join(s.dir, "password") }
@@ -169,7 +177,8 @@ func (s *Store) Login(password, ip string) (string, error) {
 	if !s.HasOperator() {
 		return "", ErrNoOperator
 	}
-	if s.limiter.blocked(ip) {
+	key := brake.KeyOf(ip)
+	if blocked, _ := s.limiter.Blocked(key); blocked {
 		s.emit("auth.rate_limited", "login rate limited", map[string]any{"ip": ip})
 		return "", ErrRateLimited
 	}
@@ -177,12 +186,17 @@ func (s *Store) Login(password, ip string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !VerifyPassword(phc, password) {
-		s.limiter.failed(ip)
+	ok, ran := brake.Derive(context.Background(), func() bool { return VerifyPassword(phc, password) })
+	if !ran {
+		s.emit("auth.rate_limited", "login refused: every password check slot busy", map[string]any{"ip": ip})
+		return "", ErrRateLimited
+	}
+	if !ok {
+		s.limiter.Failed(key)
 		s.emit("auth.login_failed", "wrong password", map[string]any{"ip": ip})
 		return "", ErrBadCredentials
 	}
-	s.limiter.reset(ip)
+	s.limiter.Passed(key)
 	id, err := s.NewSession()
 	if err != nil {
 		return "", err
