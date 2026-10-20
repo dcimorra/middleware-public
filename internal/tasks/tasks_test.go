@@ -282,3 +282,64 @@ func TestATaskForAMissingSiteFailsVisibly(t *testing.T) {
 	}
 	waitUntil(t, "task.failed", func() bool { return len(get("task.failed")) == 1 })
 }
+
+// A run that outlives its supervisor is adopted by the next one and
+// recorded when it ends, instead of running unrecorded and leaving its
+// task looking stuck.
+func TestARunInProgressIsAdoptedAfterARestart(t *testing.T) {
+	root := newRoot(t)
+	writeTask(t, root, "slow", `{"version":2,"schedule":"@daily","command":["sh","-c","sleep 1"]}`)
+	a := NewScheduler(Options{Root: root, Bus: events.New("")})
+	done := make(chan error, 1)
+	go func() { done <- a.RunNow("slow") }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(filepath.Join(root, "data", "tasks", "running", "slow.json")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the run was not saved as running")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// The second supervisor adopts it while it still runs.
+	b := NewScheduler(Options{Root: root, Bus: events.New("")})
+	b.adoptAll()
+	if l := b.List(); !l[0].Running {
+		t.Fatalf("not adopted: %+v", l)
+	}
+	<-done
+	b.Wait()
+	runs := LoadRecord(root, "slow").Runs
+	statuses := ""
+	for _, r := range runs {
+		statuses += r.Status + " "
+	}
+	if !strings.Contains(statuses, StatusEnded) {
+		t.Fatalf("the adopted run was not recorded: %s", statuses)
+	}
+	if _, err := os.Stat(filepath.Join(root, "data", "tasks", "running", "slow.json")); err == nil {
+		t.Fatal("the running file was left behind")
+	}
+}
+
+func TestARunningTaskCanBeStopped(t *testing.T) {
+	root := newRoot(t)
+	writeTask(t, root, "long", `{"version":2,"schedule":"@daily","command":["sleep","30"]}`)
+	s := NewScheduler(Options{Root: root, Bus: events.New("")})
+	done := make(chan error, 1)
+	go func() { done <- s.RunNow("long") }()
+	time.Sleep(300 * time.Millisecond)
+	if err := s.Stop("long"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("the run did not stop")
+	}
+	runs := LoadRecord(root, "long").Runs
+	if runs[len(runs)-1].Status != StatusStopped {
+		t.Fatalf("status %s", runs[len(runs)-1].Status)
+	}
+}

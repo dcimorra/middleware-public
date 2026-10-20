@@ -132,6 +132,11 @@ const (
 	StatusTimeout = "timeout"
 	StatusSkipped = "skipped"
 	StatusError   = "error" // could not even start
+	// StatusEnded is a run adopted after a restart: it ended, and its
+	// exit code is not known because it was not our child.
+	StatusEnded = "ended"
+	// StatusStopped is a run the operator stopped.
+	StatusStopped = "stopped"
 )
 
 // Run is one execution, as recorded in data/tasks/<name>.json.

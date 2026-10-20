@@ -38,7 +38,7 @@ export function tasksScreen() {
         cell(task.site ? h("a", { href: `#/sites/${enc(task.site)}` }, task.site) : h("span", { class: "muted" }, t("tasks.root")), t("tasks.col.site")),
         cell(task.next ? h("span", { title: fmtTime(task.next) }, fmtAgo(task.next, t)) : "", t("tasks.col.next")),
         cell(statusEl, t("tasks.col.last")),
-        cell(h("div", { class: "actions" }, runBtn(task), logBtn(task), delBtn(task)), null, "right"),
+        cell(h("div", { class: "actions" }, task.running ? stopBtn(task) : runBtn(task), logBtn(task), delBtn(task)), null, "right"),
       );
     });
     return table([
@@ -51,6 +51,15 @@ export function tasksScreen() {
     b.addEventListener("click", async () => {
       b.classList.add("busy");
       try { await api.post(`/tasks/${enc(task.name)}/run`); toast(t("tasks.started", { name: task.name }), "ok"); }
+      catch (e) { toastError(e); } finally { b.classList.remove("busy"); }
+    });
+    return b;
+  }
+  function stopBtn(task) {
+    const b = h("button", { type: "button", class: "btn sm danger" }, icon("stop"), t("tasks.stop"));
+    b.addEventListener("click", async () => {
+      b.classList.add("busy");
+      try { await api.post(`/tasks/${enc(task.name)}/stop`); toast(t("tasks.stopped", { name: task.name }), "ok"); }
       catch (e) { toastError(e); } finally { b.classList.remove("busy"); }
     });
     return b;

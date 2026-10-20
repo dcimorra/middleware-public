@@ -550,5 +550,7 @@
   "chat.noProcesses": "Nothing running.",
   "chat.kill": "Kill",
   "chat.killAll": "Kill all",
-  "chat.killed": "{n} process(es) ended"
+  "chat.killed": "{n} process(es) ended",
+  "tasks.stop": "Stop",
+  "tasks.stopped": "{name} stopped"
 }

@@ -87,6 +87,16 @@ func (s *Server) RegisterTasks(o TasksOptions) {
 		}()
 		return map[string]any{"ok": true, "log": tasks.LogPath(o.Root, name)}, nil
 	})
+	s.Handle("POST", p+"/{name}/stop", "Stop a run in progress; it is recorded as stopped", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		name, err := taskName(r)
+		if err != nil {
+			return nil, err
+		}
+		if err := o.Scheduler.Stop(name); err != nil {
+			return nil, Errorf(http.StatusConflict, "%v", err)
+		}
+		return OK, nil
+	})
 	s.Handle("GET", p+"/{name}/log", "The last lines of a task's output", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		name, err := taskName(r)
 		if err != nil {

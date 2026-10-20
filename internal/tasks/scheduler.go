@@ -8,11 +8,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/cron"
 	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/middleware-public/internal/fsx"
 	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/runtime"
 )
@@ -44,6 +46,22 @@ type state struct {
 	running bool
 	queued  bool
 	lastErr string
+	inst    runtime.Instance
+}
+
+// running is data/tasks/running/<name>.json: a run in progress, so a
+// supervisor that restarts mid-run adopts it instead of forgetting it.
+// Before, a backup that outlived a restart kept running, was never
+// recorded when it ended, and its task looked stuck forever.
+type runningFile struct {
+	State   runtime.State     `json:"state"`
+	Start   time.Time         `json:"start"`
+	Trigger string            `json:"trigger"`
+	Timeout manifest.Duration `json:"timeout,omitempty"`
+}
+
+func (s *Scheduler) runningPath(name string) string {
+	return filepath.Join(s.opts.Root, "data", "tasks", "running", name+".json")
 }
 
 // ErrRunning says the task is already running.
@@ -73,6 +91,7 @@ func NewScheduler(opts Options) *Scheduler {
 // runtime gives each one its own process group so it is not our child's
 // problem either.
 func (s *Scheduler) Run(ctx context.Context) {
+	s.adoptAll()
 	s.tick()
 	t := time.NewTicker(s.opts.Tick)
 	defer t.Stop()
@@ -342,21 +361,120 @@ func (s *Scheduler) runOnce(name string, t *Task, trigger string) error {
 		return record(StatusError, -1, err)
 	}
 	s.emit("task.started", name, "", "", map[string]any{"trigger": trigger, "pid": inst.State().PID, "site": t.Site})
-	timeout := time.Duration(t.Timeout)
+	_ = fsx.WriteJSON(s.runningPath(name), runningFile{State: inst.State(), Start: start, Trigger: trigger, Timeout: t.Timeout}, 0o644)
+	return s.follow(name, inst, time.Duration(t.Timeout), start, record)
+}
+
+// follow waits for a run to end, killing it at its timeout, and records
+// it. An adopted run's exit code is not ours to read (it is not our
+// child), so it ends as "ended" rather than guessing ok or failed.
+func (s *Scheduler) follow(name string, inst runtime.Instance, timeout time.Duration, start time.Time, record func(string, int, error) error) error {
+	s.mu.Lock()
+	s.state(name).inst = inst
+	s.mu.Unlock()
+	defer func() {
+		_ = os.Remove(s.runningPath(name))
+		s.mu.Lock()
+		s.state(name).inst = nil
+		s.mu.Unlock()
+	}()
 	var timer <-chan time.Time
 	if timeout > 0 {
-		timer = time.After(timeout)
+		left := timeout - s.opts.Now().Sub(start)
+		if left < time.Second {
+			left = time.Second
+		}
+		timer = time.After(left)
 	}
 	select {
 	case err := <-inst.Done():
-		code := exitCode(err)
-		if err == nil {
+		s.mu.Lock()
+		stopped := s.state(name).lastErr == "stopped"
+		s.state(name).lastErr = ""
+		s.mu.Unlock()
+		switch {
+		case stopped:
+			return record(StatusStopped, -1, errors.New("stopped by the operator"))
+		case isAdopted(inst):
+			return record(StatusEnded, -1, nil)
+		case err == nil:
 			return record(StatusOK, 0, nil)
 		}
-		return record(StatusFailed, code, nil)
+		return record(StatusFailed, exitCode(err), nil)
 	case <-timer:
 		_ = inst.Stop(context.Background(), 10*time.Second)
 		return record(StatusTimeout, -1, fmt.Errorf("killed after %s", timeout))
+	}
+}
+
+func isAdopted(inst runtime.Instance) bool {
+	a, ok := inst.(interface{ Adopted() bool })
+	return ok && a.Adopted()
+}
+
+// Stop ends a run in progress.
+func (s *Scheduler) Stop(name string) error {
+	s.mu.Lock()
+	st := s.state(name)
+	inst := st.inst
+	if inst != nil {
+		st.lastErr = "stopped"
+	}
+	s.mu.Unlock()
+	if inst == nil {
+		return fmt.Errorf("%s: not running", name)
+	}
+	return inst.Stop(context.Background(), 10*time.Second)
+}
+
+// adoptAll takes over the runs a previous supervisor left going. One that
+// already ended is recorded as such, with its exit code unknown: a run
+// that simply vanished from the record would be the failure that looks
+// like nothing happened.
+func (s *Scheduler) adoptAll() {
+	ents, err := os.ReadDir(filepath.Dir(s.runningPath("x")))
+	if err != nil {
+		return
+	}
+	for _, e := range ents {
+		name, ok := strings.CutSuffix(e.Name(), ".json")
+		if !ok {
+			continue
+		}
+		var rf runningFile
+		if fsx.ReadJSON(s.runningPath(name), &rf) != nil {
+			_ = os.Remove(s.runningPath(name))
+			continue
+		}
+		record := func(status string, code int, err error) error {
+			run := Run{At: rf.Start, Status: status, Duration: manifest.Duration(s.opts.Now().Sub(rf.Start)), ExitCode: code, Trigger: rf.Trigger}
+			if err != nil {
+				run.Error = err.Error()
+			} else if status == StatusEnded {
+				run.Error = "adopted after a supervisor restart; the exit code is not known"
+			}
+			_ = appendRun(s.opts.Root, name, run)
+			s.emit("task."+map[bool]string{true: "done", false: "failed"}[status == StatusEnded || status == StatusOK], name, "", status, map[string]any{"status": status, "adopted": true})
+			return nil
+		}
+		inst, err := runtime.Process{}.Adopt(context.Background(), rf.State)
+		if err != nil {
+			_ = record(StatusEnded, -1, errors.New("ended while the supervisor was down; the exit code is not known"))
+			_ = os.Remove(s.runningPath(name))
+			continue
+		}
+		if !s.claim(name) {
+			continue
+		}
+		s.emit("task.adopted", name, "", "still running from a previous supervisor", map[string]any{"pid": rf.State.PID})
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			_ = s.follow(name, inst, time.Duration(rf.Timeout), rf.Start, record)
+			s.mu.Lock()
+			s.state(name).running = false
+			s.mu.Unlock()
+		}()
 	}
 }
 

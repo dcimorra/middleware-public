@@ -108,6 +108,9 @@ func (Process) Adopt(ctx context.Context, st State) (Instance, error) {
 	return p, nil
 }
 
+// Adopted reports whether this instance was adopted rather than started.
+func (p *procInstance) Adopted() bool { return p.adopted }
+
 func (p *procInstance) Port() int          { return p.port }
 func (p *procInstance) Revision() string   { return p.revision }
 func (p *procInstance) Done() <-chan error { return p.done }
