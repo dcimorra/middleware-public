@@ -14,6 +14,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/inbound"
 	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/middleware-public/internal/shots"
 	"github.com/dcimorra/middleware-public/internal/sites"
 )
 
@@ -497,4 +498,37 @@ func (s *Server) sitesDownload(w http.ResponseWriter, r *http.Request) (any, err
 		s.opts.Bus.Emit(events.Event{Type: "download.failed", Subject: domain, Actor: "operator", Level: "warn", Message: err.Error()})
 	}
 	return Handled, nil
+}
+
+// RegisterShots adds the site pictures.
+func (s *Server) RegisterShots(sh *shots.Shotter) {
+	p := Prefix + "/sites"
+	s.Handle("GET", p+"/{domain}/shot.png", "The site's picture; asking for it keeps pictures renewing for an hour", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		domain, err := domainOf(r)
+		if err != nil {
+			return nil, err
+		}
+		sh.Viewed()
+		path, at, ok := sh.Path(domain)
+		if !ok || time.Since(at) > shots.Refresh {
+			sh.Request(domain, false)
+		}
+		if !ok {
+			return nil, Errorf(http.StatusNotFound, "no picture of %s yet", domain)
+		}
+		w.Header().Set("Cache-Control", "private, max-age=60")
+		http.ServeFile(w, r, path)
+		return Handled, nil
+	})
+	s.Handle("POST", p+"/{domain}/shot", "Take the site's picture now, whatever state it is in", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		domain, err := domainOf(r)
+		if err != nil {
+			return nil, err
+		}
+		if !sh.Available() {
+			return nil, Errorf(http.StatusNotImplemented, "no headless Chromium on this machine (set MIDDLEWARE_CHROME)")
+		}
+		sh.Request(domain, true)
+		return OK, nil
+	})
 }

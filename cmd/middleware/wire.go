@@ -16,6 +16,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/api"
 	"github.com/dcimorra/middleware-public/internal/app"
 	"github.com/dcimorra/middleware-public/internal/deps"
+	"github.com/dcimorra/middleware-public/internal/engine"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/firewall"
 	"github.com/dcimorra/middleware-public/internal/helper"
@@ -28,6 +29,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/pages"
 	"github.com/dcimorra/middleware-public/internal/publish"
 	"github.com/dcimorra/middleware-public/internal/settings"
+	"github.com/dcimorra/middleware-public/internal/shots"
 	"github.com/dcimorra/middleware-public/internal/sitetoken"
 )
 
@@ -96,6 +98,7 @@ func registerExtraModules(mgr *modules.Manager, root string, bus *events.Bus, dm
 type wireHook struct {
 	set       *moduleSet
 	publisher *publish.Publisher
+	shots     *shots.Shotter
 }
 
 func buildWire(a *app.App) app.Hook {
@@ -139,6 +142,28 @@ func buildWire(a *app.App) app.Hook {
 		srv.RegisterInbound(api.InboundOptions{Hook: inboundHook, DNS: cloudflareDNS{set: set}, Publisher: w.publisher})
 	}
 	srv.RegisterWAF(api.WAFOptions{WAF: theWAF, Traffic: theTraffic})
+	w.shots = shots.New(shots.Options{
+		DataDir: dataDir(a),
+		Bus:     a.Bus,
+		Bare:    a.Proxy,
+		Shootable: func(domain string) bool {
+			sn, ok := a.Engine.Lookup(domain)
+			if !ok || sn.Domain != domain || sn.Health == engine.HealthDown {
+				return false
+			}
+			return sn.Mode == manifest.ModeStatic || sn.Mode == manifest.ModeUpstream || sn.Mode == manifest.ModeRun && sn.Alive
+		},
+		Domains: func() []string {
+			var out []string
+			for _, sn := range a.Engine.Sites() {
+				if !manifest.IsProject(sn.Domain) {
+					out = append(out, sn.Domain)
+				}
+			}
+			return out
+		},
+	})
+	srv.RegisterShots(w.shots)
 	pages.SetHouseTheme(a.Settings.VisitorTheme)
 	srv.OnSettingsSaved(func(st settings.Settings) { pages.SetHouseTheme(st.VisitorTheme) })
 	srv.RegisterAgents(api.AgentsOptions{Registry: providers(), Chat: chatManager})
@@ -182,6 +207,9 @@ func (w *wireHook) Run(ctx context.Context, a *app.App) error {
 	}
 	if w.publisher != nil {
 		go w.publisher.Run(ctx)
+	}
+	if w.shots != nil {
+		go w.shots.Run(ctx)
 	}
 	var enabled []string
 	if w.set != nil {

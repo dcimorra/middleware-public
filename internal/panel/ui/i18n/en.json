@@ -566,5 +566,9 @@
   "sites.archivedBody": "Each is one file with everything the folder had, data and dependencies included. Restoring puts it back in sites/ as it was.",
   "sites.noArchived": "Nothing archived.",
   "sites.restore": "Restore",
-  "sites.restored": "{domain} restored"
+  "sites.restored": "{domain} restored",
+  "site.picture": "Picture",
+  "site.pictureAlt": "{domain} as a visitor sees it",
+  "site.pictureAgain": "Take again",
+  "site.pictureTaking": "Taking the picture"
 }

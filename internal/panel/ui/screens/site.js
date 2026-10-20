@@ -149,6 +149,7 @@ function overviewTab(domain) {
       [t("site.staticRoot"), m.static ? (m.static.root || "public") : null],
       [t("site.holdTitle"), m.hold && m.hold.enabled ? (m.hold.title || "—") : null],
       [t("site.app"), m.app || null],
+      [t("site.picture"), mode === "project" || unmanaged ? null : sitePicture()],
       [t("site.published"), published.length ? h("div", { class: "stack-sm" }, ...published.map(([name, r]) => h("div", null,
         h("code", null, name), " ",
         h("span", { class: "badge " + ({ published: "ok", failed: "bad", manual: "warn", retiring: "warn" }[r.state] || ""), title: r.error || "" }, t("publish.state." + r.state)),
@@ -243,6 +244,25 @@ function overviewTab(domain) {
     });
     if (ok) toast(t("site.heldNow"), "ok");
   }
+
+  // The site as a visitor sees it, taken through a door that skips its
+  // password; a picture that is not there yet just does not show.
+  function sitePicture() {
+    const img = h("img", { class: "site-shot", alt: t("site.pictureAlt", { domain }), src: `/api/v1/sites/${enc(domain)}/shot.png?t=${Math.floor(Date.now() / 60000)}`, loading: "lazy" });
+    const box = h("div", { class: "stack-sm" }, img);
+    img.addEventListener("error", () => { img.hidden = true; });
+    const again = h("button", { type: "button", class: "btn sm ghost" }, icon("refresh"), t("site.pictureAgain"));
+    again.addEventListener("click", async () => {
+      try { await api.post(`/sites/${enc(domain)}/shot`); toast(t("site.pictureTaking"), "ok"); } catch (e) { toastError(e); }
+    });
+    box.append(again);
+    return box;
+  }
+  subs.push(onEvent("shot.taken", (ev) => {
+    if (ev.subject !== domain) return;
+    const img = el.querySelector("img.site-shot");
+    if (img) { img.hidden = false; img.src = `/api/v1/sites/${enc(domain)}/shot.png?t=${Date.now()}`; }
+  }));
 
   async function publish() {
     try {

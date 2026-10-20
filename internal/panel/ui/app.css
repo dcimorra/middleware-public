@@ -548,3 +548,6 @@ details.section[open] summary { border-bottom: 1px solid var(--border); margin-b
 
 /* A heading row in the sites list when sites have a manifest group. */
 .group-row th{background:var(--surface-2,transparent);font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--text-2);text-align:left;padding:.5rem .75rem}
+
+/* The site's picture on its overview. */
+.site-shot{width:100%;max-width:420px;aspect-ratio:1200/750;object-fit:cover;object-position:top;border:1px solid var(--border,#ddd);border-radius:8px}
