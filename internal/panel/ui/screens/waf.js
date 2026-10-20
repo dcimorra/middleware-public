@@ -57,15 +57,15 @@ export function wafScreen() {
     const burst = h("input", { type: "number", min: "0", value: rate.burst ?? "" });
     const maxBody = h("input", { type: "text", class: "mono", placeholder: "20m", value: policy.max_body || "" });
     const deny = h("input", { type: "text", class: "mono", value: (policy.deny_countries || []).join(", ") });
-    const agents = h("textarea", { class: "mono", rows: "3", value: (policy.deny_user_agents || []).join("\n") });
-    const blockFor = h("input", { type: "text", class: "mono", placeholder: "1h", value: policy.block_duration || "" });
+    const agents = h("textarea", { class: "mono", rows: "3", value: (policy.deny_agents || []).join("\n") });
+    const trips = h("input", { type: "number", min: "0", value: policy.trips ?? "" });
     const underAttack = toggle(t("waf.underAttack"), { checked: Boolean((policy.attack && policy.attack.on) || policy.under_attack) });
     const save = h("button", { type: "submit", class: "btn primary" }, t("common.save"));
     const err = h("div", { class: "error-box", hidden: true });
     const form = h("form", { novalidate: true },
       h("div", { class: "form-row" },
         field(t("access.rateRequests"), requests), field(t("access.rateWindow"), window_), field(t("access.rateBurst"), burst),
-        field(t("access.maxBody"), maxBody), field(t("waf.blockDuration"), blockFor, t("waf.blockDurationHint")),
+        field(t("access.maxBody"), maxBody), field(t("waf.trips"), trips, t("waf.tripsHint")),
       ),
       field(t("access.denyCountries"), deny, t("access.denyHint")),
       field(t("waf.denyAgents"), agents, t("waf.denyAgentsHint")),
@@ -93,8 +93,8 @@ export function wafScreen() {
       const dc = deny.value.split(",").map((x) => x.trim().toUpperCase()).filter(Boolean);
       if (dc.length) out.deny_countries = dc; else delete out.deny_countries;
       const ua = agents.value.split("\n").map((x) => x.trim()).filter(Boolean);
-      if (ua.length) out.deny_user_agents = ua; else delete out.deny_user_agents;
-      if (blockFor.value) out.block_duration = blockFor.value.trim(); else delete out.block_duration;
+      if (ua.length) out.deny_agents = ua; else delete out.deny_agents;
+      if (trips.value !== "") out.trips = Number(trips.value); else delete out.trips;
       save.classList.add("busy");
       err.hidden = true;
       try { await api.put("/waf", out); toast(t("waf.saved"), "ok"); }

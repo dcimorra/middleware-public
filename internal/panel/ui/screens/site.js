@@ -20,9 +20,10 @@ import { logsTab } from "./site-logs.js";
 import { filesTab } from "./site-files.js";
 import { chatTab } from "./site-chat.js";
 import { accessTab } from "./site-access.js";
+import { securityTab } from "./site-security.js";
 
-const TABS = ["overview", "manifest", "logs", "files", "chat", "access"];
-const TAB_ICON = { overview: "gauge", manifest: "code", logs: "list", files: "folder", chat: "chat", access: "lock" };
+const TABS = ["overview", "manifest", "logs", "files", "chat", "access", "security"];
+const TAB_ICON = { overview: "gauge", manifest: "code", logs: "list", files: "folder", chat: "chat", access: "lock", security: "shield" };
 
 export function siteScreen({ domain, tab }) {
   const active = TABS.includes(tab) ? tab : "overview";
@@ -58,6 +59,7 @@ export function siteScreen({ domain, tab }) {
       case "files": view = filesTab(domain); break;
       case "chat": view = chatTab(domain); break;
       case "access": view = accessTab(domain); break;
+      case "security": view = securityTab(domain); break;
       default: view = overviewTab(domain);
     }
     body.append(view.el);

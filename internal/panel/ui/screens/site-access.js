@@ -6,7 +6,7 @@ import { h } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
 import { store } from "../lib/store.js";
-import { field, toggle } from "../components/dialog.js";
+import { field } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 
 const lines = (arr) => (arr || []).join("\n");
@@ -28,9 +28,6 @@ export function accessTab(domain) {
   const window_ = h("input", { type: "text", class: "mono", placeholder: "1m", value: rate.window || "" });
   const burst = h("input", { type: "number", min: "0", value: rate.burst ?? "" });
   const maxBody = h("input", { type: "text", class: "mono", placeholder: "20m", value: waf.max_body || "" });
-  // The switch reads the attack block, and the old waf boolean for a
-  // manifest written before it; flipping it moves the old one over.
-  const underAttack = toggle(t("access.underAttack"), { checked: Boolean((m.attack && m.attack.on) || waf.under_attack) });
 
   const save = h("button", { type: "submit", class: "btn primary" }, t("common.save"));
   const err = h("div", { class: "error-box", hidden: true, role: "alert" });
@@ -51,22 +48,11 @@ export function accessTab(domain) {
         field(t("access.rateBurst"), burst),
         field(t("access.maxBody"), maxBody, t("access.maxBodyHint")),
       ),
-      h("div", { class: "field" }, underAttack.el, h("div", { class: "hint" }, t("access.underAttackHint"))),
+      h("p", { class: "small muted" }, t("access.attackMoved")),
       err,
       h("div", { class: "form-actions" }, save),
     ),
   );
-
-  underAttack.input.addEventListener("change", async () => {
-    underAttack.input.disabled = true;
-    try {
-      await api.post("/waf/under-attack", { enabled: underAttack.input.checked, domain });
-      toast(underAttack.input.checked ? t("access.underAttackOn", { domain }) : t("access.underAttackOff", { domain }), "ok");
-    } catch (e) {
-      underAttack.input.checked = !underAttack.input.checked;
-      toastError(e);
-    } finally { underAttack.input.disabled = false; }
-  });
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -93,9 +79,9 @@ export function accessTab(domain) {
     if (burst.value !== "") r.burst = Number(burst.value);
     if (Object.keys(r).length) newWaf.rate = r;
     if (maxBody.value) newWaf.max_body = maxBody.value.trim();
-    // Saving the form must not switch off a manifest that is under attack
-    // through the old boolean; the switch above moves it to `attack`.
-    if (underAttack.input.checked && !m.attack) newWaf.under_attack = true;
+    // Saving must not switch off a manifest under attack through the old
+    // boolean; the Security tab's switch moves it to `attack`.
+    if (waf.under_attack && !m.attack) newWaf.under_attack = true;
     save.classList.add("busy");
     try {
       const updated = await api.patch(`/sites/${enc(domain)}/manifest`, { access: newAccess, waf: newWaf });
