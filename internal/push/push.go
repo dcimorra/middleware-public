@@ -128,8 +128,10 @@ func New(opts Options) (*Sender, error) {
 	return s, nil
 }
 
-func (s *Sender) keyPath() string  { return filepath.Join(s.opts.DataDir, "push", "vapid.json") }
-func (s *Sender) subsPath() string { return filepath.Join(s.opts.DataDir, "push", "subscriptions.json") }
+func (s *Sender) keyPath() string { return filepath.Join(s.opts.DataDir, "push", "vapid.json") }
+func (s *Sender) subsPath() string {
+	return filepath.Join(s.opts.DataDir, "push", "subscriptions.json")
+}
 
 // PublicKey is the VAPID public key as the browser's applicationServerKey
 // wants it: the uncompressed point, base64url.
