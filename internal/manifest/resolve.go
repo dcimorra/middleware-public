@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,16 +17,18 @@ import (
 // and pointer resolved. Two specs with the same Revision would start the
 // same process, so the engine compares revisions and nothing else.
 type Spec struct {
-	Domain   string
-	SiteDir  string
-	Command  []string
-	Cwd      string
-	Env      map[string]string // without PORT; the runtime adds it last
-	Health   Health
-	Drain    Duration
-	Restart  Restart
-	Runtime  string
-	Docker   *Docker
+	Domain  string
+	SiteDir string
+	Command []string
+	Cwd     string
+	Env     map[string]string // without PORT; the runtime adds it last
+	Health  Health
+	Drain   Duration
+	Restart Restart
+	Runtime string
+	Docker  *Docker
+	// Port is the written port, or 0 for one the engine assigns.
+	Port     int
 	Revision string
 }
 
@@ -38,10 +41,10 @@ func Resolve(domain, siteDir string, m *Manifest) (*Spec, error) {
 	}
 	vars := map[string]string{"DOMAIN": domain, "SITE_DIR": siteDir}
 	env := map[string]string{}
-	if m.Run.EnvFile != "" {
-		fileEnv, err := readEnvFile(filepath.Join(siteDir, m.Run.EnvFile))
+	for _, f := range m.Run.EnvFiles {
+		fileEnv, err := readEnvFile(filepath.Join(siteDir, Expand(f, vars)))
 		if err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("%s: env_file: %w", domain, err)
+			return nil, fmt.Errorf("%s: env_files: %s: %w", domain, f, err)
 		}
 		for k, v := range fileEnv {
 			env[k] = v
@@ -79,6 +82,7 @@ func Resolve(domain, siteDir string, m *Manifest) (*Spec, error) {
 		Runtime: m.Run.Runtime,
 		Docker:  m.Run.Docker,
 		Drain:   m.Run.Drain,
+		Port:    m.Run.Port,
 	}
 	if s.Runtime == "" {
 		s.Runtime = "process"
@@ -129,7 +133,7 @@ func (s *Spec) hash() string {
 			h.Write([]byte{0})
 		}
 	}
-	w(s.Domain, s.Cwd, s.Runtime)
+	w(s.Domain, s.Cwd, s.Runtime, strconv.Itoa(s.Port))
 	w(s.Command...)
 	keys := make([]string, 0, len(s.Env))
 	for k := range s.Env {
@@ -149,7 +153,26 @@ func (s *Spec) hash() string {
 // readEnvFile parses KEY=VALUE lines, with # comments, optional `export `,
 // and single or double quotes around the value. It is the subset every
 // .env loader agrees on; anything fancier belongs in the site's own code.
+// A file ending in .json is an object of strings instead, which is what
+// tools that write secrets tend to produce.
 func readEnvFile(path string) (map[string]string, error) {
+	if strings.HasSuffix(strings.ToLower(path), ".json") {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		var raw map[string]any
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return nil, err
+		}
+		out := map[string]string{}
+		for k, v := range raw {
+			if sv, ok := v.(string); ok && validEnvKey(k) {
+				out[k] = sv
+			}
+		}
+		return out, nil
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err

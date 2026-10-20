@@ -15,14 +15,25 @@ import (
 type template func(domain string) (*manifest.Manifest, map[string]string)
 
 var templates = map[string]template{
-	"static": staticTemplate,
-	"node":   nodeTemplate,
-	"go":     goTemplate,
-	"docker": dockerTemplate,
+	"static":  staticTemplate,
+	"node":    nodeTemplate,
+	"go":      goTemplate,
+	"docker":  dockerTemplate,
+	"project": projectTemplate,
 }
 
 // Templates lists the names Create accepts.
-func Templates() []string { return []string{"static", "node", "go", "docker"} }
+func Templates() []string { return []string{"static", "node", "go", "docker", "project"} }
+
+// projectTemplate is a folder without a domain: nothing to serve, so
+// nothing to start until a worker is written. The README says what it is
+// for, because an empty project is otherwise indistinguishable from a
+// broken site.
+func projectTemplate(name string) (*manifest.Manifest, map[string]string) {
+	return &manifest.Manifest{Version: manifest.Version}, map[string]string{
+		"README.md": "# " + name + "\n\nA project without a domain: its workers, its tasks and its conversation.\nDeclare workers in site.json; nothing here answers a hostname.\n",
+	}
+}
 
 func helloHTML(domain, how string) string {
 	return fmt.Sprintf(`<!doctype html>

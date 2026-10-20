@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,7 +36,11 @@ type Engine struct {
 	opts  Options
 	mu    sync.RWMutex
 	sites map[string]*Site
-	wg    sync.WaitGroup
+	// aliases maps every extra name to the site that owns it, rebuilt on
+	// each tick from the manifests.
+	aliases        map[string]string
+	aliasConflicts map[string]string // said once, until resolved
+	wg             sync.WaitGroup
 }
 
 // Site is the engine's view of one folder.
@@ -49,6 +54,7 @@ type Site struct {
 	Instance runtime.Instance
 	Workers  map[string]*worker
 
+	health    healthState
 	handing   bool
 	failures  int
 	nextStart time.Time
@@ -68,6 +74,8 @@ type Snapshot struct {
 	Handing  bool
 	Error    string
 	Workers  map[string]WorkerSnapshot
+	Health   Health
+	Checks   []Check
 }
 
 // WorkerSnapshot is a worker's state for readers.
@@ -91,7 +99,7 @@ func New(opts Options) *Engine {
 	if opts.Bus == nil {
 		opts.Bus = events.New("")
 	}
-	return &Engine{opts: opts, sites: map[string]*Site{}}
+	return &Engine{opts: opts, sites: map[string]*Site{}, aliases: map[string]string{}}
 }
 
 // Run adopts what is already running, then reconciles until ctx ends.
@@ -112,11 +120,16 @@ func (e *Engine) Run(ctx context.Context) {
 	}
 }
 
-// Lookup returns the snapshot for a domain.
+// Lookup returns the snapshot for a domain or one of its aliases.
 func (e *Engine) Lookup(domain string) (Snapshot, bool) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	s, ok := e.sites[domain]
+	if !ok {
+		if owner, isAlias := e.aliases[domain]; isAlias {
+			s, ok = e.sites[owner]
+		}
+	}
 	if !ok {
 		return Snapshot{}, false
 	}
@@ -158,7 +171,8 @@ func (e *Engine) Restart(ctx context.Context, domain string) error {
 }
 
 func (e *Engine) snapshot(s *Site) Snapshot {
-	sn := Snapshot{Domain: s.Domain, Dir: s.Dir, Mode: s.Mode, Manifest: s.Manifest, Handing: s.handing, Error: s.Err}
+	sn := Snapshot{Domain: s.Domain, Dir: s.Dir, Mode: s.Mode, Manifest: s.Manifest, Handing: s.handing, Error: s.Err,
+		Health: s.health.status, Checks: append([]Check(nil), s.health.checks...)}
 	if sn.Error == "" {
 		sn.Error = s.lastErr
 	}
@@ -192,7 +206,7 @@ func (e *Engine) tick(ctx context.Context) {
 			continue
 		}
 		domain := ent.Name()
-		if !manifest.ValidDomain(domain) {
+		if !manifest.ValidName(domain) {
 			continue
 		}
 		dir := filepath.Join(e.opts.SitesDir, domain)
@@ -205,6 +219,12 @@ func (e *Engine) tick(ctx context.Context) {
 	}
 	// Folders that disappeared: stop what they ran.
 	e.mu.Lock()
+	for domain, s := range e.sites {
+		if seen[domain] {
+			e.healthDue(ctx, s)
+		}
+	}
+	e.rebuildAliases()
 	for domain, s := range e.sites {
 		if seen[domain] {
 			continue
@@ -252,7 +272,7 @@ func (e *Engine) reconcile(ctx context.Context, domain, dir string) {
 		e.emit("manifest.valid", domain, "", "manifest readable again", nil)
 	}
 	s.Manifest = m
-	s.Mode = m.Mode()
+	s.Mode = m.ModeFor(domain)
 	e.mu.Unlock()
 
 	e.reconcileWorkers(ctx, s, m)
@@ -288,6 +308,11 @@ func (e *Engine) reconcile(ctx context.Context, domain, dir string) {
 		}
 		e.mu.Unlock()
 		return
+	}
+	if spec.Port != 0 {
+		// Held for as long as it is declared, also while the site is down,
+		// so the allocator never hands it to another site in between.
+		e.opts.Ports.Reserve(spec.Port, domain)
 	}
 
 	e.mu.Lock()
@@ -335,10 +360,30 @@ func (e *Engine) handover(ctx context.Context, s *Site, spec *manifest.Spec, act
 		e.fail(s, fmt.Errorf("runtime %q is not available", spec.Runtime))
 		return
 	}
-	port, err := e.opts.Ports.Claim(domain)
-	if err != nil {
-		e.fail(s, err)
-		return
+	var port int
+	if spec.Port != 0 {
+		// A written port holds one generation at a time, so there is no
+		// handover: the old one stops first and the site is down for as
+		// long as the new one takes to start. That is the price of a port
+		// someone outside the house has written down.
+		port = spec.Port
+		e.opts.Ports.Reserve(port, domain)
+		e.mu.Lock()
+		old := s.Instance
+		s.Instance = nil
+		e.mu.Unlock()
+		if old != nil {
+			e.emit("instance.stopping", domain, "", "written port: stopping before starting the new generation", nil)
+			_ = old.Stop(ctx, 5*time.Second)
+			e.clearState(domain)
+		}
+	} else {
+		p, err := e.opts.Ports.Claim(domain)
+		if err != nil {
+			e.fail(s, err)
+			return
+		}
+		port = p
 	}
 	logFile := filepath.Join(e.opts.DataDir, "logs", domain, "site.log")
 	home := filepath.Join(e.opts.DataDir, "homes", domain)
@@ -402,8 +447,10 @@ func backoff(failures int, max time.Duration) time.Duration {
 	return d
 }
 
-func (e *Engine) statePath(domain string) string {
-	return filepath.Join(e.opts.DataDir, "state", domain+".json")
+// statePath is one file per instance; a worker's key ("a.example/api")
+// becomes "a.example@api.json" so every state lives in one flat folder.
+func (e *Engine) statePath(key string) string {
+	return filepath.Join(e.opts.DataDir, "state", strings.ReplaceAll(key, "/", "@")+".json")
 }
 
 func (e *Engine) saveState(st runtime.State) {
@@ -435,6 +482,15 @@ func (e *Engine) adoptAll(ctx context.Context) {
 			e.emit("instance.gone", st.Domain, "warn", "recorded instance is no longer running", map[string]any{"pid": st.PID, "port": st.Port})
 			continue
 		}
+		if strings.Contains(st.Domain, "/") {
+			// A worker need not listen on anything (a queue consumer, a
+			// watcher), so it is not dialled: the runtime has already
+			// checked the pid is the one that was started.
+			e.opts.Ports.Reserve(st.Port, st.Domain)
+			e.adoptWorker(st, inst)
+			e.emit("worker.adopted", st.Domain, "", "still running from a previous supervisor", map[string]any{"pid": st.PID, "port": st.Port})
+			continue
+		}
 		if err := runtime.WaitReady(ctx, inst, manifest.Health{}, 3*time.Second); err != nil {
 			// Alive but not listening: a zombie or something else on that pid.
 			e.clearState(st.Domain)
@@ -442,7 +498,12 @@ func (e *Engine) adoptAll(ctx context.Context) {
 		}
 		e.opts.Ports.Reserve(st.Port, st.Domain)
 		e.mu.Lock()
-		e.sites[st.Domain] = &Site{Domain: st.Domain, Dir: filepath.Join(e.opts.SitesDir, st.Domain), Instance: inst, Mode: manifest.ModeRun, Workers: map[string]*worker{}}
+		s, ok := e.sites[st.Domain]
+		if !ok {
+			s = &Site{Domain: st.Domain, Dir: filepath.Join(e.opts.SitesDir, st.Domain), Workers: map[string]*worker{}}
+			e.sites[st.Domain] = s
+		}
+		s.Instance, s.Mode = inst, manifest.ModeRun
 		e.mu.Unlock()
 		e.emit("instance.adopted", st.Domain, "", "still running from a previous supervisor; its environment is the one it was born with", map[string]any{"pid": st.PID, "port": st.Port, "revision": st.Revision})
 	}
@@ -480,4 +541,47 @@ func splitLines(s string) []string {
 		out = append(out, s[start:])
 	}
 	return out
+}
+
+// rebuildAliases maps each alias to its site. A name that is already a
+// site, or that two sites both claim, goes to nobody: serving it from
+// whichever folder sorts first would be a choice nobody made, so it is
+// refused and said, once, until the manifests stop disagreeing. Called
+// under e.mu.
+func (e *Engine) rebuildAliases() {
+	claims := map[string][]string{}
+	for domain, s := range e.sites {
+		if s.Manifest == nil {
+			continue
+		}
+		for _, a := range s.Manifest.Aliases {
+			claims[a] = append(claims[a], domain)
+		}
+	}
+	next := map[string]string{}
+	for alias, owners := range claims {
+		sort.Strings(owners)
+		_, isSite := e.sites[alias]
+		if len(owners) == 1 && !isSite {
+			next[alias] = owners[0]
+			continue
+		}
+		if _, was := e.aliases[alias]; was || e.aliasConflicts[alias] == "" {
+			why := "claimed by " + strings.Join(owners, ", ")
+			if isSite {
+				why = "it is a site of its own"
+			}
+			e.emit("alias.conflict", owners[0], "error", alias+" is not served as an alias: "+why, nil)
+		}
+		if e.aliasConflicts == nil {
+			e.aliasConflicts = map[string]string{}
+		}
+		e.aliasConflicts[alias] = strings.Join(owners, ",")
+	}
+	for alias := range e.aliasConflicts {
+		if _, still := claims[alias]; !still {
+			delete(e.aliasConflicts, alias)
+		}
+	}
+	e.aliases = next
 }

@@ -24,7 +24,11 @@ const Version = 2
 
 // Manifest is site.json.
 type Manifest struct {
-	Version  int                `json:"version"`
+	Version int    `json:"version"`
+	Title   string `json:"title,omitempty"`
+	// Aliases are more names this site answers to, served the same way
+	// and published with it.
+	Aliases  []string           `json:"aliases,omitempty"`
 	Static   *Static            `json:"static,omitempty"`
 	Run      *Run               `json:"run,omitempty"`
 	Upstream string             `json:"upstream,omitempty"`
@@ -48,22 +52,31 @@ type Static struct {
 
 // Run describes the supervised instance.
 type Run struct {
-	Command     []string          `json:"command"`
-	Cwd         string            `json:"cwd,omitempty"`
-	Env         map[string]string `json:"env,omitempty"`
-	EnvFile     string            `json:"env_file,omitempty"`
+	Command []string          `json:"command"`
+	Cwd     string            `json:"cwd,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+	// EnvFiles are read in order, a later file overriding an earlier one,
+	// and `env` over all of them. A missing file is not an error: `.env`
+	// is usually not committed.
+	EnvFiles    []string          `json:"env_files,omitempty"`
 	EnvFromFile map[string]string `json:"env_from_file,omitempty"`
-	Health      *Health           `json:"health,omitempty"`
-	Drain       Duration          `json:"drain,omitempty"`
-	Restart     *Restart          `json:"restart,omitempty"`
-	Runtime     string            `json:"runtime,omitempty"` // "process" (default) | "docker"
-	Docker      *Docker           `json:"docker,omitempty"`
+	// Port is written only when something outside the house already knows
+	// it. A site with a written port cannot hand over (two generations
+	// cannot share it), so a change restarts it instead.
+	Port    int      `json:"port,omitempty"`
+	Health  *Health  `json:"health,omitempty"`
+	Drain   Duration `json:"drain,omitempty"`
+	Restart *Restart `json:"restart,omitempty"`
+	Runtime string   `json:"runtime,omitempty"` // "process" (default) | "docker"
+	Docker  *Docker  `json:"docker,omitempty"`
 }
 
 // Health is how the engine knows a new instance is ready.
 type Health struct {
 	Path    string   `json:"path,omitempty"`
 	Timeout Duration `json:"timeout,omitempty"`
+	// Interval is how often a running instance is asked, once it is up.
+	Interval Duration `json:"interval,omitempty"`
 }
 
 // Restart bounds the backoff after a crash.
@@ -79,13 +92,18 @@ type Docker struct {
 	Memory  string   `json:"memory,omitempty"`
 }
 
-// Worker is an always-on process with a fixed port and no domain.
+// Worker is an always-on process that belongs to a site and answers no
+// hostname of its own. With no port, one is assigned and passed in $PORT;
+// a written port is for when whoever calls the worker already knows it.
 type Worker struct {
-	Command []string          `json:"command"`
-	Cwd     string            `json:"cwd,omitempty"`
-	Port    int               `json:"port"`
-	Env     map[string]string `json:"env,omitempty"`
-	EnvFile string            `json:"env_file,omitempty"`
+	Command     []string          `json:"command"`
+	Cwd         string            `json:"cwd,omitempty"`
+	Port        int               `json:"port,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
+	EnvFiles    []string          `json:"env_files,omitempty"`
+	EnvFromFile map[string]string `json:"env_from_file,omitempty"`
+	Disabled    bool              `json:"disabled,omitempty"`
+	Note        string            `json:"note,omitempty"`
 }
 
 // Hold shows a page instead of the site, with the process stopped.
@@ -95,18 +113,24 @@ type Hold struct {
 	Message string `json:"message,omitempty"`
 }
 
-// Access decides who gets in.
+// Access decides who gets in. Passwords are stored hashed (see
+// internal/access); the panel and `middleware site password` write them.
 type Access struct {
-	Password      string                  `json:"password,omitempty"` // hashed, see internal/auth
-	Allow         []string                `json:"allow,omitempty"`    // CIDRs
+	Password      string                  `json:"password,omitempty"`
+	Message       string                  `json:"message,omitempty"` // shown above the password box
+	Allow         []string                `json:"allow,omitempty"`   // CIDRs or addresses
+	Deny          []string                `json:"deny,omitempty"`
 	DenyCountries []string                `json:"deny_countries,omitempty"`
 	Routes        map[string]*RouteAccess `json:"routes,omitempty"`
 }
 
-// RouteAccess narrows Access for a path prefix.
+// RouteAccess is a zone: a path prefix with rules added to the site's.
 type RouteAccess struct {
+	Password string   `json:"password,omitempty"` // the zone's own, asked after the site's
+	Message  string   `json:"message,omitempty"`
 	Allow    []string `json:"allow,omitempty"`
-	Password bool     `json:"password,omitempty"`
+	Deny     []string `json:"deny,omitempty"`
+	Note     string   `json:"note,omitempty"` // for whoever reads the manifest
 }
 
 // WAF is the per-site layer-7 policy.
@@ -240,6 +264,22 @@ var domainRe = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0
 // a Host header, which arrives lower-cased.
 func ValidDomain(s string) bool { return domainRe.MatchString(s) }
 
+var projectRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+// Reserved names cannot be projects: "middleware" is the house's own
+// conversation, and the rest are what a Host header without a dot says.
+var reserved = map[string]bool{"middleware": true, "localhost": true}
+
+// IsProject reports whether a site folder's name is a project: a name with
+// no dot, which answers no hostname. A project has its workers, its tasks
+// and its conversation, and nothing that serves a request.
+func IsProject(s string) bool { return projectRe.MatchString(s) && !reserved[s] }
+
+// ValidName reports whether s can name a folder under sites/: a domain or
+// a project. What deals with hostnames (certificates, doors, aliases)
+// asks ValidDomain instead.
+func ValidName(s string) bool { return ValidDomain(s) || IsProject(s) }
+
 // Validate checks the manifest is coherent. It rejects what the engine could
 // not act on rather than what merely looks odd.
 func (m *Manifest) Validate() error {
@@ -268,6 +308,14 @@ func (m *Manifest) Validate() error {
 				return fmt.Errorf("run.env_from_file: %q is not a variable name", k)
 			}
 		}
+		if m.Run.Port < 0 || m.Run.Port > 65535 {
+			return fmt.Errorf("run.port: %d is not a port", m.Run.Port)
+		}
+	}
+	for _, a := range m.Aliases {
+		if !ValidDomain(a) {
+			return fmt.Errorf("aliases: %q is not a domain", a)
+		}
 	}
 	if m.Upstream != "" && !strings.HasPrefix(m.Upstream, "http://") && !strings.HasPrefix(m.Upstream, "https://") {
 		return fmt.Errorf("upstream: %q must start with http:// or https://", m.Upstream)
@@ -279,8 +327,13 @@ func (m *Manifest) Validate() error {
 		if len(w.Command) == 0 {
 			return fmt.Errorf("workers.%s.command: empty", name)
 		}
-		if w.Port <= 0 || w.Port > 65535 {
-			return fmt.Errorf("workers.%s.port: a worker's port is written, got %d", name, w.Port)
+		if w.Port < 0 || w.Port > 65535 {
+			return fmt.Errorf("workers.%s.port: %d is not a port", name, w.Port)
+		}
+		for k := range w.EnvFromFile {
+			if !validEnvKey(k) {
+				return fmt.Errorf("workers.%s.env_from_file: %q is not a variable name", name, k)
+			}
 		}
 	}
 	if m.WAF != nil && m.WAF.Rate != nil {
@@ -305,7 +358,21 @@ const (
 	ModeRun      Mode = "run"
 	ModeUpstream Mode = "upstream"
 	ModeStatic   Mode = "static"
+	// ModeProject is a folder without a domain: workers, tasks and a
+	// conversation, nothing that answers a request. The engine sets it
+	// from the folder's name; a manifest cannot ask for it.
+	ModeProject Mode = "project"
 )
+
+// ModeFor is Mode for the folder called name: a project is a project
+// unless it is disabled.
+func (m *Manifest) ModeFor(name string) Mode {
+	mode := m.Mode()
+	if mode != ModeDisabled && IsProject(name) {
+		return ModeProject
+	}
+	return mode
+}
 
 // Mode resolves the precedence rules.
 func (m *Manifest) Mode() Mode {

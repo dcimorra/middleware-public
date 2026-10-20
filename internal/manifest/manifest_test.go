@@ -46,10 +46,12 @@ func TestModePrecedence(t *testing.T) {
 	}
 }
 
-func TestAWorkerMustWriteItsPort(t *testing.T) {
-	_, err := Parse([]byte(`{"version":2,"workers":{"api":{"command":["x"]}}}`))
-	if err == nil {
-		t.Fatal("a worker without a port must not validate")
+func TestAWorkerPortIsOptionalButMustBeAPort(t *testing.T) {
+	if _, err := Parse([]byte(`{"version":2,"workers":{"w":{"command":["x"]}}}`)); err != nil {
+		t.Fatalf("a worker without a port gets one assigned: %v", err)
+	}
+	if _, err := Parse([]byte(`{"version":2,"workers":{"w":{"command":["x"],"port":70000}}}`)); err == nil {
+		t.Fatal("port 70000 validated")
 	}
 }
 
@@ -130,12 +132,12 @@ func TestAPathOutsideTheSiteFolderIsRefused(t *testing.T) {
 		`{"version":2,"static":{"root":"public"}}`,
 		`{"version":2,"static":{"root":"/etc"}}`,
 		`{"version":2,"run":{"command":["x"],"cwd":"../b.example"}}`,
-		`{"version":2,"run":{"command":["x"],"env_file":"../b.example/.env"}}`,
+		`{"version":2,"run":{"command":["x"],"env_files":["../b.example/.env"]}}`,
 		`{"version":2,"run":{"command":["x"],"env_from_file":{"K":"$SITE_DIR/../b.example/.env"}}}`,
 		`{"version":2,"run":{"command":["x"],"runtime":"docker","docker":{"image":"i","volumes":["/:/host"]}}}`,
 		`{"version":2,"run":{"command":["x"],"runtime":"docker","docker":{"image":"i","volumes":["../b.example:/x"]}}}`,
 		`{"version":2,"run":{"command":["x"],"runtime":"docker","docker":{"image":"i","build":"../b.example/Dockerfile"}}}`,
-		`{"version":2,"workers":{"w":{"command":["x"],"port":4000,"env_file":"../b.example/.env"}}}`,
+		`{"version":2,"workers":{"w":{"command":["x"],"port":4000,"env_files":["../b.example/.env"]}}}`,
 	}
 	for _, m := range bad {
 		os.WriteFile(filepath.Join(site, FileName), []byte(m), 0o644)
@@ -145,7 +147,7 @@ func TestAPathOutsideTheSiteFolderIsRefused(t *testing.T) {
 	}
 	good := []string{
 		`{"version":2,"static":{"root":"dist"}}`,
-		`{"version":2,"run":{"command":["x"],"cwd":"app","env_file":".env","env_from_file":{"K":"$SITE_DIR/.current"}}}`,
+		`{"version":2,"run":{"command":["x"],"cwd":"app","env_files":[".env"],"env_from_file":{"K":"$SITE_DIR/.current"}}}`,
 		`{"version":2,"run":{"command":["x"],"runtime":"docker","docker":{"image":"i","volumes":["data:/app/data","./uploads:/u:ro","/cache"]}}}`,
 	}
 	for _, m := range good {

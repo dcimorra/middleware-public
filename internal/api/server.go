@@ -334,8 +334,8 @@ func statusOf(err error) (int, string) {
 // below ever builds a path from an unchecked name.
 func domainOf(r *http.Request) (string, error) {
 	d := strings.ToLower(strings.TrimSpace(r.PathValue("domain")))
-	if !manifest.ValidDomain(d) {
-		return "", Errorf(http.StatusBadRequest, "%q is not a domain", d)
+	if !manifest.ValidName(d) {
+		return "", Errorf(http.StatusBadRequest, "%q is not a site or project", d)
 	}
 	return d, nil
 }

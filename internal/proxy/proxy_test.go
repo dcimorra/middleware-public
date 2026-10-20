@@ -145,3 +145,10 @@ func TestADeadInstanceGetsTheUnavailablePage(t *testing.T) {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
 }
+
+func TestAProjectAnswersNoHostname(t *testing.T) {
+	h := New(lookupFor(map[string]engine.Snapshot{"tools": {Domain: "tools", Mode: manifest.ModeProject}}))
+	if resp := do(t, h, "tools", "/"); resp.StatusCode != 404 {
+		t.Fatalf("a project answered %d", resp.StatusCode)
+	}
+}

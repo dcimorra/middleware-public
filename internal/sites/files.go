@@ -87,7 +87,7 @@ func (m *Manager) Resolve(domain, rel string) (string, error) {
 // managedDirOrFolder is managedDir for files: an unmanaged folder can be
 // browsed, that is how an operator adds the manifest it lacks.
 func (m *Manager) managedDirOrFolder(domain string) (string, error) {
-	if !manifest.ValidDomain(domain) {
+	if !manifest.ValidName(domain) {
 		return "", ErrNotFound
 	}
 	dir := m.Dir(domain)

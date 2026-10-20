@@ -66,6 +66,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sn, ok := h.lookup(host)
+	if ok && (sn.Mode == manifest.ModeProject || manifest.IsProject(sn.Domain)) {
+		// A project has no hostname; a Host header that happens to spell
+		// its folder's name is a stranger asking for something else.
+		ok = false
+	}
 	if !ok {
 		// www.example.com with only example.com configured, and the reverse:
 		// a redirect is kinder than "nothing here" and costs nothing.

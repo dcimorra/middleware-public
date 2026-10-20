@@ -97,8 +97,8 @@ func TestTheLongestRoutePrefixWins(t *testing.T) {
 	ac := &manifest.Access{
 		Allow: []string{"10.0.0.0/8"},
 		Routes: map[string]*manifest.RouteAccess{
-			"/public":       {Allow: []string{"0.0.0.0/0"}},
-			"/public/inner": {Allow: []string{"192.0.2.0/24"}},
+			"/public":       {Allow: []string{"10.1.0.0/16"}},
+			"/public/inner": {Allow: []string{"10.1.2.0/24"}},
 		},
 	}
 	a := newAccess(t, siteWith(ac))
@@ -108,11 +108,12 @@ func TestTheLongestRoutePrefixWins(t *testing.T) {
 		want         int
 	}{
 		{"/", "203.0.113.1:1", 403},
-		{"/public", "203.0.113.1:1", 200},
-		{"/public/x", "203.0.113.1:1", 200},
-		{"/publicity", "203.0.113.1:1", 403},
-		{"/public/inner/x", "203.0.113.1:1", 403},
-		{"/public/inner/x", "192.0.2.9:1", 200},
+		{"/", "10.5.0.1:1", 200},
+		{"/public", "10.1.9.9:1", 200},
+		{"/public/x", "10.5.0.1:1", 403},
+		{"/publicity", "10.5.0.1:1", 200},
+		{"/public/inner/x", "10.1.9.9:1", 403},
+		{"/public/inner/x", "10.1.2.9:1", 200},
 	}
 	for _, tc := range cases {
 		if rec := do(h, req("GET", tc.path, tc.remote)); rec.Code != tc.want {
@@ -204,7 +205,7 @@ func TestHTTPBasicAuthWorksForTools(t *testing.T) {
 
 func TestARoutePasswordLeavesTheRestOfTheSiteOpen(t *testing.T) {
 	hash, _ := HashPassword("admin pass")
-	ac := &manifest.Access{Password: hash, Routes: map[string]*manifest.RouteAccess{"/admin": {Password: true}}}
+	ac := &manifest.Access{Routes: map[string]*manifest.RouteAccess{"/admin": {Password: hash}}}
 	a := newAccess(t, siteWith(ac))
 	h := a.Wrap(okHandler())
 	if rec := do(h, req("GET", "/", "203.0.113.1:1")); rec.Code != 200 {
@@ -256,7 +257,7 @@ func TestTheSessionKeySurvivesARestart(t *testing.T) {
 
 func TestAZoneCannotBeSkippedWithDotsSlashesOrCase(t *testing.T) {
 	hash, _ := HashPassword("pw")
-	a := newAccess(t, siteWith(&manifest.Access{Password: hash, Routes: map[string]*manifest.RouteAccess{"/admin": {Password: true}}}))
+	a := newAccess(t, siteWith(&manifest.Access{Routes: map[string]*manifest.RouteAccess{"/admin": {Password: hash}}}))
 	h := a.Wrap(okHandler())
 	if rec := do(h, req("GET", "/", "203.0.113.1:1")); rec.Code != 200 {
 		t.Fatalf("the open part got %d", rec.Code)
@@ -282,5 +283,84 @@ func TestWithoutItsKeyTheDoorStaysShut(t *testing.T) {
 	r = httptest.NewRequest("GET", "http://o.example/", nil)
 	if rec := do(h, r); rec.Code != 200 {
 		t.Fatalf("an open site was closed: %d", rec.Code)
+	}
+}
+
+func login(t *testing.T, h http.Handler, zone, password string) *http.Cookie {
+	t.Helper()
+	form := url.Values{"password": {password}, "next": {"/"}, "zone": {zone}}
+	r := httptest.NewRequest("POST", "http://p.example"+LoginPath, strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := do(h, r)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("login to %q got %d", zone, rec.Code)
+	}
+	return rec.Result().Cookies()[0]
+}
+
+func TestEachZoneHasItsOwnPassAndTheSitePasswordStillApplies(t *testing.T) {
+	site, _ := HashPassword("site")
+	admin, _ := HashPassword("admin")
+	billing, _ := HashPassword("billing")
+	a := newAccess(t, siteWith(&manifest.Access{Password: site, Routes: map[string]*manifest.RouteAccess{
+		"/admin": {Password: admin}, "/billing/": {Password: billing},
+	}}))
+	h := a.Wrap(okHandler())
+	browser := func(path string, cookies ...*http.Cookie) int {
+		r := req("GET", path, "203.0.113.1:1")
+		r.Header.Set("Accept", "text/html")
+		for _, c := range cookies {
+			r.AddCookie(c)
+		}
+		return do(h, r).Code
+	}
+	siteC := login(t, h, "", "site")
+	adminC := login(t, h, "/admin", "admin")
+	if adminC.Path != "/admin" || adminC.Name == siteC.Name {
+		t.Fatalf("the zone pass is not scoped: %+v", adminC)
+	}
+	if c := browser("/", siteC); c != 200 {
+		t.Fatalf("site pass on / got %d", c)
+	}
+	if c := browser("/admin", siteC); c != http.StatusUnauthorized {
+		t.Fatalf("the site pass opened the zone: %d", c)
+	}
+	if c := browser("/admin", adminC); c != http.StatusUnauthorized {
+		t.Fatalf("the zone pass skipped the site password: %d", c)
+	}
+	if c := browser("/admin/x", siteC, adminC); c != 200 {
+		t.Fatalf("both passes got %d", c)
+	}
+	// The admin pass, renamed to the billing cookie, is worth nothing there.
+	forged := &http.Cookie{Name: cookieName(door{zone: "/billing"}), Value: adminC.Value}
+	if c := browser("/billing", siteC, forged); c != http.StatusUnauthorized {
+		t.Fatalf("one zone's pass opened another: %d", c)
+	}
+}
+
+func TestAZoneNarrowsTheSiteAndNeverWidensIt(t *testing.T) {
+	a := newAccess(t, siteWith(&manifest.Access{
+		Allow: []string{"10.0.0.0/8"}, Deny: []string{"10.9.9.9"},
+		Routes: map[string]*manifest.RouteAccess{
+			"/ops":  {Allow: []string{"10.1.0.0/16"}},
+			"/open": {Allow: []string{"0.0.0.0/0"}},
+		},
+	}))
+	h := a.Wrap(okHandler())
+	cases := []struct {
+		path, ip string
+		want     int
+	}{
+		{"/", "10.2.0.1:1", 200},
+		{"/", "203.0.113.1:1", 403},
+		{"/", "10.9.9.9:1", 403},
+		{"/ops", "10.1.0.5:1", 200},
+		{"/ops", "10.2.0.1:1", 403},
+		{"/open", "203.0.113.1:1", 403},
+	}
+	for _, c := range cases {
+		if got := do(h, req("GET", c.path, c.ip)).Code; got != c.want {
+			t.Errorf("%s from %s: got %d, want %d", c.path, c.ip, got, c.want)
+		}
 	}
 }

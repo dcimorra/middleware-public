@@ -126,7 +126,7 @@ left untouched. The process also receives `PORT`, `HOST=127.0.0.1`,
 environment is only `PATH`, `LANG`, `LC_ALL`, `TZ`: nothing else of the
 supervisor's is inherited.
 
-**Environment order**: `env_file` first, then `env` on top, then
+**Environment order**: `env_files` first, then `env` on top, then
 `env_from_file` on top of that, and `PORT` always last. No duplicate keys:
 glibc reads the first occurrence and Node the last, so a duplicate would mean
 two runtimes read two values. A site's `.env` can never override the port.
@@ -140,7 +140,7 @@ two runtimes read two values. A site's `.env` can never override the port.
     "command": ["./server", "--port", "$PORT"],
     "cwd": ".",
     "env": { "NODE_ENV": "production" },
-    "env_file": ".env",
+    "env_files": [".env"],
     "env_from_file": { "APP_DIST": ".dist-current" },
     "health": { "path": "/", "timeout": "60s" },
     "drain": "8s",
@@ -155,8 +155,10 @@ two runtimes read two values. A site's `.env` can never override the port.
   it breaks the day the site moves to the docker runtime or another box.
 - `cwd`: a subfolder to run from (`frontend`).
 - `env`: plain variables. **Secrets never go here**: the manifest is in git.
-- `env_file`: `KEY=VALUE` lines, `#` comments, optional `export`. Secrets go
-  here, and the file goes in `.gitignore`. A missing file is not an error.
+- `env_files`: files of `KEY=VALUE` lines (`#` comments, optional `export`)
+  or `.json` objects of strings, read in order, a later file overriding an
+  earlier one. Secrets go here, and the files go in `.gitignore`. A missing
+  file is not an error.
 - `env_from_file`: the variable is set to the **trimmed contents** of the
   file, re-read every tick. This is the deploy pointer (§ 4). A missing
   pointer file sets the variable empty and says so in the events; it does
@@ -192,7 +194,7 @@ Node app (`npm start` must honour `PORT` and bind `127.0.0.1`):
   "run": {
     "command": ["npm", "start"],
     "env": { "NODE_ENV": "production" },
-    "env_file": ".env",
+    "env_files": [".env"],
     "health": { "path": "/", "timeout": "2m" }
   }
 }
@@ -228,7 +230,7 @@ Go binary, built in place:
   "version": 2,
   "run": {
     "command": ["./bin/server"],
-    "env_file": ".env",
+    "env_files": [".env"],
     "health": { "path": "/healthz", "timeout": "30s" }
   }
 }
@@ -272,7 +274,7 @@ already knows it; the worker restarts, it is not handed over):
     "health": { "path": "/" }
   },
   "workers": {
-    "api": { "command": ["./bin/api"], "cwd": "backend", "port": 8090, "env_file": "backend/.env" }
+    "api": { "command": ["./bin/api"], "cwd": "backend", "port": 8090, "env_files": ["backend/.env"] }
   }
 }
 ```
@@ -286,7 +288,7 @@ name maps it: `"env": { "APP_PORT": "$PORT" }`.
 ### Live versus restart
 
 The **revision** hashes what the instance was born from: resolved command,
-resolved environment (`env`, `env_file` contents, `env_from_file` contents),
+resolved environment (`env`, `env_files` contents, `env_from_file` contents),
 runtime and docker settings. Changing any of those hands the site over.
 `access`, `waf`, `headers`, `cache`, `hold`, `disabled` are applied live and
 touch no process.
@@ -507,30 +509,33 @@ accounts, no roles.
 list sees "Access restricted" with their own address, which is what they
 need to ask for access.
 
-**Only part of the site** → `access.routes`, the longest matching prefix
-wins, matched by path segment (`/admin` covers `/admin/x`, not
-`/administration`):
+**Only part of the site** → `access.routes`: zones by path prefix, the
+longest matching one wins, matched by path segment (`/admin` covers
+`/admin/x`, not `/administration`) on the cleaned path, so `/x/../admin`
+and `/ADMIN` are covered too:
 
 ```json
 {
   "version": 2,
   "run": { "command": ["npm", "start"] },
   "access": {
-    "password": "",
     "allow": [],
+    "deny": ["203.0.113.0/24"],
     "deny_countries": ["XX"],
     "routes": {
-      "/admin": { "password": true },
+      "/admin": { "password": "", "note": "the back office" },
       "/webhooks": { "allow": ["192.0.2.0/24"] }
     }
   }
 }
 ```
 
-`"password": true` on a route means that route requires the site's password
-even when the site as a whole does not. The client address is the real one:
-edge headers are believed only from the door they belong to, so a
-hand-written `X-Forwarded-For` opens nothing.
+A zone **adds** to the site, never loosens it: its `allow` narrows the
+site's, its `deny` adds to it, and its own `password` (a hash, set from the
+panel like the site's) is asked for after the site's, if the site has one.
+Each password gives its own pass, valid only for its zone. The client
+address is the real one: edge headers are believed only from the door they
+belong to, so a hand-written `X-Forwarded-For` opens nothing.
 
 **Too much automated traffic** → `waf`:
 
@@ -661,7 +666,7 @@ Every line here was paid for at least once. Run through it.
   variable or this conversation counts.
 - **A change of environment needs a handover to exist.** The manifest says
   so, the panel says so, and the process still has the environment it was
-  born with until the revision changes. `env`, `env_file` contents and
+  born with until the revision changes. `env`, `env_files` contents and
   `env_from_file` contents are in the revision; a file the app reads itself
   at start is not. After a middleware upgrade, re-adopted instances carry
   the old environment too: `middleware site restart --all` rolls them.
@@ -672,7 +677,7 @@ Every line here was paid for at least once. Run through it.
 - **No duplicate environment keys; `PORT` last.** If you build an
   environment yourself (a Dockerfile `ENV`, a wrapper script), keep it.
 - **Secrets are not in the manifest, not in `tasks/`, not in `env`.** They
-  are in `env_file`, ignored by git. The manifest is in git; a hashed
+  are in `env_files`, ignored by git. The manifest is in git; a hashed
   password is fine there, a plain one is not.
 - **Absolute paths of this machine do not go in `command`.** Relative to
   the site folder, or `$SITE_DIR`.

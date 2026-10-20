@@ -87,6 +87,16 @@ func (Process) Adopt(ctx context.Context, st State) (Instance, error) {
 	if st.PID <= 0 || !pidAlive(st.PID) {
 		return nil, ErrGone
 	}
+	// A pid is reused after a reboot or a long uptime. Adopting a stranger
+	// would mean killing it on the next restart, so the process's start
+	// time must match the one recorded when it was started.
+	if !st.StartedAt.IsZero() {
+		if began, ok := processStart(st.PID); ok {
+			if d := began.Sub(st.StartedAt); d > 10*time.Second || d < -10*time.Second {
+				return nil, ErrGone
+			}
+		}
+	}
 	p := &procInstance{pid: st.PID, port: st.Port, revision: st.Revision, domain: st.Domain, logFile: st.LogFile, started: st.StartedAt, adopted: true, done: make(chan error, 1)}
 	go func() {
 		for pidAlive(p.pid) {
@@ -159,4 +169,41 @@ func isZombie(pid int) bool {
 		return false
 	}
 	return data[i+2] == 'Z'
+}
+
+// processStart is when pid started, from /proc/<pid>/stat field 22 (clock
+// ticks since boot) and the boot time in /proc/stat. USER_HZ is 100 on
+// every Linux the house runs on; the 10 s tolerance above absorbs the rest.
+func processStart(pid int) (time.Time, bool) {
+	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return time.Time{}, false
+	}
+	i := strings.LastIndexByte(string(data), ')')
+	if i < 0 {
+		return time.Time{}, false
+	}
+	fields := strings.Fields(string(data[i+1:]))
+	// fields[0] is the state (field 3), so starttime (field 22) is [19].
+	if len(fields) < 20 {
+		return time.Time{}, false
+	}
+	ticks, err := strconv.ParseInt(fields[19], 10, 64)
+	if err != nil {
+		return time.Time{}, false
+	}
+	stat, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return time.Time{}, false
+	}
+	for _, line := range strings.Split(string(stat), "\n") {
+		if v, ok := strings.CutPrefix(line, "btime "); ok {
+			boot, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+			if err != nil {
+				return time.Time{}, false
+			}
+			return time.Unix(boot, 0).Add(time.Duration(ticks) * time.Second / 100), true
+		}
+	}
+	return time.Time{}, false
 }

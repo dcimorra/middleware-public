@@ -11,7 +11,7 @@ import (
 //
 // The manifest is written by the site's own agent conversation as well as
 // by people, and the agent is jailed to the folder: a `static.root` of
-// "../other.example" would publish a neighbour's files, an `env_file` of
+// "../other.example" would publish a neighbour's files, an `env_files` of
 // "../other.example/.env" would hand its secrets to this site's process,
 // and a docker volume of "/:/host" would mount the machine. V1 learned this
 // as `checkInside`; the rule lives where the manifest is read, so no caller
@@ -22,6 +22,9 @@ import (
 func (m *Manifest) CheckInside(siteDir string) error {
 	if siteDir == "" {
 		return nil
+	}
+	if err := m.checkProject(filepath.Base(siteDir)); err != nil {
+		return err
 	}
 	base := filepath.Clean(siteDir)
 	real := base
@@ -56,8 +59,10 @@ func (m *Manifest) CheckInside(siteDir string) error {
 		if err := inside("run.cwd", Expand(r.Cwd, vars)); err != nil {
 			return err
 		}
-		if err := inside("run.env_file", Expand(r.EnvFile, vars)); err != nil {
-			return err
+		for _, f := range r.EnvFiles {
+			if err := inside("run.env_files", Expand(f, vars)); err != nil {
+				return err
+			}
 		}
 		for k, f := range r.EnvFromFile {
 			if err := inside("run.env_from_file."+k, Expand(f, vars)); err != nil {
@@ -89,8 +94,15 @@ func (m *Manifest) CheckInside(siteDir string) error {
 		if err := inside("workers."+name+".cwd", Expand(w.Cwd, vars)); err != nil {
 			return err
 		}
-		if err := inside("workers."+name+".env_file", Expand(w.EnvFile, vars)); err != nil {
-			return err
+		for _, f := range w.EnvFiles {
+			if err := inside("workers."+name+".env_files", Expand(f, vars)); err != nil {
+				return err
+			}
+		}
+		for k, f := range w.EnvFromFile {
+			if err := inside("workers."+name+".env_from_file."+k, Expand(f, vars)); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -139,4 +151,17 @@ func within(p, dir string) bool {
 	}
 	rel, err := filepath.Rel(dir, p)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+// checkProject refuses what a project cannot do. Said instead of ignored: a
+// project whose run section silently ran nothing is the failure that looks
+// like success.
+func (m *Manifest) checkProject(name string) error {
+	if !IsProject(name) {
+		return nil
+	}
+	if m.Run != nil || m.Upstream != "" || m.Static != nil || len(m.Aliases) > 0 {
+		return fmt.Errorf("%s is a project and answers no hostname: run, upstream, static and aliases need a folder named after a domain", name)
+	}
+	return nil
 }

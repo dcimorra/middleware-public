@@ -228,9 +228,18 @@ func TestSitesCRUDOnATempRoot(t *testing.T) {
 	if resp.StatusCode != 409 {
 		t.Fatalf("duplicate: %d %v", resp.StatusCode, body)
 	}
-	resp, body = f.call("POST", "/api/v1/sites", map[string]any{"domain": "bad", "template": "node"})
+	resp, body = f.call("POST", "/api/v1/sites", map[string]any{"domain": "bad_name", "template": "node"})
 	if resp.StatusCode != 400 {
 		t.Fatalf("bad domain: %d %v", resp.StatusCode, body)
+	}
+	// A name without a dot is a project: it gets no process to serve with.
+	resp, body = f.call("POST", "/api/v1/sites", map[string]any{"domain": "tools", "template": "node"})
+	if resp.StatusCode != 400 {
+		t.Fatalf("a project with a run section: %d %v", resp.StatusCode, body)
+	}
+	resp, body = f.call("POST", "/api/v1/sites", map[string]any{"domain": "tools"})
+	if resp.StatusCode != 201 {
+		t.Fatalf("a project: %d %v", resp.StatusCode, body)
 	}
 	resp, body = f.call("POST", "/api/v1/sites", map[string]any{"domain": "x.test", "manifest": map[string]any{"version": 2, "comand": []string{}}})
 	if resp.StatusCode != 400 {

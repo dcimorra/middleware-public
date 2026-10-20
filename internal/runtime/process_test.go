@@ -74,3 +74,21 @@ func TestWaitReadyFailsFastWhenTheInstanceDies(t *testing.T) {
 		t.Fatalf("err=%v after %s", err, time.Since(start))
 	}
 }
+
+func TestAReusedPidIsNotAdopted(t *testing.T) {
+	began, ok := processStart(os.Getpid())
+	if !ok {
+		t.Skip("no /proc")
+	}
+	if d := time.Since(began); d < 0 || d > 5*time.Minute {
+		t.Fatalf("this process started %s ago, which is not plausible", d)
+	}
+	st := State{Domain: "a.test", Runtime: "process", PID: os.Getpid(), StartedAt: began}
+	if _, err := (Process{}).Adopt(context.Background(), st); err != nil {
+		t.Fatalf("the process that was started was not adopted: %v", err)
+	}
+	st.StartedAt = began.Add(-time.Hour)
+	if _, err := (Process{}).Adopt(context.Background(), st); err != ErrGone {
+		t.Fatalf("a pid started an hour after the recorded start was adopted: %v", err)
+	}
+}

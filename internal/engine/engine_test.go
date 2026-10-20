@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -56,7 +58,29 @@ func newTestEngine(t *testing.T) (*Engine, string) {
 	os.MkdirAll(sites, 0o755)
 	e := New(Options{SitesDir: sites, DataDir: data, Ports: ports.New(41000, 41100), Bus: events.New(""), Tick: 200 * time.Millisecond,
 		Runtimes: map[string]runtime.Runtime{"process": runtime.Process{}}})
+	// Sites outlive the engine on purpose, so a test has to stop what it
+	// started or every run leaves processes behind.
+	t.Cleanup(func() { stopEverything(e) })
 	return e, sites
+}
+
+func stopEverything(e *Engine) {
+	e.mu.RLock()
+	var insts []runtime.Instance
+	for _, s := range e.sites {
+		if s.Instance != nil {
+			insts = append(insts, s.Instance)
+		}
+		for _, w := range s.Workers {
+			if w.inst != nil {
+				insts = append(insts, w.inst)
+			}
+		}
+	}
+	e.mu.RUnlock()
+	for _, inst := range insts {
+		_ = inst.Stop(context.Background(), time.Second)
+	}
 }
 
 func writeSite(t *testing.T, sites, domain, build string, extraEnv string) string {
@@ -205,6 +229,7 @@ func TestInstancesAreReAdoptedByANewEngine(t *testing.T) {
 
 	e2 := New(Options{SitesDir: e.opts.SitesDir, DataDir: e.opts.DataDir, Ports: ports.New(41000, 41100), Bus: events.New(""), Tick: 200 * time.Millisecond,
 		Runtimes: map[string]runtime.Runtime{"process": runtime.Process{}}})
+	t.Cleanup(func() { stopEverything(e2) })
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	defer cancel2()
 	go e2.Run(ctx2)
@@ -233,4 +258,158 @@ func TestARunningSiteTurnedStaticStopsWithoutAPanic(t *testing.T) {
 	if _, err := get(first.Port); err == nil {
 		t.Fatal("the old instance still answers")
 	}
+}
+
+func workerPID(e *Engine, domain, name string) int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	s, ok := e.sites[domain]
+	if !ok || s.Workers[name] == nil || s.Workers[name].inst == nil {
+		return 0
+	}
+	return s.Workers[name].inst.State().PID
+}
+
+// Before workers were saved, every supervisor restart started a second copy
+// next to the one still running.
+func TestAWorkerWithoutAPortGetsOneAndIsReAdopted(t *testing.T) {
+	e, sites := newTestEngine(t)
+	dir := filepath.Join(sites, "g.test")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "build"), []byte("w1"), 0o644)
+	m := fmt.Sprintf(`{"version":2,"static":{},"workers":{"api":{"command":[%q],"env":{"MW_TEST_SERVER":"1"},"env_from_file":{"BUILD":"build"}}}}`, os.Args[0])
+	os.WriteFile(filepath.Join(dir, "site.json"), []byte(m), 0o644)
+	ctx, cancel := context.WithCancel(context.Background())
+	go e.Run(ctx)
+	sn := waitFor(t, e, "g.test", func(s Snapshot) bool { return s.Workers["api"].Alive && s.Workers["api"].Port != 0 })
+	port := sn.Workers["api"].Port
+	if body, err := get(port); err != nil || body != "w1" {
+		t.Fatalf("the worker on its assigned port said %q, %v", body, err)
+	}
+	pid := workerPID(e, "g.test", "api")
+	cancel()
+	time.Sleep(300 * time.Millisecond)
+
+	e2 := New(Options{SitesDir: e.opts.SitesDir, DataDir: e.opts.DataDir, Ports: ports.New(41000, 41100), Bus: events.New(""), Tick: 200 * time.Millisecond,
+		Runtimes: map[string]runtime.Runtime{"process": runtime.Process{}}})
+	t.Cleanup(func() { stopEverything(e2) })
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	go e2.Run(ctx2)
+	waitFor(t, e2, "g.test", func(s Snapshot) bool { return s.Workers["api"].Alive })
+	time.Sleep(600 * time.Millisecond) // a few ticks: a duplicate would start here
+	if got := workerPID(e2, "g.test", "api"); got != pid {
+		t.Fatalf("worker pid %d after the restart, was %d: it was started again instead of adopted", got, pid)
+	}
+	// A changed definition restarts it, on an assigned port again.
+	os.WriteFile(filepath.Join(dir, "build"), []byte("w2"), 0o644)
+	sn = waitFor(t, e2, "g.test", func(s Snapshot) bool {
+		body, err := get(s.Workers["api"].Port)
+		return err == nil && body == "w2"
+	})
+	// Disabling it stops it.
+	os.WriteFile(filepath.Join(dir, "site.json"), []byte(strings.Replace(m, `"api":{`, `"api":{"disabled":true,`, 1)), 0o644)
+	waitFor(t, e2, "g.test", func(s Snapshot) bool { _, ok := s.Workers["api"]; return !ok })
+	if _, err := get(sn.Workers["api"].Port); err == nil {
+		t.Fatal("a disabled worker still answers")
+	}
+}
+
+func TestASiteWithAWrittenPortRestartsOnIt(t *testing.T) {
+	e, sites := newTestEngine(t)
+	dir := writeSite(t, sites, "h.test", "x", "")
+	m := fmt.Sprintf(`{"version":2,"run":{"command":[%q],"port":41077,"env":{"MW_TEST_SERVER":"1"},"env_from_file":{"BUILD":".current"},"health":{"timeout":"10s"}}}`, os.Args[0])
+	os.WriteFile(filepath.Join(dir, "site.json"), []byte(m), 0o644)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	waitFor(t, e, "h.test", func(s Snapshot) bool { return s.Alive && s.Port == 41077 })
+	os.WriteFile(filepath.Join(dir, ".current"), []byte("y\n"), 0o644)
+	waitFor(t, e, "h.test", func(s Snapshot) bool {
+		body, err := get(41077)
+		return s.Alive && s.Port == 41077 && err == nil && body == "y"
+	})
+}
+
+// Health used to be checked only at start: a site that hung while alive was
+// never noticed.
+func TestARunningSiteIsCheckedAndAHungOneShowsDown(t *testing.T) {
+	e, sites := newTestEngine(t)
+	dir := writeSite(t, sites, "i.test", "x", "")
+	m := fmt.Sprintf(`{"version":2,"run":{"command":[%q],"env":{"MW_TEST_SERVER":"1"},"env_from_file":{"BUILD":".current"},"health":{"path":"/","timeout":"1s","interval":"1s"}}}`, os.Args[0])
+	os.WriteFile(filepath.Join(dir, "site.json"), []byte(m), 0o644)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	sn := waitFor(t, e, "i.test", func(s Snapshot) bool { return s.Alive && s.Health == HealthOK })
+	// Freeze the process: alive, port open, answering nothing.
+	e.mu.RLock()
+	pid := e.sites["i.test"].Instance.State().PID
+	e.mu.RUnlock()
+	syscall.Kill(pid, syscall.SIGSTOP)
+	defer syscall.Kill(pid, syscall.SIGCONT)
+	waitFor(t, e, "i.test", func(s Snapshot) bool { return s.Health == HealthDown })
+	syscall.Kill(pid, syscall.SIGCONT)
+	sn = waitFor(t, e, "i.test", func(s Snapshot) bool { return s.Health == HealthOK })
+	if len(sn.Checks) < 3 {
+		t.Fatalf("only %d checks recorded", len(sn.Checks))
+	}
+}
+
+func TestAStaticSiteWithoutItsFilesShowsDown(t *testing.T) {
+	e, sites := newTestEngine(t)
+	dir := filepath.Join(sites, "j.test")
+	os.MkdirAll(filepath.Join(dir, "public"), 0o755)
+	os.WriteFile(filepath.Join(dir, "site.json"), []byte(`{"version":2}`), 0o644)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	waitFor(t, e, "j.test", func(s Snapshot) bool { return s.Health == HealthDown })
+}
+
+func TestAnAliasServesItsSiteUnlessAnotherSiteHasThatName(t *testing.T) {
+	e, sites := newTestEngine(t)
+	for _, d := range []string{"k.test", "l.test"} {
+		os.MkdirAll(filepath.Join(sites, d, "public"), 0o755)
+	}
+	os.WriteFile(filepath.Join(sites, "k.test", "site.json"), []byte(`{"version":2,"aliases":["k-alias.test","l.test"]}`), 0o644)
+	os.WriteFile(filepath.Join(sites, "l.test", "site.json"), []byte(`{"version":2}`), 0o644)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	waitFor(t, e, "k.test", func(s Snapshot) bool { return s.Manifest != nil })
+	time.Sleep(300 * time.Millisecond)
+	if sn, ok := e.Lookup("k-alias.test"); !ok || sn.Domain != "k.test" {
+		t.Fatalf("the alias resolved to %+v %v", sn.Domain, ok)
+	}
+	if sn, _ := e.Lookup("l.test"); sn.Domain != "l.test" {
+		t.Fatalf("an alias took over a site of its own: %s", sn.Domain)
+	}
+}
+
+func TestAProjectRunsItsWorkersAndServesNothing(t *testing.T) {
+	e, sites := newTestEngine(t)
+	dir := filepath.Join(sites, "tools")
+	os.MkdirAll(dir, 0o755)
+	m := fmt.Sprintf(`{"version":2,"workers":{"bot":{"command":[%q],"env":{"MW_TEST_SERVER":"1","BUILD":"b"}}}}`, os.Args[0])
+	os.WriteFile(filepath.Join(dir, "site.json"), []byte(m), 0o644)
+	bad := filepath.Join(sites, "other")
+	os.MkdirAll(bad, 0o755)
+	os.WriteFile(filepath.Join(bad, "site.json"), []byte(fmt.Sprintf(`{"version":2,"run":{"command":[%q]}}`, os.Args[0])), 0o644)
+	reserved := filepath.Join(sites, "middleware")
+	os.MkdirAll(reserved, 0o755)
+	os.WriteFile(filepath.Join(reserved, "site.json"), []byte(`{"version":2}`), 0o644)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	sn := waitFor(t, e, "tools", func(s Snapshot) bool { return s.Workers["bot"].Alive })
+	if sn.Mode != "project" {
+		t.Fatalf("mode %q", sn.Mode)
+	}
+	waitFor(t, e, "other", func(s Snapshot) bool { return s.Error != "" && !s.Alive })
+	if _, ok := e.Lookup("middleware"); ok {
+		t.Fatal("a folder named after the house's own conversation was taken as a project")
+	}
+	os.WriteFile(filepath.Join(dir, "site.json"), []byte(`{"version":2}`), 0o644)
+	waitFor(t, e, "tools", func(s Snapshot) bool { return len(s.Workers) == 0 })
 }

@@ -66,6 +66,8 @@ type Site struct {
 	Revision string                  `json:"revision"`
 	Handing  bool                    `json:"handing"`
 	Error    string                  `json:"error"`
+	Health   engine.Health           `json:"health"`
+	Checks   []engine.Check          `json:"checks,omitempty"`
 	Managed  bool                    `json:"managed"`
 	Manifest *manifest.Manifest      `json:"manifest,omitempty"`
 	Workers  map[string]WorkerStatus `json:"workers,omitempty"`
@@ -119,7 +121,7 @@ func (m *Manager) List() ([]Site, error) {
 		if !ent.IsDir() && ent.Type()&os.ModeSymlink == 0 {
 			continue
 		}
-		if !manifest.ValidDomain(ent.Name()) {
+		if !manifest.ValidName(ent.Name()) {
 			continue
 		}
 		out = append(out, m.describe(ent.Name()))
@@ -130,7 +132,7 @@ func (m *Manager) List() ([]Site, error) {
 
 // Get returns one site.
 func (m *Manager) Get(domain string) (Site, error) {
-	if !manifest.ValidDomain(domain) {
+	if !manifest.ValidName(domain) {
 		return Site{}, ErrNotFound
 	}
 	st, err := os.Stat(m.Dir(domain))
@@ -158,7 +160,7 @@ func (m *Manager) describe(domain string) Site {
 		s.Error = err.Error()
 	} else {
 		s.Manifest = mf
-		s.Mode = mf.Mode()
+		s.Mode = mf.ModeFor(domain)
 	}
 	sn, ok := m.lookup(domain)
 	if !ok {
@@ -169,6 +171,7 @@ func (m *Manager) describe(domain string) Site {
 		s.Mode = sn.Mode
 	}
 	s.Alive, s.Port, s.Revision, s.Handing = sn.Alive, sn.Port, sn.Revision, sn.Handing
+	s.Health, s.Checks = sn.Health, sn.Checks
 	if s.Error == "" {
 		s.Error = sn.Error
 	}
@@ -186,7 +189,7 @@ func (m *Manager) describe(domain string) Site {
 // moment, and a manifest pointing at files that are not there yet would
 // start a crash loop before the folder is complete.
 func (m *Manager) Create(domain string, mf *manifest.Manifest, template string) (Site, error) {
-	if !manifest.ValidDomain(domain) {
+	if !manifest.ValidName(domain) {
 		return Site{}, ErrBadDomain
 	}
 	dir := m.Dir(domain)
@@ -197,6 +200,9 @@ func (m *Manager) Create(domain string, mf *manifest.Manifest, template string) 
 	if mf == nil {
 		if template == "" {
 			template = "static"
+			if manifest.IsProject(domain) {
+				template = "project"
+			}
 		}
 		t, ok := templates[template]
 		if !ok {
@@ -208,6 +214,9 @@ func (m *Manager) Create(domain string, mf *manifest.Manifest, template string) 
 		mf.Version = manifest.Version
 	}
 	if err := mf.Validate(); err != nil {
+		return Site{}, fmt.Errorf("manifest: %w", err)
+	}
+	if err := mf.CheckInside(dir); err != nil {
 		return Site{}, fmt.Errorf("manifest: %w", err)
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -227,7 +236,7 @@ func (m *Manager) Create(domain string, mf *manifest.Manifest, template string) 
 		_ = os.RemoveAll(dir)
 		return Site{}, err
 	}
-	m.emit("site.created", domain, "", "site created", map[string]any{"template": template, "mode": string(mf.Mode())})
+	m.emit("site.created", domain, "", "site created", map[string]any{"template": template, "mode": string(mf.ModeFor(domain))})
 	return m.describe(domain), nil
 }
 
@@ -236,14 +245,31 @@ func (m *Manager) Create(domain string, mf *manifest.Manifest, template string) 
 // only ever accepts a hash, so a clear value saved as is would never match
 // and the site would look protected while refusing everyone.
 func sealPassword(mf *manifest.Manifest) error {
-	if mf == nil || mf.Access == nil || mf.Access.Password == "" || access.IsHash(mf.Access.Password) {
+	if mf == nil || mf.Access == nil {
 		return nil
 	}
-	h, err := access.HashPassword(mf.Access.Password)
-	if err != nil {
+	seal := func(p *string) error {
+		if *p == "" || access.IsHash(*p) {
+			return nil
+		}
+		h, err := access.HashPassword(*p)
+		if err != nil {
+			return err
+		}
+		*p = h
+		return nil
+	}
+	if err := seal(&mf.Access.Password); err != nil {
 		return err
 	}
-	mf.Access.Password = h
+	for _, ra := range mf.Access.Routes {
+		if ra == nil {
+			continue
+		}
+		if err := seal(&ra.Password); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -376,7 +402,7 @@ func (m *Manager) ArchiveDir() string { return filepath.Join(m.Root, "data", "ar
 // that port until the engine noticed the folder was gone, and a site
 // created again with the same name would then fail to bind.
 func (m *Manager) Delete(ctx context.Context, domain string, archive bool) (archived string, err error) {
-	if !manifest.ValidDomain(domain) {
+	if !manifest.ValidName(domain) {
 		return "", ErrNotFound
 	}
 	dir := m.Dir(domain)
@@ -455,7 +481,7 @@ func (m *Manager) stopAndWait(ctx context.Context, domain, dir string, original 
 
 // managedDir returns the folder of a site that has a manifest.
 func (m *Manager) managedDir(domain string) (string, error) {
-	if !manifest.ValidDomain(domain) {
+	if !manifest.ValidName(domain) {
 		return "", ErrNotFound
 	}
 	dir := m.Dir(domain)

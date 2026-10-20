@@ -254,8 +254,8 @@ func (m *Manager) workdir(domain string) (string, error) {
 	if domain == Middleware {
 		return m.opts.Root, nil
 	}
-	if !manifest.ValidDomain(domain) {
-		return "", fmt.Errorf("%q is not a domain", domain)
+	if !manifest.ValidName(domain) {
+		return "", fmt.Errorf("%q is not a site or project", domain)
 	}
 	dir := filepath.Join(m.opts.Root, "sites", domain)
 	st, err := os.Stat(dir)

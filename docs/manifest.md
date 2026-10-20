@@ -14,7 +14,7 @@ never shell strings. Paths are relative to the site folder.
     "command": ["./server", "--port", "$PORT"],
     "cwd": ".",
     "env": { "NODE_ENV": "production" },
-    "env_file": ".env",
+    "env_files": [".env"],
     "env_from_file": { "NEXT_DIST_DIR": ".next-current" },
     "health": { "path": "/", "timeout": "60s" },
     "drain": "8s",
@@ -99,7 +99,7 @@ The process also receives `PORT`, `HOST=127.0.0.1`, `MIDDLEWARE_DOMAIN`,
 
 ## Paths stay inside the site
 
-`static.root`, `cwd`, `env_file`, `env_from_file`, `docker.build` and the host
+`static.root`, `cwd`, `env_files`, `env_from_file`, `docker.build` and the host
 side of `docker.volumes` must resolve inside the site folder, links included;
 a manifest that names anything outside is refused when it is read. Docker
 volumes are either a path in the site (`"./uploads:/u"`) or a name
@@ -123,7 +123,7 @@ Rolling back is writing the previous name.
 
 The revision is a hash of everything the instance was born from: the resolved
 command, the resolved environment (including `env_from_file` contents and
-`env_file`), the runtime and docker settings. Anything else in the manifest
+`env_files`), the runtime and docker settings. Anything else in the manifest
 (`access`, `waf`, `headers`, `hold`) is applied live and does not restart the
 process.
 

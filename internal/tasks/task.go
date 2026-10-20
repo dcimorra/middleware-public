@@ -68,8 +68,8 @@ func (t *Task) Validate() error {
 	if len(t.Command) == 0 || strings.TrimSpace(t.Command[0]) == "" {
 		return errors.New("command: empty")
 	}
-	if t.Site != "" && !manifest.ValidDomain(t.Site) {
-		return fmt.Errorf("site: %q is not a domain", t.Site)
+	if t.Site != "" && !manifest.ValidName(t.Site) {
+		return fmt.Errorf("site: %q is not a site or project", t.Site)
 	}
 	switch t.Overlap {
 	case "", "skip", "queue":

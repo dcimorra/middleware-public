@@ -331,7 +331,7 @@ func scanSites(sitesDir string) []Site {
 	var out []Site
 	for _, e := range entries {
 		domain := e.Name()
-		if !manifest.ValidDomain(domain) {
+		if !manifest.ValidName(domain) {
 			continue
 		}
 		dir := filepath.Join(sitesDir, domain)

@@ -155,13 +155,17 @@ func TestListShowsManagedAndUnmanagedFoldersAndSkipsTheRest(t *testing.T) {
 func TestEveryTemplateCreatesAValidSiteWithItsFiles(t *testing.T) {
 	f := newFixture(t, false)
 	want := map[string][]string{
-		"static": {"public/index.html"},
-		"node":   {"package.json", "server.js", "public/index.html", "README.md"},
-		"go":     {"go.mod", "main.go", "public/index.html"},
-		"docker": {"Dockerfile", "server.js", "public/index.html"},
+		"static":  {"public/index.html"},
+		"node":    {"package.json", "server.js", "public/index.html", "README.md"},
+		"go":      {"go.mod", "main.go", "public/index.html"},
+		"docker":  {"Dockerfile", "server.js", "public/index.html"},
+		"project": {"README.md"},
 	}
 	for i, name := range Templates() {
 		domain := fmt.Sprintf("t%d.test", i)
+		if name == "project" {
+			domain = fmt.Sprintf("t%d", i)
+		}
 		s, err := f.m.Create(domain, nil, name)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
@@ -174,7 +178,11 @@ func TestEveryTemplateCreatesAValidSiteWithItsFiles(t *testing.T) {
 		if _, err := manifest.Load(f.m.Dir(domain)); err != nil {
 			t.Fatalf("%s: manifest does not load back: %v", name, err)
 		}
-		if name == "static" && s.Mode != manifest.ModeStatic || name != "static" && s.Mode != manifest.ModeRun {
+		want := map[string]manifest.Mode{"static": manifest.ModeStatic, "project": manifest.ModeProject}[name]
+		if want == "" {
+			want = manifest.ModeRun
+		}
+		if s.Mode != want {
 			t.Fatalf("%s: mode %s", name, s.Mode)
 		}
 	}
@@ -418,7 +426,7 @@ func TestResolvedEnvMasksSecretsAndShowsTheRest(t *testing.T) {
 	f := newFixture(t, false)
 	f.m.Create("a.test", runManifest(), "")
 	os.WriteFile(filepath.Join(f.m.Dir("a.test"), ".env"), []byte("DB_PASSWORD=pw\nPLAIN=yes\n"), 0o644)
-	f.m.Patch("a.test", map[string]json.RawMessage{"run": json.RawMessage(fmt.Sprintf(`{"command":[%q],"env":{"API_KEY":"hunter2","MW_TEST_SERVER":"1"},"env_file":".env"}`, os.Args[0]))})
+	f.m.Patch("a.test", map[string]json.RawMessage{"run": json.RawMessage(fmt.Sprintf(`{"command":[%q],"env":{"API_KEY":"hunter2","MW_TEST_SERVER":"1"},"env_files":[".env"]}`, os.Args[0]))})
 	env, err := f.m.ResolvedEnv("a.test")
 	if err != nil {
 		t.Fatal(err)

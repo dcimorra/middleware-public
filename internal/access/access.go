@@ -1,15 +1,19 @@
 // Package access decides who gets into a site, from the manifest's `access`
-// section: networks that may enter, countries that may not, and a password
-// for the whole site or for some paths. It runs after the WAF (which has
-// already refused the abusive) and before the proxy, so a site process
-// never sees a request its operator closed the door on.
+// section: networks that may enter or not, countries that may not, a
+// password for the whole site, and zones (path prefixes) with rules of
+// their own. It runs after the WAF (which has already refused the abusive)
+// and before the proxy, so a site process never sees a request its
+// operator closed the door on.
 //
-// Routes narrow the site's rules by path prefix; the longest matching prefix
-// wins. A route with `allow` replaces the site's allow list for that prefix.
-// A route with `password: true` means the site password is required there;
-// when any route says so, the rest of the site is open, because "password
-// on /admin only" is what an operator writing routes wants, and a password
-// for the whole site needs no routes at all.
+// Every rule adds to the ones above it, never replaces them: a zone's
+// `allow` narrows the site's, a zone's password is asked for after the
+// site's, if there is one. A zone that could loosen the site would make
+// reading the site's rules no longer enough to know who gets in.
+//
+// Each door has its own pass. The zone's prefix goes into the signature, so
+// the password for /admin does not open /billing; into the cookie name, so
+// two doors on one domain do not overwrite each other; and into the
+// cookie's Path, so one zone's pass does not even travel to the others.
 package access
 
 import (
@@ -119,6 +123,13 @@ func (a *Access) clientIP(r *http.Request) net.IP {
 	return net.ParseIP(strings.Trim(host, "[]"))
 }
 
+// door is one password between a visitor and part of a site.
+type door struct {
+	zone    string // "" for the whole site, else the cleaned prefix
+	hash    string
+	message string
+}
+
 // Wrap implements the hook.
 func (a *Access) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -132,13 +143,9 @@ func (a *Access) Wrap(next http.Handler) http.Handler {
 			return
 		}
 		ac := site.Access
-		route := matchRoute(ac.Routes, CleanPath(r.URL.Path))
-		allow := ac.Allow
-		if route != nil && len(route.Allow) > 0 {
-			allow = route.Allow
-		}
+		zone, route := matchRoute(ac.Routes, CleanPath(r.URL.Path))
 		ip := a.clientIP(r)
-		if len(allow) > 0 && !inAny(ip, allow) {
+		if !admitted(ip, ac.Allow, ac.Deny) || (route != nil && !admitted(ip, route.Allow, route.Deny)) {
 			pages.Write(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -151,43 +158,53 @@ func (a *Access) Wrap(next http.Handler) http.Handler {
 				}
 			}
 		}
-		if !passwordRequired(ac, route) {
-			next.ServeHTTP(w, r)
-			return
-		}
 		switch r.URL.Path {
 		case LoginPath:
-			a.login(w, r, site)
-			return
+			if d, ok := doorFor(ac, r.FormValue("zone")); ok {
+				a.login(w, r, site, d)
+				return
+			}
 		case LogoutPath:
-			a.clearSession(w)
+			a.clearSessions(w, r)
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
-		if a.hasSession(r, site) || a.basicAuth(r, ac.Password) {
-			next.ServeHTTP(w, r)
-			return
+		var doors []door
+		if ac.Password != "" {
+			doors = append(doors, door{hash: ac.Password, message: ac.Message})
 		}
-		a.askPassword(w, r, false)
+		if route != nil && route.Password != "" {
+			doors = append(doors, door{zone: zone, hash: route.Password, message: route.Message})
+		}
+		for _, d := range doors {
+			if !a.hasSession(r, site, d) && !a.basicAuth(r, d.hash) {
+				a.askPassword(w, r, d, false)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
-// passwordRequired applies the route rule described in the package comment.
-func passwordRequired(ac *manifest.Access, route *manifest.RouteAccess) bool {
-	if ac.Password == "" {
-		return false
+// doorFor finds the door a login form was posted for.
+func doorFor(ac *manifest.Access, zone string) (door, bool) {
+	if zone == "" {
+		return door{hash: ac.Password, message: ac.Message}, ac.Password != ""
 	}
-	anyRoute := false
-	for _, ra := range ac.Routes {
-		if ra != nil && ra.Password {
-			anyRoute = true
-			break
+	for prefix, ra := range ac.Routes {
+		if ra != nil && ra.Password != "" && zoneOf(prefix) == zone {
+			return door{zone: zone, hash: ra.Password, message: ra.Message}, true
 		}
 	}
-	if !anyRoute {
-		return true
+	return door{}, false
+}
+
+// admitted applies one level's allow and deny lists.
+func admitted(ip net.IP, allow, deny []string) bool {
+	if len(allow) > 0 && !inAny(ip, allow) {
+		return false
 	}
-	return route != nil && route.Password
+	return len(deny) == 0 || !inAny(ip, deny)
 }
 
 // CleanPath is the path as the site behind will understand it, which is
@@ -213,30 +230,35 @@ func CleanPath(p string) string {
 	return strings.ToLower(path.Clean("/" + p))
 }
 
-// matchRoute returns the route with the longest prefix matching path, on
+// matchRoute returns the zone with the longest prefix matching path, on
 // segment boundaries: "/admin" matches "/admin" and "/admin/x", never
 // "/administrator", which is the mistake plain HasPrefix would make. The
 // path is expected already cleaned by CleanPath; prefixes are folded the
 // same way so a route written "/Admin" still covers the request.
-func matchRoute(routes map[string]*manifest.RouteAccess, path string) *manifest.RouteAccess {
+func matchRoute(routes map[string]*manifest.RouteAccess, path string) (string, *manifest.RouteAccess) {
 	var best *manifest.RouteAccess
+	bestZone := ""
 	bestLen := -1
 	for prefix, ra := range routes {
 		if ra == nil {
 			continue
 		}
-		p := strings.TrimSuffix(strings.ToLower(prefix), "/")
-		if p == "" {
-			if bestLen < 0 {
-				best, bestLen = ra, 0
-			}
-			continue
-		}
-		if (path == p || strings.HasPrefix(path, p+"/")) && len(p) > bestLen {
-			best, bestLen = ra, len(p)
+		z := zoneOf(prefix)
+		p := strings.TrimSuffix(z, "/")
+		if (p == "" || path == p || strings.HasPrefix(path, p+"/")) && len(p) > bestLen {
+			best, bestZone, bestLen = ra, z, len(p)
 		}
 	}
-	return best
+	return bestZone, best
+}
+
+// zoneOf is a route prefix as the door compares it.
+func zoneOf(prefix string) string {
+	z := CleanPath(prefix)
+	if z != "/" {
+		z = strings.TrimSuffix(z, "/")
+	}
+	return z
 }
 
 func inAny(ip net.IP, cidrs []string) bool {
@@ -291,21 +313,37 @@ func (a *Access) check(hash, plain string) bool {
 	return true
 }
 
-// Session cookies are signed with the on-disk key over the domain, the
-// stored hash and the expiry, so changing the password ends every session
-// without keeping a list of them.
-func (a *Access) sign(site Site, exp int64) string {
+// Passes are signed with the on-disk key over the domain, the zone, the
+// stored hash and the expiry, so changing a password ends every pass it
+// gave without keeping a list of them.
+func (a *Access) sign(site Site, d door, exp int64) string {
 	mac := hmac.New(sha256.New, a.key)
-	mac.Write([]byte(site.Domain))
-	mac.Write([]byte{0})
-	mac.Write([]byte(site.Access.Password))
-	mac.Write([]byte{0})
-	mac.Write([]byte(strconv.FormatInt(exp, 10)))
+	for _, part := range []string{site.Domain, d.zone, d.hash, strconv.FormatInt(exp, 10)} {
+		mac.Write([]byte(part))
+		mac.Write([]byte{0})
+	}
 	return strconv.FormatInt(exp, 10) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-func (a *Access) hasSession(r *http.Request, site Site) bool {
-	c, err := r.Cookie(sessionCookie)
+// cookieName is the pass's name for a door: the whole site's, or one per
+// zone so two doors on a domain do not overwrite each other.
+func cookieName(d door) string {
+	if d.zone == "" {
+		return sessionCookie
+	}
+	sum := sha256.Sum256([]byte(d.zone))
+	return sessionCookie + "_" + base64.RawURLEncoding.EncodeToString(sum[:6])
+}
+
+func cookiePath(d door) string {
+	if d.zone == "" {
+		return "/"
+	}
+	return d.zone
+}
+
+func (a *Access) hasSession(r *http.Request, site Site, d door) bool {
+	c, err := r.Cookie(cookieName(d))
 	if err != nil {
 		return false
 	}
@@ -317,38 +355,44 @@ func (a *Access) hasSession(r *http.Request, site Site) bool {
 	if err != nil || exp < a.now().Unix() {
 		return false
 	}
-	return hmac.Equal([]byte(a.sign(site, exp)), []byte(c.Value))
+	return hmac.Equal([]byte(a.sign(site, d, exp)), []byte(c.Value))
 }
 
-func (a *Access) setSession(w http.ResponseWriter, r *http.Request, site Site) {
+func (a *Access) setSession(w http.ResponseWriter, r *http.Request, site Site, d door) {
 	exp := a.now().Add(sessionTTL).Unix()
 	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookie, Value: a.sign(site, exp), Path: "/",
+		Name: cookieName(d), Value: a.sign(site, d, exp), Path: cookiePath(d),
 		MaxAge: int(sessionTTL.Seconds()), HttpOnly: true, SameSite: http.SameSiteLaxMode,
 		Secure: edge.HTTPS(r),
 	})
 }
 
-func (a *Access) clearSession(w http.ResponseWriter) {
+// clearSessions drops the site's pass and every zone pass the browser sent.
+func (a *Access) clearSessions(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	for _, c := range r.Cookies() {
+		if strings.HasPrefix(c.Name, sessionCookie+"_") {
+			http.SetCookie(w, &http.Cookie{Name: c.Name, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+		}
+	}
 }
 
-func (a *Access) login(w http.ResponseWriter, r *http.Request, site Site) {
+func (a *Access) login(w http.ResponseWriter, r *http.Request, site Site, d door) {
 	if r.Method != http.MethodPost {
-		a.askPassword(w, r, false)
+		a.askPassword(w, r, d, false)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		a.askPassword(w, r, true)
+		a.askPassword(w, r, d, true)
 		return
 	}
-	if !a.check(site.Access.Password, r.PostForm.Get("password")) {
+	if !a.check(d.hash, r.PostForm.Get("password")) {
 		// A wrong password costs a full derivation; a flood of them is
 		// the WAF's business, which runs before this.
-		a.askPassword(w, r, true)
+		a.askPassword(w, r, d, true)
 		return
 	}
-	a.setSession(w, r, site)
+	a.setSession(w, r, site, d)
 	http.Redirect(w, r, safeNext(r.PostForm.Get("next")), http.StatusSeeOther)
 }
 
@@ -364,7 +408,7 @@ func safeNext(next string) string {
 // askPassword answers 401. Browsers get the form; anything that does not
 // ask for HTML (curl, a deploy script) gets a Basic challenge instead,
 // because the form would only get in its way.
-func (a *Access) askPassword(w http.ResponseWriter, r *http.Request, failed bool) {
+func (a *Access) askPassword(w http.ResponseWriter, r *http.Request, d door, failed bool) {
 	w.Header().Set("Cache-Control", "no-store")
 	if !strings.Contains(r.Header.Get("Accept"), "text/html") {
 		w.Header().Set("WWW-Authenticate", `Basic realm="site", charset="UTF-8"`)
@@ -377,7 +421,7 @@ func (a *Access) askPassword(w http.ResponseWriter, r *http.Request, failed bool
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusUnauthorized)
-	_ = loginTpl.Execute(w, map[string]any{"Action": LoginPath, "Next": safeNext(next), "Failed": failed})
+	_ = loginTpl.Execute(w, map[string]any{"Action": LoginPath, "Next": safeNext(next), "Zone": d.zone, "Message": d.message, "Failed": failed})
 }
 
 func hostOf(r *http.Request) string {
@@ -410,9 +454,10 @@ button{margin-top:.75rem;cursor:pointer;font-weight:600}
 .err{color:var(--err)}
 </style></head>
 <body><main><div class="mark"></div><h1>Password required</h1>
-{{if .Failed}}<p class="err">That password is not right.</p>{{else}}<p>This site is private. Enter its password to continue.</p>{{end}}
+{{if .Failed}}<p class="err">That password is not right.</p>{{else if .Message}}<p>{{.Message}}</p>{{else}}<p>This site is private. Enter its password to continue.</p>{{end}}
 <form method="post" action="{{.Action}}">
 <input type="hidden" name="next" value="{{.Next}}">
+<input type="hidden" name="zone" value="{{.Zone}}">
 <input type="password" name="password" autocomplete="current-password" autofocus required aria-label="Password">
 <button type="submit">Enter</button>
 </form></main></body></html>
@@ -439,5 +484,5 @@ func Closed(lookup Lookup) func(http.Handler) http.Handler {
 }
 
 func guarded(ac *manifest.Access) bool {
-	return ac != nil && (ac.Password != "" || len(ac.Allow) > 0 || len(ac.DenyCountries) > 0 || len(ac.Routes) > 0)
+	return ac != nil && (ac.Password != "" || len(ac.Allow) > 0 || len(ac.Deny) > 0 || len(ac.DenyCountries) > 0 || len(ac.Routes) > 0)
 }
