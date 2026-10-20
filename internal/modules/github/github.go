@@ -80,8 +80,12 @@ func New(mgr *modules.Manager, bus *events.Bus, restart func(ctx context.Context
 func (m *Module) Runner() *deploy.Runner { return m.runner }
 
 // UseRunner replaces the runner: tests point its GitURL at a local
-// repository, and the app may share one runner between modules.
-func (m *Module) UseRunner(r *deploy.Runner) { m.runner = r }
+// repository, and the app shares the sites' runner so the panel's Deploy
+// and a push take one lock per site. It is given this module's token.
+func (m *Module) UseRunner(r *deploy.Runner) {
+	r.SetToken(m.token)
+	m.runner = r
+}
 
 func (m *Module) Key() string  { return Key }
 func (m *Module) Name() string { return "GitHub" }

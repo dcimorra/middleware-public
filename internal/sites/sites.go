@@ -18,6 +18,7 @@ import (
 
 	"github.com/dcimorra/middleware-public/internal/access"
 	"github.com/dcimorra/middleware-public/internal/archive"
+	"github.com/dcimorra/middleware-public/internal/deploy"
 	"github.com/dcimorra/middleware-public/internal/engine"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/fsx"
@@ -39,10 +40,34 @@ type Manager struct {
 	Root   string
 	Engine *engine.Engine // may be nil: then nothing is alive and restarts fail
 	Bus    *events.Bus
-	// Ctx bounds background work (deploys); nil means Background.
+	// Ctx bounds background work; nil means Background.
 	Ctx context.Context
+	// Deploys is the one deployment runner of the installation: the
+	// panel's Deploy button and GitHub's pushes share its lock per site.
+	Deploys *deploy.Runner
+}
 
-	deploys deployState
+// ErrDeploying says a deployment is already running for the site.
+var ErrDeploying = deploy.ErrDeploying
+
+// Deploy builds what is in the site folder (deploy.github.build) and
+// writes the pointer, or restarts the site when there is none. It returns
+// the build id at once; progress is on the bus as deploy.* and the output
+// in data/logs/<domain>/deploy.log.
+func (m *Manager) Deploy(domain string) (string, error) {
+	dir, err := m.managedDir(domain)
+	if err != nil {
+		return "", err
+	}
+	mf, err := manifest.Load(dir)
+	if err != nil {
+		return "", fmt.Errorf("manifest: %w", err)
+	}
+	g := mf.Deploy != nil && mf.Deploy.GitHub != nil
+	if !g && mf.Run == nil {
+		return "", errors.New("nothing to deploy: no deploy.github.build, no pointer and no run section")
+	}
+	return m.Deploys.Start(domain, dir, mf, "operator", deploy.InPlace)
 }
 
 // New builds a manager over root. bus may be nil for tests.
@@ -55,7 +80,13 @@ func New(root string, eng *engine.Engine, bus *events.Bus) *Manager {
 	if abs, err := filepath.Abs(root); err == nil {
 		root = abs
 	}
-	return &Manager{Root: root, Engine: eng, Bus: bus}
+	m := &Manager{Root: root, Engine: eng, Bus: bus}
+	var restart func(context.Context, string) error
+	if eng != nil {
+		restart = eng.Restart
+	}
+	m.Deploys = deploy.New(deploy.Options{DataDir: filepath.Join(root, "data"), Bus: bus, Restart: restart})
+	return m
 }
 
 // Site is the API's view of one folder, as docs/api.md describes it.

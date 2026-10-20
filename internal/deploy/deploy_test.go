@@ -5,8 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/manifest"
@@ -97,13 +100,13 @@ func eventTypes(bus *events.Bus) string {
 }
 
 func TestADeployClonesBuildsAndWritesThePointerOnlyAfterTheBuild(t *testing.T) {
-	bare := makeRepo(t, "#!/bin/sh\necho building into $BUILD_ID\nmkdir -p \"$NEXT_DIST_DIR\" && echo built > \"$NEXT_DIST_DIR/out\"\n")
+	bare := makeRepo(t, "#!/bin/sh\necho building into $MIDDLEWARE_BUILD\nmkdir -p \"$NEXT_DIST_DIR\" && echo built > \"$NEXT_DIST_DIR/out\"\n")
 	m := &manifest.Manifest{Version: 2,
 		Run:    &manifest.Run{Command: []string{"./server"}, EnvFromFile: map[string]string{"NEXT_DIST_DIR": ".current"}},
 		Deploy: &manifest.Deploy{GitHub: &manifest.GitHubDeploy{Repository: "acme/app", Build: [][]string{{"./build.sh"}}, Pointer: ".current"}}}
 	root, dir := makeSite(t, m)
 	r, bus := newRunner(root, bare, nil)
-	st, err := r.Run(context.Background(), "app.test", dir, m, "test")
+	st, err := r.Run(context.Background(), "app.test", dir, m, "test", FromGitHub)
 	if err != nil {
 		log, _ := os.ReadFile(filepath.Join(root, "data", "logs", "app.test", "deploy.log"))
 		t.Fatalf("%v\n%s", err, log)
@@ -138,7 +141,7 @@ func TestADeployClonesBuildsAndWritesThePointerOnlyAfterTheBuild(t *testing.T) {
 		t.Fatalf("the build output must be in the log:\n%s", log)
 	}
 	// A second deploy on the same folder fetches instead of cloning.
-	st2, err := r.Run(context.Background(), "app.test", dir, m, "test")
+	st2, err := r.Run(context.Background(), "app.test", dir, m, "test", FromGitHub)
 	if err != nil || st2.Commit != st.Commit {
 		t.Fatalf("second deploy: %+v %v", st2, err)
 	}
@@ -150,11 +153,11 @@ func TestAFailedBuildLeavesThePointerAloneAndRecordsTheFailure(t *testing.T) {
 	root, dir := makeSite(t, m)
 	os.WriteFile(filepath.Join(dir, ".current"), []byte("previous\n"), 0o644)
 	r, bus := newRunner(root, bare, nil)
-	st, err := r.Run(context.Background(), "app.test", dir, m, "test")
+	st, err := r.Run(context.Background(), "app.test", dir, m, "test", FromGitHub)
 	if err == nil {
 		t.Fatal("a failing build must fail the deploy")
 	}
-	if st.Status != "failed" || !strings.Contains(st.Error, "build[0]") {
+	if st.Status != "failed" || !strings.Contains(st.Error, "step 1") {
 		t.Fatalf("status: %+v", st)
 	}
 	pointer, _ := os.ReadFile(filepath.Join(dir, ".current"))
@@ -172,11 +175,11 @@ func TestAFailedBuildLeavesThePointerAloneAndRecordsTheFailure(t *testing.T) {
 
 func TestWithoutAPointerTheRestartHookIsCalledAfterABuild(t *testing.T) {
 	bare := makeRepo(t, "#!/bin/sh\ntrue\n")
-	m := &manifest.Manifest{Version: 2, Deploy: &manifest.Deploy{GitHub: &manifest.GitHubDeploy{Repository: "acme/app", Build: [][]string{{"./build.sh"}}}}}
+	m := &manifest.Manifest{Version: 2, Run: &manifest.Run{Command: []string{"./server"}}, Deploy: &manifest.Deploy{GitHub: &manifest.GitHubDeploy{Repository: "acme/app", Build: [][]string{{"./build.sh"}}}}}
 	root, dir := makeSite(t, m)
 	var restarted string
 	r, _ := newRunner(root, bare, func(ctx context.Context, domain string) error { restarted = domain; return nil })
-	if _, err := r.Run(context.Background(), "app.test", dir, m, "test"); err != nil {
+	if _, err := r.Run(context.Background(), "app.test", dir, m, "test", FromGitHub); err != nil {
 		t.Fatal(err)
 	}
 	if restarted != "app.test" {
@@ -189,7 +192,7 @@ func TestAPointerOutsideTheSiteFolderIsRefused(t *testing.T) {
 	m := &manifest.Manifest{Version: 2, Deploy: &manifest.Deploy{GitHub: &manifest.GitHubDeploy{Repository: "acme/app", Pointer: "../escape"}}}
 	root, dir := makeSite(t, m)
 	r, _ := newRunner(root, bare, nil)
-	if _, err := r.Run(context.Background(), "app.test", dir, m, "test"); err == nil || !strings.Contains(err.Error(), "leaves the site folder") {
+	if _, err := r.Run(context.Background(), "app.test", dir, m, "test", FromGitHub); err == nil || !strings.Contains(err.Error(), "leaves the site folder") {
 		t.Fatalf("want a refusal, got %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "sites", "escape")); err == nil {
@@ -207,7 +210,7 @@ func TestDeploysOfOneSiteRunOneAtATime(t *testing.T) {
 	done := make(chan error, 2)
 	for i := 0; i < 2; i++ {
 		go func() {
-			_, err := r.Run(context.Background(), "app.test", dir, m, "test")
+			_, err := r.Run(context.Background(), "app.test", dir, m, "test", FromGitHub)
 			done <- err
 		}()
 	}
@@ -219,5 +222,28 @@ func TestDeploysOfOneSiteRunOneAtATime(t *testing.T) {
 	marks, _ := os.ReadFile(filepath.Join(dir, "marks"))
 	if string(marks) != "start\nend\nstart\nend\n" {
 		t.Fatalf("builds overlapped: %q", marks)
+	}
+}
+
+// A build step that outlives its timeout is killed with everything it
+// started, not only the shell: npm's children used to keep running.
+func TestATimedOutStepIsKilledWithItsChildren(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "sites", "t.test")
+	os.MkdirAll(dir, 0o755)
+	g := &manifest.GitHubDeploy{Build: [][]string{{"sh", "-c", "sleep 30 & echo $! > child.pid; wait"}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	var log strings.Builder
+	if _, err := Build(ctx, "t.test", dir, &manifest.Manifest{Version: 2}, g, &log, BuildOptions{BuildID: "b1", Home: filepath.Join(root, "home")}); err == nil {
+		t.Fatal("a timed-out step succeeded")
+	}
+	time.Sleep(300 * time.Millisecond)
+	data, _ := os.ReadFile(filepath.Join(dir, "child.pid"))
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	if pid > 0 && syscall.Kill(pid, 0) == nil {
+		stat, _ := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+		syscall.Kill(pid, syscall.SIGKILL)
+		t.Fatalf("the step's child survived the timeout: %s\n%s", stat, log.String())
 	}
 }

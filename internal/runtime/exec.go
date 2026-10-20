@@ -3,10 +3,13 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/dcimorra/middleware-public/internal/manifest"
 )
@@ -19,6 +22,8 @@ type ExecOptions struct {
 	Stderr io.Writer
 	// TTY asks docker for a terminal (an interactive shell).
 	TTY bool
+	// Env is added on top of the site's environment.
+	Env map[string]string
 }
 
 // Exec runs a command where the site runs: same folder, same environment
@@ -33,17 +38,22 @@ func Exec(ctx context.Context, spec *manifest.Spec, home string, o ExecOptions) 
 		return 2, errors.New("exec: no command")
 	}
 	_, env := spec.WithPort(0)
+	for k, v := range o.Env {
+		env[k] = v
+	}
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return 1, err
 	}
 	var cmd *exec.Cmd
-	if spec.Runtime == "docker" && spec.Docker != nil {
+	inDocker := spec.Runtime == "docker" && spec.Docker != nil
+	if inDocker {
 		d := Docker{}
 		image := spec.Docker.Image
 		if spec.Docker.Build != "" {
 			image = "middleware/" + strings.ReplaceAll(spec.Domain, ".", "-") + ":" + spec.Revision
 		}
-		args := []string{"run", "--rm", "-i"}
+		name := fmt.Sprintf("mw-exec-%s-%d", strings.ReplaceAll(spec.Domain, ".", "-"), time.Now().UnixNano())
+		args := []string{"run", "--rm", "-i", "--name", name}
 		if o.TTY {
 			args = append(args, "-t")
 		}
@@ -69,6 +79,12 @@ func Exec(ctx context.Context, spec *manifest.Spec, home string, o ExecOptions) 
 		args = append(args, image)
 		args = append(args, o.Args...)
 		cmd = exec.CommandContext(ctx, d.bin(), args...)
+		// Killing the docker client leaves the container running: on a
+		// timeout or a cancel the container itself is killed.
+		cmd.Cancel = func() error {
+			_ = exec.Command(d.bin(), "kill", name).Run()
+			return cmd.Process.Kill()
+		}
 	} else {
 		cmd = exec.CommandContext(ctx, o.Args[0], o.Args[1:]...)
 		cmd.Dir = spec.Cwd
@@ -78,6 +94,17 @@ func Exec(ctx context.Context, spec *manifest.Spec, home string, o ExecOptions) 
 			}
 		}
 	}
+	if !inDocker {
+		// Its own group, killed whole on a timeout or a cancel: killing
+		// only the shell npm spawned leaves npm and its children running.
+		// (CommandContext's own Cancel kills the one process only, which
+		// is why this replaces it rather than filling a blank.)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	}
+	// A step that leaves a daemon holding its output must not hang the
+	// caller after the step itself ended.
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = o.Stdin, o.Stdout, o.Stderr
 	err := cmd.Run()
 	var ee *exec.ExitError

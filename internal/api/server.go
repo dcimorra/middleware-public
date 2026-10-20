@@ -124,6 +124,9 @@ type Server struct {
 // It returns handled false to leave the request to the sites manager.
 type Deployer func(domain string) (result any, handled bool, err error)
 
+// Sites is the sites manager the server works on.
+func (s *Server) Sites() *sites.Manager { return s.opts.Sites }
+
 // SetDeployer installs a Deployer. The github module, when enabled,
 // deploys by fetching the repository first; without it the manager's
 // in-place build is what the route does.

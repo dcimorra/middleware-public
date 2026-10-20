@@ -24,6 +24,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/fsx"
 	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/middleware-public/internal/runtime"
 )
 
 // Options configure a Runner.
@@ -123,22 +124,78 @@ func (r *Runner) state(domain string) *siteState {
 	return s
 }
 
+// SetToken sets how the runner finds a repository's token. The runner is
+// made with the sites before the GitHub module exists, and shared with it
+// so the panel's Deploy and a push take one lock per site.
+func (r *Runner) SetToken(f func(repository string) string) {
+	r.mu.Lock()
+	r.opts.Token = f
+	r.mu.Unlock()
+}
+
+// Source says where a deployment's code comes from.
+type Source int
+
+const (
+	// InPlace builds what is already in the site folder: the panel's
+	// Deploy button on a site with no repository, or a pointer bump.
+	InPlace Source = iota
+	// FromGitHub fetches deploy.github's branch first.
+	FromGitHub
+)
+
+// ErrDeploying says a deployment is already running for the site.
+var ErrDeploying = errors.New("a deployment is already running")
+
+// NewBuildID is the id of a deployment: sortable, and a valid folder name
+// for a build that writes into a folder named after it.
+func NewBuildID() string { return time.Now().UTC().Format("20060102T150405Z") }
+
 // Run deploys one site and blocks until it is done. Deployments of the
 // same site run one at a time; different sites run in parallel.
-func (r *Runner) Run(ctx context.Context, domain, siteDir string, m *manifest.Manifest, actor string) (Status, error) {
-	if m == nil || m.Deploy == nil || m.Deploy.GitHub == nil {
-		return Status{}, fmt.Errorf("%s: no deploy.github in the manifest", domain)
-	}
+func (r *Runner) Run(ctx context.Context, domain, siteDir string, m *manifest.Manifest, actor string, from Source) (Status, error) {
 	s := r.state(domain)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return r.run(ctx, domain, siteDir, m.Deploy.GitHub, actor)
+	return r.run(ctx, domain, siteDir, m, actor, from, NewBuildID())
 }
 
-// Trigger starts a deployment in the background and returns at once. A
-// trigger that arrives while the site is deploying marks it to run once
-// more when done: two pushes in a row end with the newest commit built,
-// and ten pushes in a row do not queue ten builds.
+// Start runs a deployment in the background and returns its build id at
+// once, or ErrDeploying when one is running: the operator pressing the
+// button wants this build, not one queued behind another.
+func (r *Runner) Start(domain, siteDir string, m *manifest.Manifest, actor string, from Source) (string, error) {
+	s := r.state(domain)
+	r.mu.Lock()
+	if s.running {
+		r.mu.Unlock()
+		return "", ErrDeploying
+	}
+	s.running = true
+	r.mu.Unlock()
+	id := NewBuildID()
+	go func() {
+		s.mu.Lock()
+		_, _ = r.run(context.Background(), domain, siteDir, m, actor, from, id)
+		s.mu.Unlock()
+		r.mu.Lock()
+		s.running = false
+		r.mu.Unlock()
+	}()
+	return id, nil
+}
+
+// Deploying reports whether a deployment of domain is running.
+func (r *Runner) Deploying(domain string) bool {
+	s := r.state(domain)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return s.running
+}
+
+// Trigger starts a deployment from GitHub in the background. A trigger
+// that arrives while the site is deploying marks it to run once more when
+// done: two pushes in a row end with the newest commit built, and ten
+// pushes in a row do not queue ten builds.
 func (r *Runner) Trigger(domain, siteDir string, m *manifest.Manifest, actor string) {
 	if m == nil || m.Deploy == nil || m.Deploy.GitHub == nil {
 		return
@@ -152,11 +209,15 @@ func (r *Runner) Trigger(domain, siteDir string, m *manifest.Manifest, actor str
 	}
 	s.running = true
 	r.mu.Unlock()
-	g := *m.Deploy.GitHub
 	go func() {
 		for {
+			// Re-read: the push being built may have changed the manifest.
+			cur := m
+			if fresh, err := manifest.Load(siteDir); err == nil {
+				cur = fresh
+			}
 			s.mu.Lock()
-			_, _ = r.run(context.Background(), domain, siteDir, &g, actor)
+			_, _ = r.run(context.Background(), domain, siteDir, cur, actor, FromGitHub, NewBuildID())
 			s.mu.Unlock()
 			r.mu.Lock()
 			if !s.again {
@@ -200,7 +261,7 @@ func (r *Runner) save(st Status) {
 }
 
 // run is one deployment, with the site's lock held by the caller.
-func (r *Runner) run(ctx context.Context, domain, siteDir string, g *manifest.GitHubDeploy, actor string) (Status, error) {
+func (r *Runner) run(ctx context.Context, domain, siteDir string, m *manifest.Manifest, actor string, from Source, buildID string) (Status, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.opts.Timeout)
 	defer cancel()
 	logPath := filepath.Join(r.opts.DataDir, "logs", domain, "deploy.log")
@@ -212,218 +273,207 @@ func (r *Runner) run(ctx context.Context, domain, siteDir string, g *manifest.Gi
 		return Status{}, err
 	}
 	defer logFile.Close()
-	st := Status{Domain: domain, Repository: g.Repository, Branch: Branch(g), BuildID: time.Now().UTC().Format("20060102-150405"), Actor: actor, Status: "running", Started: time.Now(), Log: logPath}
-	r.save(st)
-	r.opts.Bus.Emit(events.Event{Type: "deploy.started", Subject: domain, Actor: actor, Data: map[string]any{"repository": st.Repository, "branch": st.Branch, "build_id": st.BuildID}})
-	fmt.Fprintf(logFile, "\n=== %s deploy %s: %s@%s (by %s)\n", st.Started.Format(time.RFC3339), st.BuildID, st.Repository, st.Branch, actor)
-
-	token := ""
-	if r.opts.Token != nil {
-		token = r.opts.Token(g.Repository)
+	var g manifest.GitHubDeploy
+	if m != nil && m.Deploy != nil && m.Deploy.GitHub != nil {
+		g = *m.Deploy.GitHub
 	}
-	res, err := Run(ctx, siteDir, g, logFile, RunOptions{
-		Domain:  domain,
-		BuildID: st.BuildID,
-		GitURL:  r.opts.GitURL(g.Repository),
-		Token:   token,
-		Home:    filepath.Join(r.opts.DataDir, "homes", domain),
-	})
-	st.Commit = res.Commit
-	st.Finished = time.Now()
-	if err != nil {
-		st.Status, st.Error = "failed", err.Error()
+	st := Status{Domain: domain, BuildID: buildID, Actor: actor, Status: "running", Started: time.Now(), Log: logPath}
+	if from == FromGitHub {
+		st.Repository, st.Branch = g.Repository, Branch(&g)
+	}
+	r.save(st)
+	r.opts.Bus.Emit(events.Event{Type: "deploy.started", Subject: domain, Actor: actor, Message: "build " + buildID, Data: map[string]any{"repository": st.Repository, "branch": st.Branch, "build_id": buildID}})
+	fmt.Fprintf(logFile, "\n=== %s deploy %s (by %s)\n", st.Started.Format(time.RFC3339), buildID, actor)
+	fail := func(err error) (Status, error) {
+		st.Finished, st.Status, st.Error = time.Now(), "failed", err.Error()
 		fmt.Fprintf(logFile, "=== failed: %v\n", err)
 		r.save(st)
-		r.opts.Bus.Emit(events.Event{Type: "deploy.failed", Subject: domain, Actor: actor, Level: "error", Message: err.Error(), Data: map[string]any{"build_id": st.BuildID, "commit": st.Commit, "log": logPath}})
+		r.opts.Bus.Emit(events.Event{Type: "deploy.failed", Subject: domain, Actor: actor, Level: "error", Message: err.Error(), Data: map[string]any{"build_id": buildID, "commit": st.Commit, "log": logPath}})
 		return st, err
 	}
+	home := filepath.Join(r.opts.DataDir, "homes", domain)
+	if from == FromGitHub {
+		if !strings.Contains(g.Repository, "/") {
+			return fail(errors.New("deploy.github.repository: want owner/name"))
+		}
+		token := ""
+		r.mu.Lock()
+		tokenOf := r.opts.Token
+		r.mu.Unlock()
+		if tokenOf != nil {
+			token = tokenOf(g.Repository)
+		}
+		commit, err := Fetch(ctx, siteDir, &g, logFile, FetchOptions{GitURL: r.opts.GitURL(g.Repository), Token: token, Home: home})
+		st.Commit = commit
+		if err != nil {
+			return fail(err)
+		}
+		// The checkout may have brought the repository's own manifest.
+		if fresh, err := manifest.Load(siteDir); err == nil {
+			m = fresh
+			if m.Deploy != nil && m.Deploy.GitHub != nil {
+				g = *m.Deploy.GitHub
+			}
+		}
+	}
+	pointerWritten, err := Build(ctx, domain, siteDir, m, &g, logFile, BuildOptions{BuildID: buildID, Commit: st.Commit, Home: home})
+	if err != nil {
+		return fail(err)
+	}
 	switch {
-	case res.PointerWritten:
-		fmt.Fprintf(logFile, "=== pointer %s now says %s; the engine hands over on its next tick\n", g.Pointer, st.BuildID)
-	case r.opts.Restart != nil:
-		if err := r.opts.Restart(ctx, domain); err != nil {
+	case pointerWritten:
+		fmt.Fprintf(logFile, "=== pointer %s -> %s; the engine hands over on its next tick\n", g.Pointer, buildID)
+	case m != nil && m.Run != nil && r.opts.Restart != nil:
+		if err := r.opts.Restart(ctx, domain); err != nil && !strings.Contains(err.Error(), "not a running site") {
 			fmt.Fprintf(logFile, "=== built, but the restart failed: %v\n", err)
 		} else {
 			fmt.Fprintln(logFile, "=== no pointer: asked the engine to restart the site")
 		}
 	default:
-		fmt.Fprintln(logFile, "=== no pointer and no restart hook: the running instance keeps serving the previous build")
+		fmt.Fprintln(logFile, "=== no pointer and nothing to restart")
 	}
-	st.Status = "ok"
+	st.Status, st.Finished = "ok", time.Now()
 	fmt.Fprintf(logFile, "=== done in %s\n", st.Finished.Sub(st.Started).Round(time.Millisecond))
 	r.save(st)
-	r.opts.Bus.Emit(events.Event{Type: "deploy.done", Subject: domain, Actor: actor, Data: map[string]any{"build_id": st.BuildID, "commit": st.Commit, "pointer": res.PointerWritten, "duration": st.Finished.Sub(st.Started).String()}})
+	r.opts.Bus.Emit(events.Event{Type: "deploy.done", Subject: domain, Actor: actor, Message: "build " + buildID + " deployed", Data: map[string]any{"build_id": buildID, "commit": st.Commit, "pointer": pointerWritten, "duration": st.Finished.Sub(st.Started).String()}})
 	return st, nil
 }
 
-// RunOptions parametrise one Run.
-type RunOptions struct {
-	Domain  string
-	BuildID string
-	GitURL  string
+// FetchOptions parametrise Fetch.
+type FetchOptions struct {
+	GitURL string
 	// Token, when set, authenticates the fetch as x-access-token without
 	// ever reaching .git/config: it travels in a header set on the one
 	// command line, and the remote URL stays the public one.
 	Token string
-	// Home is the HOME the build and git run with, the site's own.
+	// Home is the HOME git runs with, the site's own.
 	Home string
 }
 
-// Result is what Run did.
-type Result struct {
-	Commit         string
-	PointerWritten bool
-}
-
-// Run is one deployment into siteDir: fetch, checkout, build, pointer.
-// log receives everything git and the build commands print. It is the
-// low-level step; Runner adds the per-site lock, the status file and the
-// events.
-//
-// The build commands see the manifest's resolved environment plus
-// BUILD_ID, DEPLOY_COMMIT, MIDDLEWARE_DOMAIN and MIDDLEWARE_SITE_DIR, and
-// every env_from_file variable that reads the pointer is set to the new
-// build id, so a `next build` that reads NEXT_DIST_DIR from the
-// environment writes into the directory the pointer is about to name.
-// $BUILD_ID, $DOMAIN and $SITE_DIR expand inside the commands.
-func Run(ctx context.Context, siteDir string, g *manifest.GitHubDeploy, log io.Writer, o RunOptions) (Result, error) {
-	var res Result
-	if g == nil || !strings.Contains(g.Repository, "/") {
-		return res, errors.New("deploy.github.repository: want owner/name")
-	}
-	if o.BuildID == "" {
-		o.BuildID = time.Now().UTC().Format("20060102-150405")
-	}
+// Fetch brings siteDir to the head of the deploy branch and returns the
+// commit.
+func Fetch(ctx context.Context, siteDir string, g *manifest.GitHubDeploy, log io.Writer, o FetchOptions) (string, error) {
 	if o.GitURL == "" {
 		o.GitURL = "https://github.com/" + g.Repository + ".git"
 	}
-	if o.Home == "" {
-		o.Home = siteDir
-	}
 	if err := os.MkdirAll(o.Home, 0o700); err != nil {
-		return res, err
+		return "", err
 	}
+	ro := RunOptions{Token: o.Token, Home: o.Home}
 	branch := Branch(g)
-	git := func(args ...string) error {
-		return runGit(ctx, siteDir, o, log, args...)
-	}
+	git := func(args ...string) error { return runGit(ctx, siteDir, ro, log, args...) }
 	if !fsx.Exists(filepath.Join(siteDir, ".git")) {
 		// The folder already holds site.json, so `git clone` into it is
 		// refused; init + fetch + checkout gets the same result and keeps
 		// the manifest. If the repository ships its own site.json, the
-		// checkout below overwrites the local one and the log says so.
+		// checkout overwrites the local one and the log says so.
 		if err := git("init", "-q"); err != nil {
-			return res, err
+			return "", err
 		}
 		if err := git("remote", "add", "origin", o.GitURL); err != nil {
-			return res, err
+			return "", err
 		}
 	} else if err := git("remote", "set-url", "origin", o.GitURL); err != nil {
 		if err := git("remote", "add", "origin", o.GitURL); err != nil {
-			return res, err
+			return "", err
 		}
 	}
 	if err := git("fetch", "--prune", "--no-tags", "origin", "+refs/heads/"+branch+":refs/remotes/origin/"+branch); err != nil {
-		return res, fmt.Errorf("fetch %s: %w", branch, err)
+		return "", fmt.Errorf("fetch %s: %w", branch, err)
 	}
-	manifestBefore, _ := os.ReadFile(filepath.Join(siteDir, manifest.FileName))
+	before, _ := os.ReadFile(filepath.Join(siteDir, manifest.FileName))
 	if err := git("checkout", "-q", "-f", "-B", branch, "origin/"+branch); err != nil {
-		return res, fmt.Errorf("checkout %s: %w", branch, err)
+		return "", fmt.Errorf("checkout %s: %w", branch, err)
 	}
-	if manifestAfter, _ := os.ReadFile(filepath.Join(siteDir, manifest.FileName)); len(manifestBefore) > 0 && string(manifestAfter) != string(manifestBefore) {
+	if after, _ := os.ReadFile(filepath.Join(siteDir, manifest.FileName)); len(before) > 0 && string(after) != string(before) {
 		fmt.Fprintln(log, "note: the repository ships its own site.json and it replaced the local one")
 	}
-	commit, err := gitOutput(ctx, siteDir, o, "rev-parse", "HEAD")
+	commit, err := gitOutput(ctx, siteDir, ro, "rev-parse", "HEAD")
 	if err != nil {
-		return res, err
+		return "", err
 	}
-	res.Commit = strings.TrimSpace(commit)
-	fmt.Fprintf(log, "at %s\n", res.Commit)
+	commit = strings.TrimSpace(commit)
+	fmt.Fprintf(log, "at %s\n", commit)
+	return commit, nil
+}
 
-	env, err := buildEnv(siteDir, g, o, res.Commit)
-	if err != nil {
-		return res, err
+// BuildOptions parametrise Build.
+type BuildOptions struct {
+	BuildID string
+	Commit  string
+	Home    string
+}
+
+// Build runs deploy.github.build in the site folder, where the site runs
+// (inside its image for a docker site: run on the host, native modules
+// are built for the wrong system), each step in its own process group so
+// a timeout kills the whole tree and not just the shell npm spawned. Then
+// it writes the pointer, if there is one, and says so.
+//
+// Every step sees the site's resolved environment plus MIDDLEWARE_BUILD
+// (the build id), DEPLOY_COMMIT and CI=true, and every env_from_file
+// variable that reads the pointer set to the new build id, so a
+// `next build` that reads NEXT_DIST_DIR writes into the folder the pointer
+// is about to name. $MIDDLEWARE_BUILD, $DOMAIN and $SITE_DIR expand in the
+// commands.
+func Build(ctx context.Context, domain, siteDir string, m *manifest.Manifest, g *manifest.GitHubDeploy, log io.Writer, o BuildOptions) (pointerWritten bool, err error) {
+	if g.Pointer != "" {
+		p := filepath.Join(siteDir, g.Pointer)
+		if !strings.HasPrefix(filepath.Clean(p), filepath.Clean(siteDir)+string(filepath.Separator)) {
+			return false, fmt.Errorf("pointer %q leaves the site folder", g.Pointer)
+		}
 	}
-	vars := map[string]string{"BUILD_ID": o.BuildID, "DOMAIN": o.Domain, "SITE_DIR": siteDir}
+	spec := &manifest.Spec{Domain: domain, SiteDir: siteDir, Cwd: siteDir, Env: map[string]string{}, Runtime: "process"}
+	if m != nil && m.Run != nil {
+		if resolved, err := manifest.Resolve(domain, siteDir, m); err == nil {
+			spec = resolved
+			spec.Cwd = siteDir
+			for k, file := range m.Run.EnvFromFile {
+				if g.Pointer != "" && filepath.Clean(file) == filepath.Clean(g.Pointer) {
+					spec.Env[k] = o.BuildID
+				}
+			}
+		}
+	}
+	extra := map[string]string{"MIDDLEWARE_BUILD": o.BuildID, "CI": "true"}
+	if o.Commit != "" {
+		extra["DEPLOY_COMMIT"] = o.Commit
+	}
+	vars := map[string]string{"MIDDLEWARE_BUILD": o.BuildID, "DOMAIN": domain, "SITE_DIR": siteDir}
 	for i, raw := range g.Build {
 		if len(raw) == 0 {
-			return res, fmt.Errorf("build[%d]: empty command", i)
+			return false, fmt.Errorf("step %d: empty command", i+1)
 		}
 		argv := make([]string, len(raw))
 		for j, a := range raw {
 			argv[j] = manifest.Expand(a, vars)
 		}
-		fmt.Fprintf(log, "$ %s\n", strings.Join(argv, " "))
-		bin := argv[0]
-		if strings.HasPrefix(bin, "./") || strings.HasPrefix(bin, "../") {
-			bin = filepath.Join(siteDir, bin)
+		if strings.HasPrefix(argv[0], "./") || strings.HasPrefix(argv[0], "../") {
+			argv[0] = filepath.Join(siteDir, argv[0])
 		}
-		cmd := exec.CommandContext(ctx, bin, argv[1:]...)
-		cmd.Dir = siteDir
-		cmd.Env = env
-		cmd.Stdout, cmd.Stderr = log, log
-		cmd.Stdin = nil
-		// A build that leaves a daemon behind holding our log would hang
-		// Wait forever; after the command itself exits, the copy is cut.
-		cmd.WaitDelay = 5 * time.Second
-		if err := cmd.Run(); err != nil {
-			return res, fmt.Errorf("build[%d] %s: %w", i, argv[0], err)
+		fmt.Fprintf(log, "--- step %d/%d: %s\n", i+1, len(g.Build), strings.Join(raw, " "))
+		code, err := runtime.Exec(ctx, spec, o.Home, runtime.ExecOptions{Args: argv, Stdout: log, Stderr: log, Env: extra})
+		if err == nil && code != 0 {
+			err = fmt.Errorf("exit %d", code)
+		}
+		if err != nil {
+			return false, fmt.Errorf("step %d (%s): %w", i+1, raw[0], err)
 		}
 	}
-	if g.Pointer != "" {
-		p := filepath.Join(siteDir, g.Pointer)
-		if !strings.HasPrefix(filepath.Clean(p), filepath.Clean(siteDir)+string(filepath.Separator)) {
-			return res, fmt.Errorf("pointer %q leaves the site folder", g.Pointer)
-		}
-		if err := fsx.WriteAtomic(p, []byte(o.BuildID+"\n"), 0o644); err != nil {
-			return res, fmt.Errorf("pointer: %w", err)
-		}
-		res.PointerWritten = true
+	if g.Pointer == "" {
+		return false, nil
 	}
-	return res, nil
+	if err := fsx.WriteAtomic(filepath.Join(siteDir, g.Pointer), []byte(o.BuildID+"\n"), 0o644); err != nil {
+		return false, fmt.Errorf("pointer: %w", err)
+	}
+	fmt.Fprintf(log, "--- pointer %s -> %s\n", g.Pointer, o.BuildID)
+	return true, nil
 }
 
-// buildEnv is the site's resolved environment (when it has a run section)
-// with the deploy variables on top. HOME is the site's own, PATH the
-// supervisor's, nothing else leaks from the supervisor.
-func buildEnv(siteDir string, g *manifest.GitHubDeploy, o RunOptions, commit string) ([]string, error) {
-	env := map[string]string{}
-	for _, k := range []string{"PATH", "LANG", "LC_ALL", "TZ"} {
-		if v, ok := os.LookupEnv(k); ok {
-			env[k] = v
-		}
-	}
-	m, err := manifest.Load(siteDir)
-	if err == nil && m.Run != nil {
-		spec, err := manifest.Resolve(o.Domain, siteDir, m)
-		if err == nil {
-			for k, v := range spec.Env {
-				env[k] = v
-			}
-			for k, file := range m.Run.EnvFromFile {
-				if g.Pointer != "" && filepath.Clean(file) == filepath.Clean(g.Pointer) {
-					env[k] = o.BuildID
-				}
-			}
-		}
-	}
-	env["HOME"] = o.Home
-	env["MIDDLEWARE_DOMAIN"] = o.Domain
-	env["MIDDLEWARE_SITE_DIR"] = siteDir
-	env["BUILD_ID"] = o.BuildID
-	env["DEPLOY_COMMIT"] = commit
-	env["CI"] = "true"
-	delete(env, "PORT")
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	out := make([]string, 0, len(keys))
-	for _, k := range keys {
-		out = append(out, k+"="+env[k])
-	}
-	return out, nil
+// RunOptions are what git runs with.
+type RunOptions struct {
+	Token string
+	Home  string
 }
 
 func gitEnv(o RunOptions) []string {

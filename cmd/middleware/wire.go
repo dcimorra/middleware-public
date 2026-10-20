@@ -117,6 +117,12 @@ func buildWire(a *app.App) app.Hook {
 		if err := agents.Restore(context.Background(), set.Manager, agentClaude, agentGemini); err != nil {
 			a.Bus.Emit(events.Event{Type: "module.restore_failed", Actor: "engine", Level: "error", Message: err.Error()})
 		}
+		// One deployment runner for the installation: the sites' own,
+		// shared with the GitHub module, so two deploys of one site never
+		// overlap whichever button or push started them.
+		if mgr := srv.Sites(); mgr != nil && mgr.Deploys != nil && set.GitHub != nil {
+			set.GitHub.UseRunner(mgr.Deploys)
+		}
 		srv.SetDeployer(githubDeployer(a, set))
 		srv.RegisterDeps(api.DepsOptions{Manager: set.Deps})
 		// The CLIs a turn runs come first in its PATH, with their Node.
