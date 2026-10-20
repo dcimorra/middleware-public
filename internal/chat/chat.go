@@ -353,9 +353,13 @@ func (m *Manager) follow(domain, turnID string, s Settings, run agent.Run, cance
 		m.emit("agent.jail_violation", domain, "error", fmt.Sprintf("the agent referred to %d denied path(s)", len(v)), map[string]any{"turn_id": turnID, "paths": v})
 	}
 
-	m.mu.Lock()
-	delete(m.running, domain)
-	m.mu.Unlock()
+	// The turn counts as running until its file is written: Running()
+	// returning false is the promise that History() has the turn.
+	defer func() {
+		m.mu.Lock()
+		delete(m.running, domain)
+		m.mu.Unlock()
+	}()
 
 	c := m.load(domain)
 	if sessionID != "" {

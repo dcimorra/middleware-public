@@ -236,6 +236,9 @@ func TestAJailViolationIsReportedAfterTheTurn(t *testing.T) {
 	if ev.Level != "error" || len(paths) != 1 || paths[0] != filepath.Join(root, "sites", "b.test") {
 		t.Fatalf("violation = %+v", ev)
 	}
+	// The violation is reported before the turn is saved; the temp dir
+	// must not be removed under a save still in flight.
+	waitFor(t, ch, "agent.done")
 }
 
 func TestTheMiddlewareConversationRunsInTheRootAndDeniesTheSites(t *testing.T) {
