@@ -26,7 +26,9 @@ type CLIRun struct {
 	stop   chan struct{}
 	once   sync.Once
 	stderr strings.Builder
-	errMu  sync.Mutex
+	// stderrDone closes when the stderr reader reaches the pipe's end.
+	stderrDone chan struct{}
+	errMu      sync.Mutex
 }
 
 // Parser turns one stdout line into zero or more events and says whether
@@ -61,7 +63,7 @@ func StartCLI(ctx context.Context, p Parser, dir string, env []string, bin strin
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	r := &CLIRun{events: make(chan Event, 64), cmd: cmd, stop: make(chan struct{})}
+	r := &CLIRun{events: make(chan Event, 64), cmd: cmd, stop: make(chan struct{}), stderrDone: make(chan struct{})}
 	go r.readStderr(stderr)
 	go r.loop(ctx, p, stdout)
 	return r, nil
@@ -76,6 +78,7 @@ func (r *CLIRun) Stop() {
 }
 
 func (r *CLIRun) readStderr(f io.Reader) {
+	defer close(r.stderrDone)
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 	for sc.Scan() {
@@ -147,6 +150,15 @@ read:
 	}()
 	if !stopped {
 		emit(p.Flush())
+	}
+	if !stopped {
+		// Wait closes the pipes, so stderr must be drained before it or the
+		// last lines (the "not logged in" that explains the exit) are lost.
+		// Bounded: a grandchild holding the pipe must not hold the turn.
+		select {
+		case <-r.stderrDone:
+		case <-time.After(3 * time.Second):
+		}
 	}
 	exitErr := r.wait(stopped)
 	if stopped {
