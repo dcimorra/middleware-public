@@ -177,6 +177,34 @@ func (s *Server) registerChat(m *chat.Manager, p string, name func(*http.Request
 		}
 		return OK, nil
 	})
+	s.Handle("GET", p+"/files", "The attachments that go with the next message", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		domain, err := name(r)
+		if err != nil {
+			return nil, err
+		}
+		return m.Uploads(domain), nil
+	})
+	s.Handle("POST", p+"/files", "Attach a file to the next message (raw body, ?name=file.ext, 25 MB at most)", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		domain, err := name(r)
+		if err != nil {
+			return nil, err
+		}
+		up, err := m.AddUpload(domain, r.URL.Query().Get("name"), http.MaxBytesReader(w, r.Body, chat.MaxUpload+1))
+		if err != nil {
+			return nil, Errorf(http.StatusBadRequest, "%v", err)
+		}
+		return up, nil
+	})
+	s.Handle("DELETE", p+"/files/{file}", "Drop an attachment before it is sent", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		domain, err := name(r)
+		if err != nil {
+			return nil, err
+		}
+		if err := m.RemoveUpload(domain, r.PathValue("file")); err != nil {
+			return nil, Errorf(http.StatusNotFound, "%v", err)
+		}
+		return OK, nil
+	})
 	s.Handle("GET", p+"/processes", "What the conversation has running now, also what escaped its turn with setsid", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		domain, err := name(r)
 		if err != nil {

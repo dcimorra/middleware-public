@@ -565,9 +565,10 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 		return fail(fmt.Errorf("skill not installed: %w", err))
 	}
 	var system string
+	prompt, lend := m.attach(name, text)
 	req := agent.Request{
 		Workdir:   s.Workdir,
-		Prompt:    text,
+		Prompt:    prompt,
 		Model:     model,
 		SessionID: c.SessionID,
 		Jail:      s.Jail,
@@ -593,6 +594,9 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 		}
 	}
 	req.System = system
+	if lend != "" {
+		req.Jail.Lend(lend)
+	}
 	run, err := provider.Start(ctx, req)
 	if err != nil {
 		m.emit("agent.error", name, "error", err.Error(), map[string]any{"turn_id": turnID})
@@ -713,6 +717,7 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 	// The turn counts as running until its file is written, and the final
 	// event goes out only after that: whoever reacts to agent.done can
 	// Send again and read the turn from History at once.
+	m.sent(name, turnID)
 	var queued []string
 	queuedModel := ""
 	m.mu.Lock()

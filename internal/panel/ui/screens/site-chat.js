@@ -32,7 +32,12 @@ export function chatTab(domain) {
   const procsBtn = h("button", { type: "button", class: "btn ghost sm" }, icon("list"), t("chat.processes"));
   const status = h("span", { class: "small muted", role: "status" });
   const capacity = h("span", { class: "small muted chat-capacity", title: t("chat.capacityTitle") });
-  const form = h("form", { class: "chat-form" }, text, h("div", { class: "row" }, provider, model, h("span", { class: "grow" }), status, procsBtn, reset, stop, send));
+  // Attachments go with the next message; they are kept in the site's own
+  // HOME and lent to the turn read-only.
+  const fileInput = h("input", { type: "file", multiple: true, hidden: true });
+  const attachBtn = h("button", { type: "button", class: "btn ghost sm", title: t("chat.attachHint") }, icon("plus"), t("chat.attach"));
+  const chips = h("div", { class: "chat-chips row" });
+  const form = h("form", { class: "chat-form" }, chips, text, h("div", { class: "row" }, provider, model, attachBtn, fileInput, h("span", { class: "grow" }), status, procsBtn, reset, stop, send));
   // Which conversation is open: the site's first one, another of the
   // panel's, or one the site's code opened through the site door (read
   // and stopped from here, never written into: a program is on the other
@@ -60,7 +65,7 @@ export function chatTab(domain) {
     cur = id ? { name: `${domain}#${id}`, path: `${base}/chats/${enc(id)}`, origin } : { name: domain, path: `${base}/chat`, origin: "panel" };
     form.hidden = origin === "site";
     readonlyNote.hidden = origin !== "site";
-    loadTurns();
+    loadTurns().then(showUploads);
   });
   newConv.addEventListener("click", async () => {
     try {
@@ -68,7 +73,7 @@ export function chatTab(domain) {
       cur = { name: `${domain}#${r.id}`, path: `${base}/chats/${enc(r.id)}`, origin: "panel" };
       await fillPicker();
       form.hidden = false; readonlyNote.hidden = true;
-      loadTurns();
+      loadTurns().then(showUploads);
     } catch (e) { toastError(e); }
   });
   const el = h("div", { class: "chat" }, h("div", { class: "chat-head row" }, picker, newConv, h("span", { class: "grow" }), capacity), readonlyNote, turns, form);
@@ -336,6 +341,29 @@ export function chatTab(domain) {
     try { await api.del(cur.path); await loadTurns(); } catch (err) { toastError(err); }
   });
 
-  loadAgents().then(fillPicker).then(loadTurns);
+  async function showUploads() {
+    clear(chips);
+    let ups = [];
+    try { ups = await api.get(`${cur.path}/files`); } catch { ups = []; }
+    for (const u of ups) {
+      const x = h("button", { type: "button", class: "btn sm ghost", "aria-label": t("chat.removeFile", { name: u.name }) }, "×");
+      x.addEventListener("click", async () => { try { await api.del(`${cur.path}/files/${enc(u.name)}`); showUploads(); } catch (e) { toastError(e); } });
+      chips.append(h("span", { class: "badge" }, u.name, " ", x));
+    }
+  }
+  async function upload(files) {
+    for (const f of files) {
+      try { await api.postRaw(`${cur.path}/files?name=${enc(f.name)}`, f, f.type || "application/octet-stream"); }
+      catch (e) { toastError(e); }
+    }
+    showUploads();
+  }
+  attachBtn.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => { upload([...fileInput.files]); fileInput.value = ""; });
+  el.addEventListener("dragover", (e) => { e.preventDefault(); });
+  el.addEventListener("drop", (e) => { e.preventDefault(); if (e.dataTransfer && e.dataTransfer.files.length) upload([...e.dataTransfer.files]); });
+  subs.push(onEvent("agent.started", (ev) => { if (ev.subject === cur.name) showUploads(); }));
+
+  loadAgents().then(fillPicker).then(loadTurns).then(showUploads);
   return { el, destroy() { subs.forEach((u) => u()); } };
 }

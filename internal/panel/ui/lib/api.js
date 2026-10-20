@@ -72,6 +72,7 @@ export const api = {
   patch: (path, body, opts) => request("PATCH", path, body, opts),
   del: (path, opts) => request("DELETE", path, undefined, opts),
   putRaw: (path, body, contentType) => request("PUT", path, body, { raw: true, contentType }),
+  postRaw: (path, body, contentType) => request("POST", path, body, { raw: true, contentType }),
   // stream opens a GET whose body keeps coming (logs with ?follow=1) and
   // hands each chunk to onChunk until the controller aborts it.
   async stream(path, onChunk, signal) {

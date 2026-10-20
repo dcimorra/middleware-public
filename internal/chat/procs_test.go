@@ -3,6 +3,7 @@ package chat
 import (
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -134,4 +135,38 @@ func TestAMessageDuringATurnIsSentWhenItEnds(t *testing.T) {
 		t.Fatalf("next prompt %q", p.last().Prompt)
 	}
 	waitFor(t, ch, "agent.done")
+}
+
+// An attachment goes with the next message, readable and not writable,
+// and moves out of the way when the turn ends.
+func TestAnAttachmentGoesWithTheNextMessage(t *testing.T) {
+	p := &fakeProvider{key: "fake", script: []agent.Event{{Kind: agent.KindResult, Text: "ok"}}}
+	m, root, bus := newManager(t, p)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+	if _, err := m.AddUpload("a.test", "../../etc/passwd", strings.NewReader("x")); err != nil {
+		// A path is reduced to its base name; ".." itself is refused.
+		t.Logf("refused: %v", err)
+	}
+	if _, err := m.AddUpload("a.test", ".env", strings.NewReader("x")); err == nil {
+		t.Fatal("a dotfile was accepted")
+	}
+	if _, err := m.AddUpload("a.test", "notes.txt", strings.NewReader("hello")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Send("a.test", "read the notes", ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ch, "agent.done")
+	req := p.last()
+	pending := root + "/data/homes/a.test/uploads/main/pending/notes.txt"
+	if !strings.Contains(req.Prompt, pending) {
+		t.Fatalf("prompt: %s", req.Prompt)
+	}
+	if len(req.Jail.Lent) == 0 || !strings.HasSuffix(req.Jail.Lent[len(req.Jail.Lent)-1], "uploads/main") {
+		t.Fatalf("lent: %v", req.Jail.Lent)
+	}
+	if len(m.Uploads("a.test")) != 0 {
+		t.Fatal("the attachment is still pending after the turn")
+	}
 }
