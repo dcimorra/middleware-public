@@ -217,7 +217,7 @@ func TestARoutePasswordLeavesTheRestOfTheSiteOpen(t *testing.T) {
 
 func TestDeniedCountriesGet403(t *testing.T) {
 	a := newAccess(t, siteWith(&manifest.Access{DenyCountries: []string{"xx"}}))
-	a.opts.Country = func(ip net.IP) string {
+	a.opts.Country = func(_ *http.Request, ip net.IP) string {
 		if ip.String() == "203.0.113.1" {
 			return "XX"
 		}
@@ -251,5 +251,36 @@ func TestTheSessionKeySurvivesARestart(t *testing.T) {
 	}
 	if st.Mode().Perm() != 0o600 {
 		t.Fatalf("key mode %o, want 0600", st.Mode().Perm())
+	}
+}
+
+func TestAZoneCannotBeSkippedWithDotsSlashesOrCase(t *testing.T) {
+	hash, _ := HashPassword("pw")
+	a := newAccess(t, siteWith(&manifest.Access{Password: hash, Routes: map[string]*manifest.RouteAccess{"/admin": {Password: true}}}))
+	h := a.Wrap(okHandler())
+	if rec := do(h, req("GET", "/", "203.0.113.1:1")); rec.Code != 200 {
+		t.Fatalf("the open part got %d", rec.Code)
+	}
+	for _, p := range []string{"/admin", "/x/../admin", "//admin/users", "/ADMIN", "/Admin/", "/admin;x=1/users", "/./admin"} {
+		r := req("GET", "/", "203.0.113.1:1")
+		r.URL.Path = p
+		if rec := do(h, r); rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s got %d", p, rec.Code)
+		}
+	}
+}
+
+func TestWithoutItsKeyTheDoorStaysShut(t *testing.T) {
+	hash, _ := HashPassword("pw")
+	sites := map[string]*manifest.Access{"p.example": {Password: hash}, "o.example": nil}
+	lookup := func(host string) (Site, bool) { ac, ok := sites[host]; return Site{Domain: host, Access: ac}, ok }
+	h := Closed(lookup)(okHandler())
+	r := httptest.NewRequest("GET", "http://p.example/", nil)
+	if rec := do(h, r); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("a protected site was served open: %d", rec.Code)
+	}
+	r = httptest.NewRequest("GET", "http://o.example/", nil)
+	if rec := do(h, r); rec.Code != 200 {
+		t.Fatalf("an open site was closed: %d", rec.Code)
 	}
 }

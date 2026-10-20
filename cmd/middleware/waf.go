@@ -15,6 +15,7 @@ import (
 
 	"github.com/dcimorra/middleware-public/internal/access"
 	"github.com/dcimorra/middleware-public/internal/app"
+	"github.com/dcimorra/middleware-public/internal/edge"
 	"github.com/dcimorra/middleware-public/internal/engine"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/guard"
@@ -73,12 +74,18 @@ func (h hook) Run(ctx context.Context, _ *app.App) error {
 	return nil
 }
 
+// edgeCountry is the country the edge says, which is all the house knows
+// without a GeoIP database. It was never wired before, so every
+// deny_countries rule in the WAF and in manifests was dead configuration.
+func edgeCountry(r *http.Request, _ net.IP) string { return edge.Country(r) }
+
 func dataDir(a *app.App) string { return filepath.Join(a.Root, "data") }
 
 func buildWAF(a *app.App) app.Hook {
 	w, err := waf.New(waf.Options{
 		DataDir: dataDir(a),
 		Bus:     a.Bus,
+		Country: edgeCountry,
 		Lookup: func(host string) (waf.Site, bool) {
 			sn, ok := a.Engine.Lookup(host)
 			if !ok {
@@ -106,20 +113,22 @@ func buildWAF(a *app.App) app.Hook {
 }
 
 func buildAccess(a *app.App) app.Hook {
+	lookup := func(host string) (access.Site, bool) {
+		sn, ok := a.Engine.Lookup(host)
+		if !ok || sn.Manifest == nil {
+			return access.Site{}, false
+		}
+		return access.Site{Domain: sn.Domain, Access: sn.Manifest.Access}, true
+	}
 	ac, err := access.New(access.Options{
 		DataDir:  dataDir(a),
-		ClientIP: waf.ClientIP,
-		Lookup: func(host string) (access.Site, bool) {
-			sn, ok := a.Engine.Lookup(host)
-			if !ok || sn.Manifest == nil {
-				return access.Site{}, false
-			}
-			return access.Site{Domain: sn.Domain, Access: sn.Manifest.Access}, true
-		},
+		ClientIP: edge.ClientIP,
+		Country:  edgeCountry,
+		Lookup:   lookup,
 	})
 	if err != nil {
-		a.Bus.Emit(events.Event{Type: "access.error", Actor: "engine", Level: "error", Message: "session key not available: " + err.Error()})
-		return nil
+		a.Bus.Emit(events.Event{Type: "access.error", Actor: "engine", Level: "error", Message: "session key not available, protected sites are closed: " + err.Error()})
+		return hook{wrap: access.Closed(lookup)}
 	}
 	theAccess = ac
 	return hook{wrap: ac.Wrap}
@@ -128,7 +137,7 @@ func buildAccess(a *app.App) app.Hook {
 func buildTraffic(a *app.App) app.Hook {
 	r := traffic.New(traffic.Options{
 		LogDir:   filepath.Join(dataDir(a), "logs"),
-		ClientIP: waf.ClientIP,
+		ClientIP: edge.ClientIP,
 		Host:     proxy.Host,
 	})
 	theTraffic = r

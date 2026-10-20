@@ -22,12 +22,14 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/edge"
 	"github.com/dcimorra/middleware-public/internal/fsx"
 	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/pages"
@@ -49,8 +51,8 @@ type Options struct {
 	Lookup  Lookup
 	// ClientIP resolves the visitor's address; nil uses RemoteAddr only.
 	ClientIP func(r *http.Request) net.IP
-	// Country resolves an address to a country code; nil means "".
-	Country func(ip net.IP) string
+	// Country resolves a request's country code; nil means "".
+	Country func(r *http.Request, ip net.IP) string
 	Now     func() time.Time
 }
 
@@ -130,7 +132,7 @@ func (a *Access) Wrap(next http.Handler) http.Handler {
 			return
 		}
 		ac := site.Access
-		route := matchRoute(ac.Routes, r.URL.Path)
+		route := matchRoute(ac.Routes, CleanPath(r.URL.Path))
 		allow := ac.Allow
 		if route != nil && len(route.Allow) > 0 {
 			allow = route.Allow
@@ -141,7 +143,7 @@ func (a *Access) Wrap(next http.Handler) http.Handler {
 			return
 		}
 		if len(ac.DenyCountries) > 0 && a.opts.Country != nil && ip != nil {
-			cc := strings.ToUpper(a.opts.Country(ip))
+			cc := strings.ToUpper(a.opts.Country(r, ip))
 			for _, d := range ac.DenyCountries {
 				if cc != "" && cc == strings.ToUpper(d) {
 					pages.Write(w, "forbidden", http.StatusForbidden)
@@ -188,9 +190,34 @@ func passwordRequired(ac *manifest.Access, route *manifest.RouteAccess) bool {
 	return route != nil && route.Password
 }
 
+// CleanPath is the path as the site behind will understand it, which is
+// what a rule has to decide on. The raw path cannot be used: "/x/../admin",
+// "//admin" and "/%2e%2e/admin" do not start with "/admin", but Next,
+// Express and file servers clean them and serve /admin. V1 found it live on
+// 1 October 2026: the zone answered 401 on its own path and 200 with the
+// page on any of those. Case is folded too, because Express and others do
+// not tell /ADMIN from /admin, and for a door covering too much is better
+// than covering too little. Backslashes count as slashes and ";params" are
+// dropped for the same reason: some servers read them that way.
+func CleanPath(p string) string {
+	p = strings.ReplaceAll(p, `\`, "/")
+	if i := strings.IndexByte(p, ';'); i >= 0 {
+		segs := strings.Split(p, "/")
+		for i, s := range segs {
+			if j := strings.IndexByte(s, ';'); j >= 0 {
+				segs[i] = s[:j]
+			}
+		}
+		p = strings.Join(segs, "/")
+	}
+	return strings.ToLower(path.Clean("/" + p))
+}
+
 // matchRoute returns the route with the longest prefix matching path, on
 // segment boundaries: "/admin" matches "/admin" and "/admin/x", never
-// "/administrator", which is the mistake plain HasPrefix would make.
+// "/administrator", which is the mistake plain HasPrefix would make. The
+// path is expected already cleaned by CleanPath; prefixes are folded the
+// same way so a route written "/Admin" still covers the request.
 func matchRoute(routes map[string]*manifest.RouteAccess, path string) *manifest.RouteAccess {
 	var best *manifest.RouteAccess
 	bestLen := -1
@@ -198,7 +225,7 @@ func matchRoute(routes map[string]*manifest.RouteAccess, path string) *manifest.
 		if ra == nil {
 			continue
 		}
-		p := strings.TrimSuffix(prefix, "/")
+		p := strings.TrimSuffix(strings.ToLower(prefix), "/")
 		if p == "" {
 			if bestLen < 0 {
 				best, bestLen = ra, 0
@@ -298,7 +325,7 @@ func (a *Access) setSession(w http.ResponseWriter, r *http.Request, site Site) {
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: a.sign(site, exp), Path: "/",
 		MaxAge: int(sessionTTL.Seconds()), HttpOnly: true, SameSite: http.SameSiteLaxMode,
-		Secure: r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"),
+		Secure: edge.HTTPS(r),
 	})
 }
 
@@ -390,3 +417,27 @@ button{margin-top:.75rem;cursor:pointer;font-weight:600}
 <button type="submit">Enter</button>
 </form></main></body></html>
 `))
+
+// Closed is the door when Access could not start (its key unreadable, the
+// disk full). Every site that has an access rule answers 503 and the rest
+// pass. Letting them through instead would serve every password-protected
+// site open with nothing but an event saying so, which is the failure that
+// looks exactly like success.
+func Closed(lookup Lookup) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if lookup != nil {
+				if site, ok := lookup(hostOf(r)); ok && guarded(site.Access) {
+					w.Header().Set("Cache-Control", "no-store")
+					pages.Write(w, "unavailable", http.StatusServiceUnavailable)
+					return
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func guarded(ac *manifest.Access) bool {
+	return ac != nil && (ac.Password != "" || len(ac.Allow) > 0 || len(ac.DenyCountries) > 0 || len(ac.Routes) > 0)
+}

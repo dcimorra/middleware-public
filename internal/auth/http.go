@@ -2,9 +2,10 @@ package auth
 
 import (
 	"context"
-	"net"
 	"net/http"
 	"strings"
+
+	"github.com/dcimorra/middleware-public/internal/edge"
 )
 
 // CookieName is the session cookie.
@@ -120,27 +121,16 @@ func ClearCookie(w http.ResponseWriter, r *http.Request) {
 }
 
 // IsHTTPS reports whether the client's hop was TLS.
-func IsHTTPS(r *http.Request) bool {
-	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
-}
+func IsHTTPS(r *http.Request) bool { return edge.HTTPS(r) }
 
-// ClientIP is the address login failures are counted against. The edge's
-// header is preferred because behind a tunnel every connection comes from
-// loopback, and counting against 127.0.0.1 would let one attacker lock
-// the operator out. The header can be forged by a direct client, which
-// only lets that client spread its own failures across addresses; it
-// cannot lock anyone else out.
+// ClientIP is the address login failures are counted against: the one the
+// edge package believes. It used to prefer CF-Connecting-IP from anyone,
+// on the theory that a forger could only spread its own failures across
+// addresses; that is exactly what unlimited guessing needs, and V1 closed
+// the same hole on 7 September 2026.
 func ClientIP(r *http.Request) string {
-	if v := r.Header.Get("CF-Connecting-IP"); v != "" {
-		return v
+	if ip := edge.ClientIP(r); ip != nil {
+		return ip.String()
 	}
-	if v := r.Header.Get("X-Forwarded-For"); v != "" {
-		first, _, _ := strings.Cut(v, ",")
-		return strings.TrimSpace(first)
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+	return r.RemoteAddr
 }

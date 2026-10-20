@@ -192,7 +192,14 @@ func Load(siteDir string) (*Manifest, error) {
 	if err != nil {
 		return nil, err
 	}
-	return Parse(data)
+	m, err := Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.CheckInside(siteDir); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // Parse decodes and validates manifest bytes. Unknown fields are an error:
@@ -214,6 +221,9 @@ func Parse(data []byte) (*Manifest, error) {
 // Save writes m to the site folder atomically.
 func Save(siteDir string, m *Manifest) error {
 	if err := m.Validate(); err != nil {
+		return err
+	}
+	if err := m.CheckInside(siteDir); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(m, "", "  ")

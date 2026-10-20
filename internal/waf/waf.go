@@ -9,11 +9,10 @@
 // that end most abusive traffic come first, and the challenge comes after
 // the rate limit so a flood cannot use the challenge page itself as a lever.
 //
-// Country lookups are not built in. The Country field takes a function; a
-// GeoIP module provides one (for example by reading a local database or the
-// CF-IPCountry header the tunnel adds) and assigns it to the WAF at start.
-// With no function, every address has country "" and country rules are
-// simply never matched, so nothing is silently blocked.
+// Country lookups are not built in. The Country field takes a function;
+// the house wires the edge's CF-IPCountry header (internal/edge, believed
+// only from a trusted hop), and a GeoIP module can replace it. With no
+// function every request has country "" and country rules never match.
 package waf
 
 import (
@@ -32,6 +31,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/edge"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/fsx"
 	"github.com/dcimorra/middleware-public/internal/manifest"
@@ -127,8 +127,8 @@ type Options struct {
 	DataDir string
 	Bus     *events.Bus
 	Lookup  Lookup
-	// Country resolves an address to a country code; nil means "".
-	Country func(ip net.IP) string
+	// Country resolves a request's country code; nil means "".
+	Country func(r *http.Request, ip net.IP) string
 	// Now is for tests.
 	Now func() time.Time
 }
@@ -511,36 +511,6 @@ func parsePrefix(s string) (netip.Prefix, error) {
 	return netip.PrefixFrom(a, a.BitLen()), nil
 }
 
-// ClientIP is the address a request really came from. Through loopback
-// (the tunnel, or a trusted proxy on this machine) the edge's header is
-// believed: CF-Connecting-IP first, then the last hop of X-Forwarded-For,
-// which is the one the trusted proxy itself appended. From anywhere else
-// the headers are ignored, because a client can write them.
-func ClientIP(r *http.Request) net.IP {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	remote := net.ParseIP(strings.Trim(host, "[]"))
-	if remote == nil || !remote.IsLoopback() {
-		return remote
-	}
-	if cf := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); cf != "" {
-		if ip := net.ParseIP(cf); ip != nil {
-			return ip
-		}
-	}
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		for i := len(parts) - 1; i >= 0; i-- {
-			if ip := net.ParseIP(strings.TrimSpace(parts[i])); ip != nil && !ip.IsLoopback() {
-				return ip
-			}
-		}
-	}
-	return remote
-}
-
 // effective is the policy for one request after the site's section is
 // merged over the global one.
 type effective struct {
@@ -581,7 +551,7 @@ func hostOf(r *http.Request) string {
 // Wrap implements app.Hook.
 func (w *WAF) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-		ip := ClientIP(r)
+		ip := edge.ClientIP(r)
 		if ip == nil {
 			// A RemoteAddr that is not an address is a unix socket (the
 			// CLI) or a test; neither is something the WAF should judge.
@@ -633,7 +603,7 @@ func (w *WAF) Wrap(next http.Handler) http.Handler {
 			return
 		}
 		if len(c.denyCountries) > 0 && w.opts.Country != nil {
-			if cc := strings.ToUpper(w.opts.Country(ip)); cc != "" && c.denyCountries[cc] {
+			if cc := strings.ToUpper(w.opts.Country(r, ip)); cc != "" && c.denyCountries[cc] {
 				w.refuse(rw, r, ip, "forbidden", http.StatusForbidden)
 				return
 			}

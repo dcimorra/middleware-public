@@ -217,3 +217,20 @@ func TestInstancesAreReAdoptedByANewEngine(t *testing.T) {
 	e.mu.RUnlock()
 	inst.Stop(context.Background(), time.Second)
 }
+
+// A running site whose manifest loses its run section must stop cleanly.
+// The stop used to read the drain from the new manifest, which has no run
+// section, and the nil dereference took the supervisor down.
+func TestARunningSiteTurnedStaticStopsWithoutAPanic(t *testing.T) {
+	e, sites := newTestEngine(t)
+	dir := writeSite(t, sites, "f.test", "x", "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	first := waitFor(t, e, "f.test", func(s Snapshot) bool { return s.Alive })
+	os.WriteFile(filepath.Join(dir, "site.json"), []byte(`{"version":2,"static":{}}`), 0o644)
+	waitFor(t, e, "f.test", func(s Snapshot) bool { return !s.Alive && s.Mode == "static" })
+	if _, err := get(first.Port); err == nil {
+		t.Fatal("the old instance still answers")
+	}
+}

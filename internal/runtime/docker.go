@@ -70,7 +70,11 @@ func (d Docker) Start(ctx context.Context, spec *manifest.Spec, port int, logFil
 		args = append(args, "--memory", spec.Docker.Memory)
 	}
 	for _, v := range spec.Docker.Volumes {
-		args = append(args, "-v", v)
+		mount, err := volumeArg(spec, v)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, "-v", mount)
 	}
 	for _, kv := range buildEnv(env, port, spec.Domain, "/site", "/site") {
 		if strings.HasPrefix(kv, "PATH=") {
@@ -154,4 +158,27 @@ func (c *dockerInstance) tailLogs() {
 	cmd.Stdout = f
 	cmd.Stderr = f
 	_ = cmd.Run()
+}
+
+// volumeArg rewrites a manifest volume for docker run. Host paths are made
+// absolute against the site folder (the manifest check has already kept
+// them inside it), and named volumes get the site in front, because docker
+// volume names are global: two sites writing "data" would otherwise share
+// one volume and read each other's files.
+func volumeArg(spec *manifest.Spec, v string) (string, error) {
+	src, err := manifest.VolumeSource(v)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case src.Named && src.Name == "":
+		return src.Rest, nil
+	case src.Named:
+		return "mw-" + strings.ReplaceAll(spec.Domain, ".", "-") + "-" + src.Name + src.Rest, nil
+	}
+	host := src.Path
+	if !filepath.IsAbs(host) {
+		host = filepath.Join(spec.SiteDir, host)
+	}
+	return filepath.Clean(host) + src.Rest, nil
 }

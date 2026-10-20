@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/edge"
 	"github.com/dcimorra/middleware-public/internal/engine"
 	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/pages"
@@ -123,14 +124,15 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, target string)
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(u)
 			pr.Out.Host = pr.In.Host
+			// What a site reads as "the client" is what the house acted
+			// on, never what the client wrote: at the 80/443 door a forged
+			// CF-Connecting-IP used to reach the site as X-Forwarded-For.
+			edge.Scrub(pr.In, pr.Out.Header)
 			pr.SetXForwarded()
-			// Keep the edge's view of the client when a tunnel put it there.
-			if cf := pr.In.Header.Get("CF-Connecting-IP"); cf != "" {
-				pr.Out.Header.Set("X-Forwarded-For", cf)
+			if ip := edge.ClientIP(pr.In); ip != nil {
+				pr.Out.Header.Set("X-Forwarded-For", ip.String())
 			}
-			if p := pr.In.Header.Get("X-Forwarded-Proto"); p != "" {
-				pr.Out.Header.Set("X-Forwarded-Proto", p)
-			}
+			pr.Out.Header.Set("X-Forwarded-Proto", scheme(pr.In))
 		},
 		Transport:     h.transport,
 		FlushInterval: -1, // streams (SSE, chunked) flush as they come
@@ -169,6 +171,10 @@ func (h *Handler) static(w http.ResponseWriter, r *http.Request, sn engine.Snaps
 		return
 	}
 	full := filepath.Join(root, filepath.FromSlash(clean))
+	if !insideSite(sn.Dir, full) {
+		http.NotFound(w, r)
+		return
+	}
 	st, err := os.Stat(full)
 	if err == nil && st.IsDir() {
 		if !strings.HasSuffix(r.URL.Path, "/") {
@@ -213,13 +219,34 @@ func wwwAlternate(host string) string {
 }
 
 func scheme(r *http.Request) string {
-	if p := r.Header.Get("X-Forwarded-Proto"); p != "" {
-		return p
-	}
-	if r.TLS != nil {
+	if edge.HTTPS(r) {
 		return "https"
 	}
 	return "http"
+}
+
+// insideSite reports whether full, with its links resolved, is still in the
+// site folder. The site's agent can write a link in public/ to ~/.ssh as
+// easily as an index.html, and a lexical check would serve what it points
+// at. A path that does not exist yet is judged by its nearest existing
+// parent, so a 404 stays a 404.
+func insideSite(siteDir, full string) bool {
+	base, err := filepath.EvalSymlinks(siteDir)
+	if err != nil {
+		return false
+	}
+	p := full
+	for {
+		if real, err := filepath.EvalSymlinks(p); err == nil {
+			rel, err := filepath.Rel(base, real)
+			return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return false
+		}
+		p = parent
+	}
 }
 
 func dirExists(p string) bool  { st, err := os.Stat(p); return err == nil && st.IsDir() }

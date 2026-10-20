@@ -376,7 +376,7 @@ func TestLoopbackIsNeverBlocked(t *testing.T) {
 
 func TestDeniedAgentsAndCountriesGet403(t *testing.T) {
 	w, _, _ := newTestWAF(t, t.TempDir(), nil)
-	w.opts.Country = func(ip net.IP) string {
+	w.opts.Country = func(_ *http.Request, ip net.IP) string {
 		if ip.Equal(net.ParseIP("203.0.113.50")) {
 			return "xx"
 		}
@@ -397,33 +397,6 @@ func TestDeniedAgentsAndCountriesGet403(t *testing.T) {
 	}
 	if rec := get(h, "a.example", "203.0.113.51:1", nil); rec.Code != 200 {
 		t.Fatalf("plain client got %d", rec.Code)
-	}
-}
-
-func TestClientIPTrustsHeadersOnlyFromLoopback(t *testing.T) {
-	cases := []struct {
-		remote string
-		hdr    map[string]string
-		want   string
-	}{
-		{"203.0.113.1:1", nil, "203.0.113.1"},
-		{"203.0.113.1:1", map[string]string{"X-Forwarded-For": "1.2.3.4"}, "203.0.113.1"},
-		{"203.0.113.1:1", map[string]string{"CF-Connecting-IP": "1.2.3.4"}, "203.0.113.1"},
-		{"127.0.0.1:1", map[string]string{"CF-Connecting-IP": "1.2.3.4"}, "1.2.3.4"},
-		{"127.0.0.1:1", map[string]string{"X-Forwarded-For": "9.9.9.9, 1.2.3.4"}, "1.2.3.4"},
-		{"127.0.0.1:1", map[string]string{"X-Forwarded-For": "9.9.9.9, 127.0.0.1"}, "9.9.9.9"},
-		{"[::1]:1", map[string]string{"X-Forwarded-For": "2001:db8::5"}, "2001:db8::5"},
-		{"127.0.0.1:1", nil, "127.0.0.1"},
-	}
-	for _, tc := range cases {
-		r := httptest.NewRequest(http.MethodGet, "http://x/", nil)
-		r.RemoteAddr = tc.remote
-		for k, v := range tc.hdr {
-			r.Header.Set(k, v)
-		}
-		if got := ClientIP(r).String(); got != tc.want {
-			t.Errorf("%s %v: got %s, want %s", tc.remote, tc.hdr, got, tc.want)
-		}
 	}
 }
 

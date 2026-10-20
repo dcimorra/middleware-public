@@ -97,6 +97,15 @@ In `run.command`, `run.env` values, `upstream` and `workers.*.command`:
 The process also receives `PORT`, `HOST=127.0.0.1`, `MIDDLEWARE_DOMAIN`,
 `MIDDLEWARE_SITE_DIR` and `HOME` (a per-site home under `data/homes/`).
 
+## Paths stay inside the site
+
+`static.root`, `cwd`, `env_file`, `env_from_file`, `docker.build` and the host
+side of `docker.volumes` must resolve inside the site folder, links included;
+a manifest that names anything outside is refused when it is read. Docker
+volumes are either a path in the site (`"./uploads:/u"`) or a name
+(`"data:/app/data"`); a name is per site (`mw-<domain>-data`), so two sites
+writing `data` do not share one.
+
 ## `env_from_file`: deploying by pointer
 
 Each entry sets a variable to the **contents of a file**, trimmed. The file is

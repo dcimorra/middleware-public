@@ -259,12 +259,20 @@ func (e *Engine) reconcile(ctx context.Context, domain, dir string) {
 
 	if s.Mode != manifest.ModeRun {
 		e.mu.Lock()
-		inst := s.Instance
+		inst, spec := s.Instance, s.Spec
 		s.Instance, s.Spec = nil, nil
 		e.mu.Unlock()
 		if inst != nil {
 			e.emit("instance.stopping", domain, "", "manifest says "+string(s.Mode), nil)
-			_ = inst.Stop(ctx, m.Run.Drain.Or(8*time.Second))
+			// The drain comes from the spec the instance was born from: the
+			// new manifest may have no run section at all (a site turned
+			// static or upstream), and reading m.Run here was a nil
+			// dereference that took the supervisor down.
+			drain := 8 * time.Second
+			if spec != nil {
+				drain = spec.Drain.Or(drain)
+			}
+			_ = inst.Stop(ctx, drain)
 			e.opts.Ports.Release(inst.Port())
 			e.clearState(domain)
 		}

@@ -86,11 +86,56 @@ func TestRunForwardsWithTheOriginalHostAndForwardedHeaders(t *testing.T) {
 	h := New(lookupFor(map[string]engine.Snapshot{"a.test": {Domain: "a.test", Mode: manifest.ModeRun, Alive: true, Port: port, Manifest: m}}))
 	r := httptest.NewRequest("GET", "http://a.test/", nil)
 	r.Host = "a.test"
+	r.RemoteAddr = "127.0.0.1:5555" // the tunnel
 	r.Header.Set("CF-Connecting-IP", "203.0.113.9")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	if w.Code != 200 || gotHost != "a.test" || gotFor != "203.0.113.9" || w.Header().Get("X-Test") != "1" {
 		t.Fatalf("code=%d host=%q for=%q hdr=%q", w.Code, gotHost, gotFor, w.Header().Get("X-Test"))
+	}
+}
+
+func TestADirectClientCannotTellASiteWhoItIs(t *testing.T) {
+	var got http.Header
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+	}))
+	defer up.Close()
+	port, _ := strconv.Atoi(strings.TrimPrefix(up.URL, "http://127.0.0.1:"))
+	m, _ := manifest.Parse([]byte(`{"version":2,"run":{"command":["x"]}}`))
+	h := New(lookupFor(map[string]engine.Snapshot{"a.test": {Domain: "a.test", Mode: manifest.ModeRun, Alive: true, Port: port, Manifest: m}}))
+	r := httptest.NewRequest("GET", "http://a.test/", nil)
+	r.Host = "a.test"
+	r.RemoteAddr = "198.51.100.7:4000" // the 80/443 door
+	for _, k := range []string{"CF-Connecting-IP", "X-Forwarded-For", "X-Real-IP", "True-Client-IP"} {
+		r.Header.Set(k, "10.0.0.1")
+	}
+	r.Header.Set("X-Forwarded-Proto", "https")
+	h.ServeHTTP(httptest.NewRecorder(), r)
+	for _, k := range []string{"CF-Connecting-IP", "X-Forwarded-For", "X-Real-IP"} {
+		if got.Get(k) != "198.51.100.7" {
+			t.Errorf("%s reached the site as %q", k, got.Get(k))
+		}
+	}
+	if got.Get("True-Client-IP") != "" || got.Get("X-Forwarded-Proto") != "http" {
+		t.Errorf("forged headers reached the site: %v", got)
+	}
+}
+
+func TestStaticDoesNotFollowALinkOutOfTheSite(t *testing.T) {
+	outside := t.TempDir()
+	os.WriteFile(filepath.Join(outside, "id_rsa"), []byte("PRIVATE"), 0o600)
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "public"), 0o755)
+	os.Symlink(outside, filepath.Join(dir, "public", "keys"))
+	os.Symlink(filepath.Join(outside, "id_rsa"), filepath.Join(dir, "public", "key.txt"))
+	m, _ := manifest.Parse([]byte(`{"version":2}`))
+	h := New(lookupFor(map[string]engine.Snapshot{"a.test": {Domain: "a.test", Dir: dir, Mode: manifest.ModeStatic, Manifest: m}}))
+	for _, p := range []string{"/keys/id_rsa", "/key.txt"} {
+		if resp := do(t, h, "a.test", p); resp.StatusCode == 200 {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("%s served through a link: %q", p, b)
+		}
 	}
 }
 

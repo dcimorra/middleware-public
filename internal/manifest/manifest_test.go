@@ -117,3 +117,41 @@ func TestValidDomain(t *testing.T) {
 		}
 	}
 }
+
+func TestAPathOutsideTheSiteFolderIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	site := filepath.Join(dir, "a.example")
+	other := filepath.Join(dir, "b.example")
+	os.MkdirAll(site, 0o755)
+	os.MkdirAll(other, 0o755)
+	os.Symlink(other, filepath.Join(site, "public"))
+	bad := []string{
+		`{"version":2,"static":{"root":"../b.example"}}`,
+		`{"version":2,"static":{"root":"public"}}`,
+		`{"version":2,"static":{"root":"/etc"}}`,
+		`{"version":2,"run":{"command":["x"],"cwd":"../b.example"}}`,
+		`{"version":2,"run":{"command":["x"],"env_file":"../b.example/.env"}}`,
+		`{"version":2,"run":{"command":["x"],"env_from_file":{"K":"$SITE_DIR/../b.example/.env"}}}`,
+		`{"version":2,"run":{"command":["x"],"runtime":"docker","docker":{"image":"i","volumes":["/:/host"]}}}`,
+		`{"version":2,"run":{"command":["x"],"runtime":"docker","docker":{"image":"i","volumes":["../b.example:/x"]}}}`,
+		`{"version":2,"run":{"command":["x"],"runtime":"docker","docker":{"image":"i","build":"../b.example/Dockerfile"}}}`,
+		`{"version":2,"workers":{"w":{"command":["x"],"port":4000,"env_file":"../b.example/.env"}}}`,
+	}
+	for _, m := range bad {
+		os.WriteFile(filepath.Join(site, FileName), []byte(m), 0o644)
+		if _, err := Load(site); err == nil {
+			t.Errorf("accepted %s", m)
+		}
+	}
+	good := []string{
+		`{"version":2,"static":{"root":"dist"}}`,
+		`{"version":2,"run":{"command":["x"],"cwd":"app","env_file":".env","env_from_file":{"K":"$SITE_DIR/.current"}}}`,
+		`{"version":2,"run":{"command":["x"],"runtime":"docker","docker":{"image":"i","volumes":["data:/app/data","./uploads:/u:ro","/cache"]}}}`,
+	}
+	for _, m := range good {
+		os.WriteFile(filepath.Join(site, FileName), []byte(m), 0o644)
+		if _, err := Load(site); err != nil {
+			t.Errorf("refused %s: %v", m, err)
+		}
+	}
+}

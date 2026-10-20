@@ -250,6 +250,7 @@ func TestTheCookieIsSecureOnlyBehindHTTPS(t *testing.T) {
 	}
 	w = httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "http://panel.test/", nil)
+	r.RemoteAddr = "127.0.0.1:5555" // the tunnel
 	r.Header.Set("X-Forwarded-Proto", "https")
 	SetCookie(w, r, "x")
 	if !w.Result().Cookies()[0].Secure {
@@ -263,12 +264,20 @@ func TestClientIPPrefersTheEdgeHeader(t *testing.T) {
 	if ClientIP(r) != "127.0.0.1" {
 		t.Fatal(ClientIP(r))
 	}
-	r.Header.Set("X-Forwarded-For", "203.0.113.9, 10.0.0.1")
+	// The last hop is the one the trusted proxy appended; the ones before
+	// it are whatever the client wrote.
+	r.Header.Set("X-Forwarded-For", "10.0.0.1, 203.0.113.9")
 	if ClientIP(r) != "203.0.113.9" {
 		t.Fatal(ClientIP(r))
 	}
 	r.Header.Set("CF-Connecting-IP", "198.51.100.2")
 	if ClientIP(r) != "198.51.100.2" {
 		t.Fatal(ClientIP(r))
+	}
+	// A client at the 80/443 door rotating the header would get a fresh
+	// brake on every guess.
+	r.RemoteAddr = "203.0.113.7:5555"
+	if ClientIP(r) != "203.0.113.7" {
+		t.Fatalf("a direct client named its own address: %s", ClientIP(r))
 	}
 }
