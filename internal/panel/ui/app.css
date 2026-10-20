@@ -532,3 +532,13 @@ details.section summary { padding: 10px 0; cursor: pointer; font-weight: 600; }
 details.section[open] summary { border-bottom: 1px solid var(--border); margin-bottom: 10px; }
 .section-body { padding-bottom: 10px; }
 .file-list .ico.up { transform: rotate(-90deg); }
+
+/* ---------- module sign-in ---------- */
+.signin { margin: 8px 0 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.signin .label { font-size: 12.5px; font-weight: 500; color: var(--text-2); }
+.signin .steps { margin: 8px 0; padding-left: 20px; }
+.signin .steps li { margin: 4px 0; }
+.signin .row { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
+.signin .row input { flex: 1; }
+.signin pre.log { min-height: 0; max-height: 160px; margin-top: 8px; }
+.binary-line { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 10px; }

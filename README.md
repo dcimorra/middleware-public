@@ -50,7 +50,8 @@ registration, no port to pick.
   pointer. Rollback is writing the previous build's name.
 - **Talks to agents.** One conversation per site with Claude or Gemini,
   driven through their CLIs, jailed to the site's folder, with a cost ledger
-  and a monthly cap.
+  and a monthly cap. Sign in with your Claude subscription or your Google
+  account from the panel; the CLIs install themselves and stay current.
 - **Reaches the panel privately.** A WireGuard VPN module, peers created
   from the panel, and a switch that makes the panel reachable only through
   it.
@@ -68,7 +69,7 @@ operations (firewall rules, WireGuard config, port reservation), each with
 typed, validated input. Credentials are encrypted at rest. The core imports
 nothing outside Go's standard library, and CI fails if that changes;
 anything that needs an external program (cloudflared, wireguard-tools, an
-agent CLI) is a module that installs it when enabled.
+agent CLI) is a module that installs it when enabled and keeps it current.
 
 Read [`docs/architecture.md`](docs/architecture.md) for the design and the
 reasoning behind it.

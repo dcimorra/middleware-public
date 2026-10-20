@@ -144,7 +144,7 @@ func moduleRoutes(mgr *modules.Manager) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key, rest, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
 		mod, ok := mgr.Get(key)
-		if !ok || !mgr.Enabled(key) {
+		if !ok || (!mgr.Enabled(key) && !setupRoute(mod, r.Method, rest)) {
 			WriteJSON(w, http.StatusNotFound, map[string]string{"error": "no such module route"})
 			return
 		}
@@ -175,6 +175,27 @@ func moduleRoutes(mgr *modules.Manager) http.Handler {
 		r2.URL.RawPath = ""
 		v.(*http.ServeMux).ServeHTTP(w, r2)
 	})
+}
+
+// setupRoute says whether a disabled module answers this request: the
+// module lists the patterns ("POST /login") that make sense before it is
+// enabled.
+func setupRoute(mod modules.Module, method, rest string) bool {
+	s, ok := mod.(modules.Setup)
+	if !ok {
+		return false
+	}
+	path := "/" + strings.TrimSuffix(rest, "/")
+	for _, pat := range s.SetupRoutes() {
+		m, p, found := strings.Cut(pat, " ")
+		if !found {
+			m, p = "", pat
+		}
+		if (m == "" || m == method) && (p == path || (p == "/{$}" && path == "/")) {
+			return true
+		}
+	}
+	return false
 }
 
 // patternRoutes reports whether the keys are mux patterns.

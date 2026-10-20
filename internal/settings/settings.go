@@ -27,7 +27,23 @@ type Settings struct {
 	Pages map[string][2]string `json:"pages,omitempty"`
 	// Agents caps how many conversations run at once.
 	Agents Agents `json:"agents"`
+	// Deps is how the external CLIs are kept.
+	Deps Deps `json:"deps"`
 }
+
+// Deps is the section about the programs the modules run (the agent
+// CLIs). They come from npm and have release channels of their own, so
+// the installation checks for a newer one daily and, by default,
+// installs it: a CLI a year behind is a chat that stops working one day
+// with nobody having changed anything here.
+type Deps struct {
+	// AutoUpdate installs a newer release when the daily check finds
+	// one. Off, the check only reports it in the panel.
+	AutoUpdate *bool `json:"auto_update,omitempty"`
+}
+
+// AutoUpdateOn reports the setting with its default (on).
+func (d Deps) AutoUpdateOn() bool { return d.AutoUpdate == nil || *d.AutoUpdate }
 
 // Agents is the concurrency section. Every agent turn is a CLI process
 // with a model behind it, and a machine that serves forty sites cannot

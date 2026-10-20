@@ -212,6 +212,61 @@ func (m *Manager) Enable(ctx context.Context, key string, cfg Config, progress f
 	return lines, nil
 }
 
+// Patch merges values into the stored config without a verify: it is how
+// a module writes what it obtained itself (a session from a sign-in), as
+// opposed to what the operator typed. An enabled module is re-enabled
+// with the result so the running provider carries the new value.
+func (m *Manager) Patch(ctx context.Context, key string, values Config) error {
+	m.mu.Lock()
+	mod, ok := m.mods[key]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("%w: %s", ErrUnknown, key)
+	}
+	needs := mod.Needs()
+	known := map[string]bool{}
+	for _, n := range needs {
+		known[n.Key] = true
+	}
+	for k := range values {
+		if !known[k] {
+			m.mu.Unlock()
+			return fmt.Errorf("%s: %q is not something this module asks for", key, k)
+		}
+	}
+	if err := m.st.reload(); err != nil {
+		m.mu.Unlock()
+		return err
+	}
+	merged, err := m.st.decrypt(needs, m.st.data.Config[key])
+	if err != nil {
+		m.mu.Unlock()
+		return err
+	}
+	for k, v := range values {
+		merged[k] = v
+	}
+	sealed, err := m.st.encrypt(needs, merged)
+	if err != nil {
+		m.mu.Unlock()
+		return err
+	}
+	m.st.data.Config[key] = sealed
+	if err := m.st.save(); err != nil {
+		m.mu.Unlock()
+		return err
+	}
+	enabled := m.st.data.Enabled[key]
+	m.mu.Unlock()
+	if enabled {
+		if err := mod.Enable(ctx, merged); err != nil {
+			return err
+		}
+	}
+	m.bus.Emit(events.Event{Type: "module.updated", Subject: key, Actor: "operator"})
+	return nil
+}
+
 // Disable turns the module off and keeps its credentials, so turning it
 // back on is one click.
 func (m *Manager) Disable(ctx context.Context, key string) error {

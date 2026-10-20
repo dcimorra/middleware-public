@@ -10,10 +10,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/dcimorra/middleware-public/internal/agent"
+	"github.com/dcimorra/middleware-public/internal/fsx"
 )
 
 // Config is the command template.
@@ -29,6 +32,10 @@ type Config struct {
 	// APIKey is passed as GEMINI_API_KEY when set; empty relies on the
 	// CLI's own login under the run's HOME.
 	APIKey string
+	// OAuthCreds is the oauth_creds.json a Google sign-in produced. The
+	// CLI has no variable for it, so it is written under the run's HOME
+	// (with settings.json saying to use it) before every turn.
+	OAuthCreds string
 	// ResumeFlag names the flag that resumes a session; empty disables
 	// resuming for CLIs that have no such flag.
 	ResumeFlag string
@@ -113,7 +120,14 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 	}
 	if p.cfg.APIKey != "" {
 		env["GEMINI_API_KEY"] = p.cfg.APIKey
+	} else if p.cfg.OAuthCreds != "" && req.Jail.Home != "" {
+		if err := writeCreds(req.Jail.Home, p.cfg.OAuthCreds); err != nil {
+			return nil, err
+		}
 	}
+	// Never a browser: a turn runs on a server, and a CLI that tried to
+	// open one would sit waiting for it.
+	env["NO_BROWSER"] = "true"
 	return agent.StartCLI(ctx, &parser{}, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req)...)
 }
 
@@ -284,4 +298,45 @@ func errorText(raw json.RawMessage) string {
 		return o.Message
 	}
 	return string(raw)
+}
+
+// writeCreds puts the signed-in credentials where the CLI reads them
+// under home, and makes settings.json pick that login (both spellings
+// the CLI has used), touching nothing else in that file. Written only
+// when different, so a turn every few seconds does not rewrite it.
+func writeCreds(home, creds string) error {
+	dir := filepath.Join(home, ".gemini")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	credsPath := filepath.Join(dir, "oauth_creds.json")
+	if cur, err := os.ReadFile(credsPath); err != nil || string(cur) != creds {
+		if err := fsx.WriteAtomic(credsPath, []byte(creds), 0o600); err != nil {
+			return err
+		}
+	}
+	settingsPath := filepath.Join(dir, "settings.json")
+	var st map[string]any
+	if raw, err := os.ReadFile(settingsPath); err == nil {
+		_ = json.Unmarshal(raw, &st)
+	}
+	if st == nil {
+		st = map[string]any{}
+	}
+	sec, _ := st["security"].(map[string]any)
+	if sec == nil {
+		sec = map[string]any{}
+	}
+	auth, _ := sec["auth"].(map[string]any)
+	if auth == nil {
+		auth = map[string]any{}
+	}
+	if auth["selectedType"] == "oauth-personal" && st["selectedAuthType"] == "oauth-personal" {
+		return nil
+	}
+	auth["selectedType"] = "oauth-personal"
+	sec["auth"] = auth
+	st["security"] = sec
+	st["selectedAuthType"] = "oauth-personal"
+	return fsx.WriteJSON(settingsPath, st, 0o600)
 }

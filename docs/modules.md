@@ -13,7 +13,12 @@ credentials" deletes them.
 
 Binaries a module installs go under `modules/` inside the root, never into
 the system, so uninstalling middleware leaves no trace outside the root and
-the system package manager never fights with them.
+the system package manager never fights with them. The agent CLIs are kept
+current on their own: once a day the installation asks npm for the latest
+release and, unless "Install newer releases automatically" is off in
+Settings, installs it (`middleware deps status|check|install`, `GET
+/api/v1/deps`). The container image ships them already; the daily check
+replaces the shipped copy in the volume when a newer one exists.
 
 ```sh
 middleware modules list
@@ -89,32 +94,50 @@ pointer ([deploy.md](deploy.md)).
 
 ## agent-claude
 
-Conversations in the panel run on Anthropic's Claude through the official
-CLI, driven as a subprocess. No SDK in the core.
+Conversations in the panel run on Anthropic's Claude through Claude Code,
+the official CLI, driven as a subprocess. No SDK in the core.
 
-Without the module the conversations still run: the `claude` CLI is looked
-up in PATH and uses its own login under each site's home. The module is
-how an installation gives every conversation the same credentials.
+**Sign in with your subscription.** The card has a "Sign in with your
+subscription" button. It runs `claude setup-token` on a terminal of the
+server's, with a temporary HOME so a failed attempt touches nothing, shows
+you the authorization link to open on any device, and takes the code the
+browser gives back. The long-lived token that comes out is stored encrypted
+with the module's other credentials and handed to every turn as
+`CLAUDE_CODE_OAUTH_TOKEN`; the module is enabled at the same time. The
+panel shows "subscription since <date>" from then on. Signing in needs no
+SSH and no browser on the server. An API key is the alternative: typed in
+the card, passed as `ANTHROPIC_API_KEY`, and it wins over a stored session
+(that is the CLI's rule).
 
-- **Needs**: all optional. `api_key` (passed as `ANTHROPIC_API_KEY`,
-  encrypted at rest), `bin` (the executable when it is not in PATH),
-  `model` (the alias offered first in the panel) and `config_dir` (passed
-  as `CLAUDE_CONFIG_DIR`, so one login serves every site).
-- **Verify**: the binary is found and `claude --version` answers;
-  `config_dir` exists. The key is handed to the CLI and not probed
-  (`skip`): a probe would spend, and the first turn says if it is wrong.
-- **Installs**: nothing. The CLI is an npm package with its own update
-  channel; a copy under `modules/bin` would be one more thing to keep
-  current. What the agent may touch is the jail in the core
-  ([security.md](security.md)), not a setting of the CLI.
+- **Needs**: all optional. `model` (the alias offered first in the panel),
+  `api_key`, `bin` (an executable to use instead of the managed one).
+  The session (`oauth_token`, `oauth_since`) is written by the sign-in,
+  not typed.
+- **Verify**: the binary answers `claude --version`, or is about to be
+  installed. Which credential a turn would use is said (`skip`), never
+  probed: a probe would spend, and the first turn says if it is wrong.
+- **Installs**: Claude Code itself, under `modules/node`, when no `bin` is
+  given and none is found: `npm install -g` with a Node of our own if the
+  machine has none that is new enough (fetched from nodejs.org and
+  verified against the published checksum). Kept current daily from then
+  on. Signing in before enabling installs it too.
 - **Enable** replaces the provider the conversations run with; **disable**
   puts the CLI's own login back. Enabled modules are re-applied when the
   service starts.
 
+Without the module the conversations still run: the `claude` CLI is looked
+up in PATH and uses its own login under each site's home.
+
 ## agent-gemini
 
-Same shape, Google's Gemini CLI: `api_key` (as `GEMINI_API_KEY`), `bin`
-and `model`.
+Same shape, Google's Gemini CLI. "Sign in with your Google account" runs
+the CLI with `NO_BROWSER=true` on a terminal of the server's: it prints
+the Google authorization link, takes the code, and writes
+`~/.gemini/oauth_creds.json` in the temporary HOME. That file (it holds
+the refresh token) is what gets stored encrypted, and before every turn it
+is written under the run's HOME with a `settings.json` that selects that
+login, which is the only way the CLI reads a session. `api_key` is passed
+as `GEMINI_API_KEY` and wins over it.
 
 ## vpn
 
@@ -126,7 +149,8 @@ anywhere else.
 - **Needs**: `endpoint` (host:port clients connect to), and optionally
   `listen_port` (51820) and `subnet` (10.77.0.0/24). Plus the helper (it
   writes `/etc/wireguard/mw0.conf` and brings the interface up) and
-  `wireguard-tools`, which the installer puts there.
+  `wireguard-tools`, which `middleware install` puts there with git and
+  curl, and the container image ships.
 - **Verify**: the values are well formed, `wg` and `wg-quick` are in PATH,
   the helper answers. Whether the endpoint reaches this machine is a
   `skip`: only a client connecting can tell.
@@ -137,7 +161,10 @@ anywhere else.
   encrypted store as every other credential (`data/modules-key`), so
   `middleware vpn` and the panel read each other's state.
 
-Not available inside Docker (no helper).
+Inside Docker it works when the helper runs in the container: uncomment
+`MIDDLEWARE_HELPER: "1"`, `cap_add: [NET_ADMIN]` and the `51820/udp` line
+in `docker-compose.yml`. The entrypoint then starts the helper as root
+and drops to the `middleware` user for the supervisor.
 
 ## docker
 

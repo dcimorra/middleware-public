@@ -23,6 +23,10 @@ type Need struct {
 	Help string `json:"help,omitempty"`
 	// Optional needs may be empty: the module discovers or generates them.
 	Optional bool `json:"optional,omitempty"`
+	// Hidden needs are not shown as a form field: the module fills them
+	// itself (a session obtained by signing in) and the panel shows them
+	// in its own way.
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 // Config is what the operator typed, by need key, in clear.
@@ -88,6 +92,13 @@ type Module interface {
 	// is the path below that prefix ("hook" → /api/v1/modules/github/hook).
 	// May be nil.
 	Routes() map[string]http.Handler
+}
+
+// Setup is implemented by modules whose routes must answer while the
+// module is disabled: a sign-in that enables the module cannot wait for
+// the module to be enabled. Routes not listed stay 404 until enabled.
+type Setup interface {
+	SetupRoutes() []string
 }
 
 // Binaries is implemented by modules that install executables under

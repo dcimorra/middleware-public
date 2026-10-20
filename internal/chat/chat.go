@@ -67,6 +67,9 @@ type Options struct {
 	// Limits is the concurrency section of the settings; a zero value
 	// takes the defaults. SetLimits changes it live.
 	Limits settings.Agents
+	// Path, when set, is the PATH a turn runs with instead of the
+	// supervisor's: the wiring puts the managed CLIs and their Node first.
+	Path func() string
 }
 
 // Manager runs the conversations.
@@ -438,7 +441,7 @@ func (m *Manager) Send(domain, text, model string) (string, error) {
 		SessionID: c.SessionID,
 		System:    system,
 		Jail:      s.Jail,
-		Env:       map[string]string{"PATH": agentPath()},
+		Env:       map[string]string{"PATH": m.agentPath()},
 	}
 	run, err := provider.Start(ctx, req)
 	if err != nil {
@@ -558,12 +561,24 @@ func (m *Manager) emit(typ, domain, level, msg string, data map[string]any) {
 	m.opts.Bus.Emit(events.Event{Type: typ, Subject: domain, Actor: "agent", Level: level, Message: msg, Data: data})
 }
 
+// SetPath replaces the PATH source a turn runs with.
+func (m *Manager) SetPath(f func() string) {
+	m.mu.Lock()
+	m.opts.Path = f
+	m.mu.Unlock()
+}
+
 // agentPath is the PATH the agent runs with: the supervisor's, plus the
 // folder this binary lives in when it is not there yet, so `middleware
 // site add` works from a conversation whether the binary was installed
 // under /usr/local/bin or is being run from a build folder.
-func agentPath() string {
+func (m *Manager) agentPath() string {
 	path := os.Getenv("PATH")
+	if m.opts.Path != nil {
+		if p := m.opts.Path(); p != "" {
+			path = p
+		}
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return path

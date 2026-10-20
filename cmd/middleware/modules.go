@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/dcimorra/middleware-public/internal/app"
+	"github.com/dcimorra/middleware-public/internal/deps"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/modules"
 	"github.com/dcimorra/middleware-public/internal/modules/cloudflare"
@@ -38,6 +39,7 @@ type moduleSet struct {
 	Manager    *modules.Manager
 	Cloudflare *cloudflare.Module
 	GitHub     *github.Module
+	Deps       *deps.Manager
 }
 
 var (
@@ -62,6 +64,11 @@ func buildModules(root string, bus *events.Bus, restart func(context.Context, st
 	if err != nil {
 		return nil, err
 	}
+	dm := deps.New(root, bus)
+	dm.AutoUpdate = func() bool {
+		s, err := settings.Load(root)
+		return err == nil && s.Deps.AutoUpdateOn()
+	}
 	cf := cloudflare.New(mgr)
 	cf.Service = service
 	gh := github.New(mgr, bus, restart)
@@ -70,10 +77,10 @@ func buildModules(root string, bus *events.Bus, restart func(context.Context, st
 	// The VPN and the agent modules are built in wire.go: they need the
 	// helper, the secrets box and the provider registry, which this file
 	// does not know about.
-	if err := registerExtraModules(mgr, root, bus); err != nil {
+	if err := registerExtraModules(mgr, root, bus, dm); err != nil {
 		return nil, err
 	}
-	return &moduleSet{Manager: mgr, Cloudflare: cf, GitHub: gh}, nil
+	return &moduleSet{Manager: mgr, Cloudflare: cf, GitHub: gh, Deps: dm}, nil
 }
 
 // modulesHook builds the registry at start so a bad secret key fails the

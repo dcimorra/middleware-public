@@ -12,6 +12,7 @@ import (
 
 	"github.com/dcimorra/middleware-public/internal/api"
 	"github.com/dcimorra/middleware-public/internal/app"
+	"github.com/dcimorra/middleware-public/internal/deps"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/firewall"
 	"github.com/dcimorra/middleware-public/internal/helper"
@@ -61,7 +62,7 @@ var (
 // the VPN, which needs the helper and the secrets box, and the two agent
 // modules, which replace providers in the registry the chat uses. It runs
 // in the service and in the CLI alike, so `middleware modules` lists them.
-func registerExtraModules(mgr *modules.Manager, root string, bus *events.Bus) error {
+func registerExtraModules(mgr *modules.Manager, root string, bus *events.Bus, dm *deps.Manager) error {
 	box, err := modules.OpenBoxSecrets(root)
 	if err != nil {
 		return err
@@ -74,8 +75,11 @@ func registerExtraModules(mgr *modules.Manager, root string, bus *events.Bus) er
 	reg := providers()
 	agentClaude = agents.Claude(reg)
 	agentGemini = agents.Gemini(reg)
-	mgr.Register(agentClaude)
-	mgr.Register(agentGemini)
+	for _, m := range []*agents.Module{agentClaude, agentGemini} {
+		m.Deps = dm
+		m.Store = mgr
+		mgr.Register(m)
+	}
 	return nil
 }
 
@@ -106,6 +110,12 @@ func buildWire(a *app.App) app.Hook {
 			a.Bus.Emit(events.Event{Type: "module.restore_failed", Actor: "engine", Level: "error", Message: err.Error()})
 		}
 		srv.SetDeployer(githubDeployer(a, set))
+		srv.RegisterDeps(api.DepsOptions{Manager: set.Deps})
+		// The CLIs a turn runs come first in its PATH, with their Node.
+		if chatManager != nil {
+			chatManager.SetPath(set.Deps.Path)
+		}
+		go set.Deps.Run(context.Background())
 	}
 	if inboundHook != nil {
 		srv.RegisterInbound(api.InboundOptions{Hook: inboundHook, DNS: cloudflareDNS{set: set}})

@@ -7,7 +7,7 @@ import { h, clear, copy } from "../lib/dom.js";
 import { t, LANGUAGES, currentLang } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
 import { page, load, table, cell, empty, kv } from "../components/page.js";
-import { open, confirm, field } from "../components/dialog.js";
+import { open, confirm, field, toggle } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 import { getTheme, setTheme, setLang } from "../lib/theme.js";
 import { fmtTime, fmtAgo } from "../lib/dom.js";
@@ -20,8 +20,27 @@ export function settingsScreen() {
   const pagesCard = h("div", { class: "card" });
   const agentsCard = h("div", { class: "card" });
   const tokensCard = h("div", { class: "card pad0" });
+  const depsCard = h("div", { class: "card" });
   const localCard = h("div", { class: "card" });
-  p.body.append(general, pagesCard, agentsCard, tokensCard, localCard);
+  p.body.append(general, pagesCard, agentsCard, depsCard, tokensCard, localCard);
+
+  // The deps card saves on its own, like the agents one.
+  async function renderDeps() {
+    const s = await api.get("/settings");
+    const on = !(s.deps && s.deps.auto_update === false);
+    const sw = toggle(t("settings.depsAutoUpdate"), { checked: on });
+    sw.input.addEventListener("change", async () => {
+      sw.input.disabled = true;
+      try {
+        const cur = await api.get("/settings");
+        await api.put("/settings", { ...cur, deps: { ...(cur.deps || {}), auto_update: sw.input.checked } });
+        toast(t("settings.depsSaved"), "ok");
+      } catch (e) { sw.input.checked = !sw.input.checked; toastError(e); }
+      finally { sw.input.disabled = false; }
+    });
+    clear(depsCard).append(h("h2", null, t("settings.deps")), h("p", { class: "small muted" }, t("settings.depsHint")), sw.el);
+    return null;
+  }
 
   // The agents card saves on its own: the general form keeps whatever the
   // agents section holds and this one keeps whatever the general one holds,
@@ -185,6 +204,7 @@ export function settingsScreen() {
 
   load(general, renderServer);
   load(agentsCard, renderAgents);
+  load(depsCard, renderDeps);
   load(tokensCard, renderTokens);
   return { el: p.el, destroy() {} };
 }

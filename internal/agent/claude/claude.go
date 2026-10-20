@@ -29,6 +29,10 @@ type Config struct {
 	// ConfigDir, when set, is passed as CLAUDE_CONFIG_DIR so every site
 	// shares one login instead of needing one per home.
 	ConfigDir string
+	// OAuthToken is the long-lived token `claude setup-token` gives for a
+	// subscription, passed as CLAUDE_CODE_OAUTH_TOKEN. The API key wins
+	// when both are set, which is the CLI's rule, not ours.
+	OAuthToken string
 	// Models offered to the panel; the first is the default. Aliases are
 	// used by default because the CLI resolves them to the current
 	// release, which a full model name would pin.
@@ -142,6 +146,9 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 	}
 	if p.cfg.ConfigDir != "" {
 		env["CLAUDE_CONFIG_DIR"] = p.cfg.ConfigDir
+	}
+	if p.cfg.OAuthToken != "" && p.cfg.APIKey == "" {
+		env["CLAUDE_CODE_OAUTH_TOKEN"] = p.cfg.OAuthToken
 	}
 	return agent.StartCLI(ctx, &parser{}, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req, settingsFile)...)
 }

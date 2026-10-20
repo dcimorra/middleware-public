@@ -125,7 +125,7 @@ the field. The new limits apply to the next message, not the next restart.
 
 | method | path | body / result |
 | --- | --- | --- |
-| GET | `/modules` | → `[{key, name, description, enabled, installed, configured, needs: [{key, label, secret, optional, help}]}]` |
+| GET | `/modules` | → `[{key, name, description, enabled, installed, configured, needs: [{key, label, secret, optional, hidden, help}]}]` (a hidden need is filled by the module, not typed) |
 | POST | `/modules/{key}/verify` | `{config}` → `{ok, lines: [{status: ok|skip|fail, text}]}`; nothing is written |
 | POST | `/modules/{key}/enable` | `{config}` → verifies, installs, enables, saves → `{ok, lines, progress: [text]}`; a failed probe answers 200 with `ok: false` and the lines, a failed install 502 |
 | POST | `/modules/{key}/disable` | → `{ok}` (keeps credentials) |
@@ -140,9 +140,29 @@ authenticates it with the HMAC signature of the webhook secret.
 
 The modules an installation has: `cloudflare`, `github`, `vpn`,
 `agent-claude` and `agent-gemini` ([modules.md](modules.md)). The agent
-modules take `api_key`, `bin`, `model` (and `config_dir` for Claude), all
-optional; enabling one replaces the provider the conversations run with,
-disabling it puts the CLI's own login back.
+modules take `model`, `api_key` and `bin`, all optional; enabling one
+replaces the provider the conversations run with, disabling it puts the
+CLI's own login back. Their sign-in with a subscription:
+
+| method | path | body / result |
+| --- | --- | --- |
+| GET | `/modules/{agent}/session` | → `{provider, session: {kind: subscription|api_key|none, since?}, binary?: {name, version, latest, outdated, managed, path}}` |
+| POST | `/modules/{agent}/login` | starts the vendor's sign-in on the server → `{state, url?, error?, tail?}`; `state` is `starting`, `authorize` (open `url`, paste the code), `checking`, `done` or `failed` |
+| GET | `/modules/{agent}/login` | the poll; a `done` attempt stores the session, enables the module and answers `{state: "done", session}` |
+| POST | `/modules/{agent}/login/code` | `{code}` → the state; 400 when it is not the moment |
+| DELETE | `/modules/{agent}/login` | cancels the attempt |
+| POST | `/modules/{agent}/binary/sync` | installs or updates the CLI now → `{ok, progress}` |
+
+## Deps
+
+The external programs the modules run (the agent CLIs), installed under
+`modules/node` and checked daily against npm.
+
+| method | path | result |
+| --- | --- | --- |
+| GET | `/deps` | → `[{name, npm, path, version, latest, outdated, installed, managed, checked_at, error?}]` |
+| POST | `/deps/check` | asks the registry now (and installs when auto-update is on) → `{deps, progress}` |
+| POST | `/deps/{name}/install` | installs or updates one → `{ok, progress, deps}` |
 
 ## Inbound
 

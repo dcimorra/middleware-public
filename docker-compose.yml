@@ -1,8 +1,11 @@
-# middleware in a container. Good for trying it out and for hosts without
-# systemd. What you do NOT get here: the privileged helper, so the layer-3
-# firewall, the WireGuard vpn module and the port reservation sysctl are
-# unavailable (layer-7 WAF, ACME, deploys and the docker runtime still
-# work). On a real server prefer `middleware install`; see docs/install.md.
+# middleware in a container. Good for trying it out, for a development
+# machine and for hosts without systemd. The image ships Node, Claude
+# Code, the Gemini CLI and wireguard-tools, and keeps the CLIs current on
+# its own. With the three "helper" lines below uncommented the privileged
+# helper runs inside the container too, so the layer-3 firewall and the
+# WireGuard vpn work; without them only the port reservation sysctl is
+# missing. On a real server prefer `middleware install`; see
+# docs/install.md.
 #
 #   cp .env.example .env   # or: echo "MIDDLEWARE_SECRET_KEY=$(openssl rand -hex 32)" > .env
 #   docker compose up -d
@@ -23,12 +26,17 @@ services:
       # into data/modules-key inside the volume, which is fine as long as the
       # volume is backed up with it; set it here to keep the two apart.
       MIDDLEWARE_SECRET_KEY: ${MIDDLEWARE_SECRET_KEY:?set MIDDLEWARE_SECRET_KEY in .env}
-    # The image runs as the unprivileged user `middleware` (a system uid).
-    # A named volume is created owned by it; a host directory is not. To
-    # bind-mount one instead of the volume below, run as the owner of that
-    # directory (your uid:gid, `id -u`:`id -g`) or chown it to the
-    # container's user: otherwise every write, `middleware setup` included,
-    # fails with "permission denied".
+      # The privileged helper inside the container (firewall, vpn). Needs
+      # the capability below; both lines together or neither.
+      # MIDDLEWARE_HELPER: "1"
+    # cap_add:
+    #   - NET_ADMIN
+    # The container starts as root and hands the supervisor to the
+    # unprivileged user `middleware` (a system uid), fixing the volume's
+    # owner on the way. To bind-mount a host directory instead of the
+    # volume below, either leave that as is and let it chown the
+    # directory to that uid, or run as the directory's owner (`id -u`:
+    # `id -g`), in which case there is no helper.
     # user: "1000:1000"
     volumes:
       # Everything: sites, tasks, data, modules. One volume so a backup is
@@ -57,6 +65,8 @@ services:
       # - "127.0.0.1:80:8080"
       # - "127.0.0.1:5353:5353/udp"
       # - "127.0.0.1:5353:5353/tcp"
+      # The vpn, when the helper lines above are on.
+      # - "51820:51820/udp"
     # tini in the image reaps site processes; init: true would add a second.
     stop_grace_period: 30s
 

@@ -42,11 +42,13 @@ or `make build && ./middleware install`.
 
 ## Docker
 
-For trying it out, or for hosts without systemd. Inside a container there is
-no privileged helper: the layer-3 firewall, the WireGuard VPN module and the
-port reservation are unavailable; the supervisor, the proxy, the WAF, ACME on
-the ports door, deploys and the docker runtime (with the host socket mounted)
-work.
+For trying it out, for a development machine, or for hosts without
+systemd. The image ships Node, Claude Code, the Gemini CLI and
+wireguard-tools, and keeps the CLIs current on its own. The privileged
+helper runs inside the container when `docker-compose.yml` says so
+(`MIDDLEWARE_HELPER: "1"` with `cap_add: [NET_ADMIN]`), which brings the
+layer-3 firewall and the WireGuard vpn; the port reservation sysctl is the
+one thing a container never gets.
 
 ```sh
 echo "MIDDLEWARE_SECRET_KEY=$(openssl rand -hex 32)" > .env

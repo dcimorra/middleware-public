@@ -181,7 +181,7 @@ func (in *Installer) checkDocker() Check {
 
 func (in *Installer) checkWireGuard() Check {
 	if _, err := in.Exec.LookPath("wg"); err != nil {
-		return Check{"wireguard", true, "wg not installed (the vpn module installs it when enabled)"}
+		return Check{"wireguard", true, "wg not installed (`middleware install` puts wireguard-tools there)"}
 	}
 	return Check{"wireguard", true, "wg present"}
 }

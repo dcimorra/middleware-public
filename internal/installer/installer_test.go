@@ -34,6 +34,7 @@ func testInstaller(t *testing.T) (*Installer, *Recorder, *bytes.Buffer) {
 	rec := NewRecorder()
 	rec.Path["apt-get"] = true
 	rec.Path["git"] = true
+	rec.Path["wg"] = true
 	// A fake binary stands in for the running executable.
 	src := filepath.Join(t.TempDir(), "middleware-src")
 	if err := os.WriteFile(src, []byte("#!/bin/sh\necho middleware 1.2.3\n"), 0o755); err != nil {
