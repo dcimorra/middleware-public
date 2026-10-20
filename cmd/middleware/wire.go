@@ -20,6 +20,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/autofix"
 	"github.com/dcimorra/middleware-public/internal/chat"
 	"github.com/dcimorra/middleware-public/internal/deps"
+	"github.com/dcimorra/middleware-public/internal/domains"
 	"github.com/dcimorra/middleware-public/internal/engine"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/firewall"
@@ -302,6 +303,7 @@ func buildWire(a *app.App) app.Hook {
 			return w.fixer.Repairs(), nil
 		})
 	}
+	srv.RegisterDomains(domains.New(domains.Options{DataDir: dataDir(a)}))
 	if theCache != nil {
 		srv.RegisterCache(theCache)
 		srv.OnSettingsSaved(func(s settings.Settings) { theCache.SetBudget(s.Cache.Bytes()) })

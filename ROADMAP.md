@@ -18,13 +18,17 @@ What the tests only fake, to be run for real:
   `none` cannot read and `read` cannot write (§5).
 - The agents' cgroup on a real unit with `Delegate=` (the tests write a
   cgroup-shaped folder) (§4).
+- The Cloudflare extras against the real API: edge purge and cache rules,
+  the records editor, the Access list, the token's scope and narrowing,
+  the registrar list. Written to the documented shapes and tested against
+  a fake; the permission group names in particular are Cloudflare's to
+  confirm (§2).
 - CI results readable from the conversations (a read-only Actions token),
   so a push is checked where it runs and not only reproduced locally.
 
 ## 2. Getting a site online
 
-- Cloudflare extras: edge purge and cache rules, the DNS record editor, the
-  Access app list, narrowing a wide token; domain search and prices.
+Nothing left but the live proof above.
 
 ## 3. The door
 
@@ -67,6 +71,12 @@ Nothing left.
   with their own password, `deny`, `message`, projects without a domain,
   `group`, `needs`, `notice`, hold modes and `until`, `container`,
   `claude_api`, `claude`, `chat.reads`.
+- **§2 Cloudflare extras and domains**: edge purge, the zone's cache rules
+  with their reach (site, zone, another domain), born scoped to the host and
+  added one by one, a DNS records editor, the Access list, the token's
+  scope and a narrow token minted, proven and stored before the old one is
+  left to revoke, the registrar's domains with their expiry; domain search
+  by RDAP (proven against the real registries) with hand-written prices.
 - **§2 VPN-only sites**: a VPN door on the server's address in the tunnel
   (80, 443, 53) while the VPN is up; a site with `vpn` exists only through
   it, narrowed by device, never published (and taken down if it becomes

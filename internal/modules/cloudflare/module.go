@@ -250,11 +250,15 @@ func (m *Module) Disable(ctx context.Context) error { return nil }
 
 // Routes exposes read-only state for the panel.
 func (m *Module) Routes() map[string]http.Handler {
-	return map[string]http.Handler{
-		"zones":     http.HandlerFunc(m.handleZones),
-		"ingress":   http.HandlerFunc(m.handleIngress),
-		"connector": http.HandlerFunc(m.handleConnector),
+	out := map[string]http.Handler{
+		"GET /zones":     http.HandlerFunc(m.handleZones),
+		"GET /ingress":   http.HandlerFunc(m.handleIngress),
+		"GET /connector": http.HandlerFunc(m.handleConnector),
 	}
+	for k, h := range m.extraRoutes() {
+		out[k] = h
+	}
+	return out
 }
 
 func (m *Module) handleConnector(w http.ResponseWriter, r *http.Request) {

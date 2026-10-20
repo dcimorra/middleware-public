@@ -141,6 +141,25 @@ failure of a streak is a `repo.failed` event. Pulling is not deploying.
 | POST | `/repos/{id}/pull` | → the repository after a fetch and merge now |
 | PUT | `/repos/{id}/auto` | `{enabled}` → the repository; marking pulls once at once. Kept in `data/repos.json` |
 
+## Domains
+
+| method | path | result |
+| --- | --- | --- |
+| GET | `/domains/search` | `?name=label&tlds=com,es` (default: com, net, org, es, eu, io, dev, app, co, me) → `{results: [{domain, status: free|taken|unknown, sure, price?, error?}], prices_from?, stale_prices?}`. RDAP by IANA's map (a 404 is free, a 200 taken); endings without RDAP fall back to DNS and answer `sure: false`. Prices come from `data/tld-prices.json` (`{"updated": "YYYY-MM-DD", "usd": {"com": 10.44}}`), written by hand; past six months they are `stale_prices`, and an ending not in it has none |
+
+The Cloudflare module adds, under `/modules/cloudflare/`: `GET zones`,
+`GET|POST zones/{zone}/records`, `PUT|DELETE zones/{zone}/records/{id}`,
+`POST purge {domain, hosts?}` (the edge's cache for those hosts),
+`GET cache-rules?domain=` (the zone's cache rules, each with its `scope`:
+`site`, `zone` or `other`), `POST cache-rules {domain, path, ttl}` (born
+scoped to the host; `ttl: 0` bypasses), `DELETE cache-rules/{zone}/{ruleset}/{rule}?domain=`
+(409 for another site's rule unless `other=1`), `GET access` (Access
+applications), `GET registrar` (the account's domains and when they expire),
+`GET token` (its permissions, `extra` beyond what the house uses and
+`missing`) and `POST token/narrow` (mints a token with exactly what the house
+uses, proves it and stores it; the old one is named in `revoke` for the
+operator to revoke).
+
 ## Response cache
 
 The house's cache of responses, behind the door, by the manifest's

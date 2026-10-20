@@ -24,6 +24,7 @@ import { guardScreen } from "./screens/guard.js";
 import { reposScreen } from "./screens/repos.js";
 import { docsScreen } from "./screens/docs.js";
 import { auditScreen } from "./screens/audit.js";
+import { edgeScreen } from "./screens/edge.js";
 import { openBanner } from "./screens/settings-access.js";
 import { settingsScreen } from "./screens/settings.js";
 import { systemScreen } from "./screens/system.js";
@@ -52,6 +53,7 @@ const NAV = [
   ["tasks", "/tasks", "g t", "clock"],
   ["repos", "/repos", "g r", "branch"],
   ["audit", "/audit", "g a", "alert"],
+  ["edge", "/edge", "g x", "link"],
   ["house", "/house", "g h", "sparkles"],
   ["events", "/events", "g e", "activity"],
   ["guard", "/guard", "g g", "eye"],
@@ -124,6 +126,7 @@ route("/events", eventsScreen);
 route("/guard", guardScreen);
 route("/repos", reposScreen);
 route("/audit", auditScreen);
+route("/edge/:tab?", edgeScreen);
 route("/docs/:name?", docsScreen);
 route("/settings", settingsScreen);
 route("/system", systemScreen);

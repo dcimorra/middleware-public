@@ -340,12 +340,22 @@ func (m *Manager) Handler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		h, ok := routes[strings.TrimSuffix(rest, "/")]
-		if !ok {
-			http.NotFound(w, r)
+		if h, ok := routes[strings.TrimSuffix(rest, "/")]; ok {
+			h.ServeHTTP(w, r)
 			return
 		}
-		h.ServeHTTP(w, r)
+		// Routes written as ServeMux patterns ("GET /zones/{zone}/records"),
+		// served the way the API serves them.
+		mux := http.NewServeMux()
+		for pattern, h := range routes {
+			if strings.HasPrefix(pattern, "/") || strings.Contains(pattern, " ") {
+				mux.Handle(pattern, h)
+			}
+		}
+		r2 := r.Clone(r.Context())
+		r2.URL.Path = "/" + rest
+		r2.URL.RawPath = ""
+		mux.ServeHTTP(w, r2)
 	})
 }
 
