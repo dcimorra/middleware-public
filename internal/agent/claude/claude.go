@@ -96,6 +96,9 @@ func (p *Provider) Args(req agent.Request, settingsFile string) []string {
 	if req.Jail.SiteDir != "" {
 		args = append(args, "--add-dir", req.Jail.SiteDir)
 	}
+	for _, d := range req.Jail.Lent {
+		args = append(args, "--add-dir", d)
+	}
 	if settingsFile != "" {
 		args = append(args, "--settings", settingsFile)
 	}
@@ -131,6 +134,14 @@ func Settings(j agent.Jail) map[string]any {
 	for _, c := range j.Commands {
 		deny = append(deny, fmt.Sprintf("Bash(%s:*)", c))
 	}
+	for _, d := range j.Lent {
+		for _, tool := range []string{"Edit", "Write", "MultiEdit", "NotebookEdit"} {
+			deny = append(deny, fmt.Sprintf("%s(/%s/**)", tool, d))
+		}
+		// Bash is matched on its text and could write as easily as read;
+		// the Read tool is how a lent folder is read.
+		deny = append(deny, fmt.Sprintf("Bash(*%s*)", d))
+	}
 	for _, s := range j.Secrets {
 		for _, tool := range []string{"Read", "Grep", "Glob"} {
 			deny = append(deny, fmt.Sprintf("%s(/%s)", tool, s))
@@ -151,7 +162,7 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 		return nil, err
 	}
 	settingsFile := ""
-	if len(req.Jail.Deny) > 0 || len(req.Jail.Secrets) > 0 || len(req.Jail.Commands) > 0 {
+	if len(req.Jail.Deny) > 0 || len(req.Jail.Secrets) > 0 || len(req.Jail.Commands) > 0 || len(req.Jail.Lent) > 0 {
 		dir := req.Jail.Home
 		if dir == "" {
 			dir = req.Workdir

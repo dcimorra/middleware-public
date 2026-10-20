@@ -57,10 +57,12 @@ type Manifest struct {
 	// process (CLAUDE_CODE_OAUTH_TOKEN), for a site that runs the CLI
 	// itself. Prefer claude_api: the token reaches as far as the
 	// subscription does, the site door only as far as its level.
-	Claude bool    `json:"claude,omitempty"`
-	Deploy *Deploy `json:"deploy,omitempty"`
-	Agent  *Agent  `json:"agent,omitempty"`
-	App    string  `json:"app,omitempty"`
+	Claude bool `json:"claude,omitempty"`
+	// Chat is what this site's conversation may do beyond its folder.
+	Chat   *ChatRules `json:"chat,omitempty"`
+	Deploy *Deploy    `json:"deploy,omitempty"`
+	Agent  *Agent     `json:"agent,omitempty"`
+	App    string     `json:"app,omitempty"`
 }
 
 // Static serves files.
@@ -145,6 +147,17 @@ type Hold struct {
 	// Until is when the site is due back (RFC 3339): shown on the page
 	// and sent as Retry-After.
 	Until string `json:"until,omitempty"`
+}
+
+// ChatRules widen a site's conversation.
+type ChatRules struct {
+	// Reads are other sites of this house whose folder the conversation
+	// may read, never write: what is lent is understanding, not the
+	// ability to change someone else's project. The folder is lent whole,
+	// its .env included, and that is a decision: closing the secrets and
+	// leaving the rest would promise a wall with a hole in it. Which is why
+	// each one is written by hand.
+	Reads []string `json:"reads,omitempty"`
 }
 
 // ClaudeAPI is the site door's rules for this site. An empty block is a
@@ -406,6 +419,13 @@ func (m *Manifest) Validate() error {
 		}
 		if c.DailyUSD < 0 || c.MaxChats < 0 {
 			return errors.New("claude_api: daily_usd and max_chats cannot be negative")
+		}
+	}
+	if m.Chat != nil {
+		for _, r := range m.Chat.Reads {
+			if !ValidName(r) {
+				return fmt.Errorf("chat.reads: %q is not a site", r)
+			}
 		}
 	}
 	if m.Notice != nil && !pages.IsTheme(m.Notice.Theme) {

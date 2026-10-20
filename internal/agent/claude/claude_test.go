@@ -146,3 +146,20 @@ func TestTheHouseJailDeniesEachSiteInTheSettingsAndNotTheSitesFolder(t *testing.
 		t.Fatalf("rules deny the sites folder itself, so a new site could not be created:\n%s", rules)
 	}
 }
+
+func TestALentFolderIsClosedToWritingAndAdded(t *testing.T) {
+	j := agent.Jail{SiteDir: "/s/a", Lent: []string{"/s/b"}}
+	rules, _ := json.Marshal(Settings(j))
+	for _, want := range []string{"Edit(//s/b/**)", "Write(//s/b/**)", "Bash(*/s/b*)"} {
+		if !strings.Contains(string(rules), want) {
+			t.Errorf("missing %s in %s", want, rules)
+		}
+	}
+	if strings.Contains(string(rules), "Read(//s/b") {
+		t.Fatal("the lent folder cannot be read")
+	}
+	args := strings.Join(New(Config{}).Args(agent.Request{Prompt: "x", Jail: j}, ""), " ")
+	if !strings.Contains(args, "--add-dir /s/b") {
+		t.Fatalf("args: %s", args)
+	}
+}

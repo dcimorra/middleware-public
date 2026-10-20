@@ -219,3 +219,10 @@ func TestTheSiteDoorAndTheClaudeTokenAreCarried(t *testing.T) {
 		t.Fatalf("notes: %v", r.Notes)
 	}
 }
+
+func TestLoansAreCarried(t *testing.T) {
+	r := Convert("a.example", []byte(`{"kind":"static","chat":{"reads":["b.example"]}}`))
+	if !r.Ready() || r.Manifest.Chat == nil || r.Manifest.Chat.Reads[0] != "b.example" {
+		t.Fatalf("%+v", r)
+	}
+}

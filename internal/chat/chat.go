@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -371,6 +372,18 @@ func (m *Manager) Resolve(name string) (Settings, error) {
 	}
 	home := filepath.Join(m.opts.Root, "data", "homes", domain)
 	s.Jail = agent.NewJail(m.opts.Root, dir, home)
+	if domain != Middleware {
+		var dirs []string
+		for _, r := range lentTo(dir) {
+			other := filepath.Join(m.opts.Root, "sites", r)
+			if r != domain && manifest.ValidName(r) {
+				if st, err := os.Stat(other); err == nil && st.IsDir() {
+					dirs = append(dirs, other)
+				}
+			}
+		}
+		s.Jail.Lend(dirs...)
+	}
 	return s, nil
 }
 
@@ -790,4 +803,23 @@ func dockerImage(siteDir string) string {
 		return m.Run.Docker.Image
 	}
 	return "built from " + m.Run.Docker.Build
+}
+
+// lentTo reads chat.reads straight from site.json, like the agent block:
+// a manifest the engine refuses (a typo elsewhere) must still let the
+// conversation open, since the conversation is how the typo gets fixed.
+func lentTo(siteDir string) []string {
+	data, err := os.ReadFile(filepath.Join(siteDir, manifest.FileName))
+	if err != nil {
+		return nil
+	}
+	var raw struct {
+		Chat struct {
+			Reads []string `json:"reads"`
+		} `json:"chat"`
+	}
+	if json.Unmarshal(data, &raw) != nil {
+		return nil
+	}
+	return raw.Chat.Reads
 }

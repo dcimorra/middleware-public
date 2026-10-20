@@ -157,6 +157,7 @@ func Convert(name string, data []byte) Result {
 	m.Notice = c.notice
 	m.ClaudeAPI = c.claudeAPI
 	m.Claude = in.Claude
+	m.Chat = c.chat
 	if len(r.Blockers) > 0 {
 		return r
 	}
@@ -172,6 +173,7 @@ type converter struct {
 	r         *Result
 	notice    *manifest.Notice
 	claudeAPI *manifest.ClaudeAPI
+	chat      *manifest.ChatRules
 }
 
 // themeKeys maps V1's design names to V2's: the same seven designs.
@@ -244,7 +246,16 @@ func (c *converter) blockers(in *v1) {
 		}
 	}
 	if present(in.Chat) {
-		c.block("chat (loans to the conversation; parity §5)")
+		var cr struct {
+			Reads []string `json:"reads"`
+		}
+		dec := json.NewDecoder(bytes.NewReader(in.Chat))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&cr); err != nil {
+			c.block("chat: %v", err)
+		} else if len(cr.Reads) > 0 {
+			c.chat = &manifest.ChatRules{Reads: cr.Reads}
+		}
 	}
 	if present(in.ClaudeAPI) {
 		var ca struct {

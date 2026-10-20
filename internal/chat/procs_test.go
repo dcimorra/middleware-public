@@ -86,3 +86,27 @@ func TestATurnIsCutAtItsLimit(t *testing.T) {
 		t.Fatal("the turn still holds its slot")
 	}
 }
+
+// A lent folder is readable and not writable: it leaves the deny list and
+// the adapter closes it to every writing tool.
+func TestALentFolderIsReadNotWritten(t *testing.T) {
+	p := &fakeProvider{key: "fake", script: []agent.Event{{Kind: agent.KindResult, Text: "ok"}}}
+	m, root, bus := newManager(t, p)
+	os.WriteFile(root+"/sites/a.test/site.json", []byte(`{"version":2,"chat":{"reads":["b.test","missing.test"]}}`), 0o644)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+	if _, err := m.Send("a.test", "read b", ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ch, "agent.done")
+	j := p.last().Jail
+	lent := root + "/sites/b.test"
+	if len(j.Lent) != 1 || j.Lent[0] != lent {
+		t.Fatalf("lent: %v", j.Lent)
+	}
+	for _, d := range j.Deny {
+		if d == lent {
+			t.Fatal("the lent folder is still denied")
+		}
+	}
+}

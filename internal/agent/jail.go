@@ -30,6 +30,28 @@ type Jail struct {
 	// Secrets are path patterns that may not be read even inside the
 	// site's own folder (its .env, for a conversation that cannot write).
 	Secrets []string
+	// Lent are other folders the agent may read and not write.
+	Lent []string
+}
+
+// Lend opens dirs for reading: they leave Deny (by both their names, the
+// link and the target) and are listed in Lent, which adapters close to
+// writing. A turn runs with permissions skipped, so a folder merely left
+// out of Deny would be a folder the agent can edit.
+func (j *Jail) Lend(dirs ...string) {
+	drop := map[string]bool{}
+	for _, d := range dirs {
+		d = absolute(d)
+		drop[d], drop[resolved(d)] = true, true
+		j.Lent = append(j.Lent, d)
+	}
+	kept := j.Deny[:0]
+	for _, d := range j.Deny {
+		if !drop[d] {
+			kept = append(kept, d)
+		}
+	}
+	j.Deny = kept
 }
 
 // machineSecrets are the supervisor's own keys, under its real HOME (not

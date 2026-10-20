@@ -50,6 +50,7 @@ never shell strings. Paths are relative to the site folder.
   "notice": { "theme": "card" },
   "claude_api": { "tools": "none", "daily_usd": 0, "max_chats": 20, "model": "", "hide_chats": false },
   "claude": false,
+  "chat": { "reads": ["other.example.com"] },
   "needs": ["api.example.com", "worker@shop.example.com"],
 
   "access": {
@@ -144,6 +145,13 @@ answers the internet, and what an injected prompt can reach depends on it.
 `claude: true` puts the house's Claude subscription token in the site's
 environment (`CLAUDE_CODE_OAUTH_TOKEN`) for a site that runs the CLI itself.
 It reaches as far as the subscription does; prefer `claude_api`.
+
+## Loans: `chat.reads`
+
+Other sites of this house whose folder this site's conversation may read,
+never write. The folder is lent whole, its `.env` included: closing the
+secrets and leaving the rest would be a wall with a hole in it, which is why
+each one is written by hand.
 
 ## Docker
 

@@ -95,11 +95,17 @@ them), turns with permissions skipped so Bash works, the machine's keys and
 dangerous commands denied, linked and nested site folders; container sites
 told to use `middleware exec`.
 
+Done too: several conversations per site; the site door (`/api/v1/site`,
+site tokens, `claude_api` levels, daily cap, the socket for containers,
+`claude: true`); cost per model and turns per day; loans (`chat.reads`).
+
 Left:
-- The site door: `/api/site`, site tokens, `claude_api` tool levels, the API
-  socket in containers, `claude: true` token passthrough, cost per model.
-  Needs several conversations per site first.
-- Loans (`chat.reads`); attachments.
+- Prove the site door against the real CLI (the tests use a fake
+  provider): ask, JSON, resume, and that `none` cannot read and `read`
+  cannot write.
+- The site door's conversations listed in the panel (they are kept and
+  costed, but only reachable by name today).
+- Attachments.
 - Several conversations per site, messages while a turn runs, subagent
   threads, push when a turn ends, picking turns back up after a restart.
 - The `middleware` conversation in the panel; Gemini's jail beyond the
