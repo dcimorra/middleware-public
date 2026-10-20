@@ -206,7 +206,7 @@
   "chat.stopping": "stopping…",
   "chat.new": "Start over",
   "chat.newQ": "Start this conversation over?",
-  "chat.newBody": "The current one is kept in the site's history but no longer continued.",
+  "chat.newBody": "Its turns are deleted and the next message starts from nothing. To keep it and talk about something else, open another conversation instead.",
   "chat.you": "You",
   "chat.agent": "Agent",
   "chat.cost": "${usd}",
