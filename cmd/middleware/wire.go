@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/acme"
 	"github.com/dcimorra/middleware-public/internal/api"
 	"github.com/dcimorra/middleware-public/internal/app"
+	"github.com/dcimorra/middleware-public/internal/audit"
 	"github.com/dcimorra/middleware-public/internal/deps"
 	"github.com/dcimorra/middleware-public/internal/engine"
 	"github.com/dcimorra/middleware-public/internal/events"
@@ -108,6 +110,7 @@ type wireHook struct {
 	shots     *shots.Shotter
 	repos     *repos.Manager
 	notifier  *push.Notifier
+	auditor   *audit.Auditor
 }
 
 func buildWire(a *app.App) app.Hook {
@@ -218,6 +221,32 @@ func buildWire(a *app.App) app.Hook {
 		ps = nil
 	}
 	srv.RegisterPush(ps)
+	// npm audit over each site once a day: critical and new is an event
+	// (and a push); never a fix (internal/audit).
+	auditSites := func() []audit.Site {
+		var out []audit.Site
+		for _, sn := range a.Engine.Sites() {
+			if sn.Manifest != nil {
+				out = append(out, audit.Site{Domain: sn.Domain, Dir: sn.Dir})
+			}
+		}
+		return out
+	}
+	w.auditor = audit.New(audit.Options{DataDir: dataDir(a), Bus: a.Bus, Sites: auditSites, NPM: func() string {
+		// The house's own Node first (modules/node, kept up to date by
+		// deps), then whatever npm the machine has.
+		if w.set != nil && w.set.Deps != nil {
+			if p := filepath.Join(w.set.Deps.Prefix(), "bin", "npm"); fileExists(p) {
+				return p
+			}
+		}
+		p, _ := exec.LookPath("npm")
+		return p
+	}})
+	srv.RegisterAudit(w.auditor, func(domain string) (audit.Site, bool) {
+		sn, ok := a.Engine.Lookup(domain)
+		return audit.Site{Domain: sn.Domain, Dir: sn.Dir}, ok && sn.Manifest != nil
+	})
 	if ps != nil {
 		w.notifier = &push.Notifier{Bus: a.Bus, Sender: ps, OnError: func(err error) {
 			a.Bus.Emit(events.Event{Type: "push.failed", Actor: "engine", Level: "warn", Message: err.Error()})
@@ -265,6 +294,9 @@ func (w *wireHook) Run(ctx context.Context, a *app.App) error {
 	}
 	if w.notifier != nil {
 		go w.notifier.Run(ctx)
+	}
+	if w.auditor != nil {
+		go w.auditor.Run(ctx)
 	}
 	var enabled []string
 	if w.set != nil {
@@ -547,4 +579,9 @@ func wireSiteDoor(a *app.App, srv *api.Server, set *moduleSet) {
 		h.ServeHTTP(w, r)
 	})
 	go func() { _ = (&http.Server{Handler: door, ReadHeaderTimeout: 15 * time.Second}).Serve(ln) }()
+}
+
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
 }

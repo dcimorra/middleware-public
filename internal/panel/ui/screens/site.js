@@ -321,6 +321,9 @@ function overviewTab(domain) {
       const r = await api.post(`/sites/${enc(domain)}/publish`, {});
       const failed = (r.lines || []).filter((l) => l.status === "fail");
       toast(failed.length ? failed.map((l) => l.text).join("; ") : t("site.publishedNow"), failed.length ? "bad" : "ok");
+      // Published with known critical vulnerabilities: said at the moment
+      // the site starts being reachable.
+      if (r.vulnerable) toast(r.vulnerable, "bad");
     } catch (e) { toastError(e); }
     loadPublished();
   }

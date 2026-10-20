@@ -141,6 +141,21 @@ failure of a streak is a `repo.failed` event. Pulling is not deploying.
 | POST | `/repos/{id}/pull` | → the repository after a fetch and merge now |
 | PUT | `/repos/{id}/auto` | `{enabled}` → the repository; marking pulls once at once. Kept in `data/repos.json` |
 
+## Dependency audit
+
+`npm audit --package-lock-only` over each site with a `package-lock.json`, a
+few minutes after start and then daily; never `npm audit fix`. A critical
+advisory not seen in the previous audit is a `deps.critical` event (and a
+push); its key carries the range, so a widened range is news again.
+Publishing a site with critical advisories answers `vulnerable` beside the
+lines.
+
+| method | path | result |
+| --- | --- | --- |
+| GET | `/audit` | → `[{domain, at, counts: {critical, high, moderate, low, info}, critical: [{name, severity, range, title, url, key}], high: […], skipped?, error?}]` |
+| POST | `/audit/run` | → `{ok}`; every site in the background, `deps.audited` when done |
+| POST | `/sites/{domain}/audit` | → the site's report, now |
+
 ## Push notifications
 
 Web push (VAPID, aes128gcm) to the operator's devices. What is pushed is a
@@ -274,7 +289,7 @@ need not point here yet) and DNS only after it; the A record uses
 | --- | --- | --- |
 | GET | `/publish` | → `{name: {site, door, state, error?, attempts?, next?, at?, ip?}}`; state is `published`, `pending`, `failed` (retried with backoff, 1 min doubling to 1 h), `manual` (no DNS provider, or a zone it does not manage: a person points the name) or `retiring` |
 | POST | `/publish/retry` | → `{ok}`; every name not published is tried on the next pass, manual ones included |
-| POST | `/sites/{domain}/publish` | `{door?}` → `{lines}`; every name of the site (its domain, aliases and the implicit `www.` of an apex) on that door, kept there from now on |
+| POST | `/sites/{domain}/publish` | `{door?}` → `{lines, vulnerable?}`; every name of the site (its domain, aliases and the implicit `www.` of an apex) on that door, kept there from now on |
 | POST | `/sites/{domain}/unpublish` | → `{lines}`; tunnel rules and the records that point at this house are removed, nothing else |
 
 `POST /sites` publishes the new site on the door for new sites when a DNS

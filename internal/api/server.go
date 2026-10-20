@@ -116,6 +116,9 @@ type Server struct {
 	// dnsEnabled says whether a DNS provider is on, which decides the
 	// default of "publish" on creation.
 	dnsEnabled func() bool
+	// vulnerable, when set, says what is critical in a site's
+	// dependencies; publishing reports it (RegisterAudit sets it).
+	vulnerable func(domain string) string
 	// onSettings runs after PUT /settings saved, with what was saved.
 	onSettings []func(settings.Settings)
 }

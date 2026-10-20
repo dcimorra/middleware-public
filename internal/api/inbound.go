@@ -216,7 +216,13 @@ func (s *Server) registerPublish(pub *publish.Publisher, h *inbound.Hook) {
 		if err != nil {
 			return nil, Errorf(http.StatusBadRequest, "%v", err)
 		}
-		return map[string]any{"lines": lines}, nil
+		out := map[string]any{"lines": lines}
+		if s.vulnerable != nil {
+			if v := s.vulnerable(domain); v != "" {
+				out["vulnerable"] = v
+			}
+		}
+		return out, nil
 	})
 	s.Handle("POST", Prefix+"/sites/{domain}/unpublish", "Remove the site's tunnel rules and the records that point at this house", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		domain, err := domainOf(r)

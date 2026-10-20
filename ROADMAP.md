@@ -43,8 +43,6 @@ Nothing left.
 
 ## 6. The guard
 
-- A daily `npm audit` (critical and new), a dependencies screen, and
-  `vulnerable` on publish (docs/security.md claims it).
 - The browser reaper: respect open CDP connections, 30 minutes, a JSONL
   log, a cap for browsers started by conversations.
 - Log rotation and a size cap; `SIGUSR1` diagnostics; resource episodes and
@@ -121,7 +119,9 @@ Nothing left.
   client's request answered 4xx is nothing, 2xx a suspicion, never an
   intrusion), the site's own HOME exempt, a sweep every three seconds, and
   the house's agent asked to investigate once an intrusion is contained,
-  with what was observed fenced as evidence.
+  with what was observed fenced as evidence; a daily `npm audit` from each
+  site's lockfile (critical and new is an event and a push, never a fix), a
+  Dependencies screen, and publishing that says `vulnerable`.
 - **§5 Agents**: a jail that holds, two-hour turns, the processes a
   conversation leaves listed and killed, several conversations per site,
   the site door, loans, attachments, queued messages, turns that survive a
