@@ -583,5 +583,17 @@
   "chat.attach": "Attach",
   "chat.attachHint": "Files go with the next message (25 MB each); drop them here too",
   "chat.removeFile": "Remove {name}",
-  "chat.subagent": "Subagent"
+  "chat.subagent": "Subagent",
+  "house.account": "Claude account",
+  "house.session": "Five-hour window",
+  "house.week": "Seven days",
+  "house.opus": "Seven days, Opus",
+  "house.resets": "resets {when}",
+  "house.cost": "What each project spent, last 30 days",
+  "house.siteDoor": "site door",
+  "house.col.project": "Project",
+  "house.col.cost": "Cost",
+  "house.col.turns": "Turns",
+  "house.col.models": "By model",
+  "house.noCost": "Nothing spent in these 30 days."
 }

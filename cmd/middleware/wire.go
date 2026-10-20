@@ -166,7 +166,16 @@ func buildWire(a *app.App) app.Hook {
 	srv.RegisterShots(w.shots)
 	pages.SetHouseTheme(a.Settings.VisitorTheme)
 	srv.OnSettingsSaved(func(st settings.Settings) { pages.SetHouseTheme(st.VisitorTheme) })
-	srv.RegisterAgents(api.AgentsOptions{Registry: providers(), Chat: chatManager})
+	srv.RegisterAgents(api.AgentsOptions{Registry: providers(), Chat: chatManager, ClaudeToken: func() string {
+		if set == nil {
+			return ""
+		}
+		cfg, err := set.Manager.Config(agents.ClaudeKey)
+		if err != nil {
+			return ""
+		}
+		return cfg["oauth_token"]
+	}})
 	if chatManager != nil {
 		wireSiteDoor(a, srv, set)
 	}

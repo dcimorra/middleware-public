@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -81,6 +82,19 @@ func (l *Ledger) AddTurn(domain, model string, usd float64, at time.Time) error 
 		f.Models[day][model] += usd
 	}
 	return fsx.WriteJSON(l.path(domain), f, 0o644)
+}
+
+// Books lists every ledger kept, by its key (a domain, or a domain's
+// site door book).
+func (l *Ledger) Books() []string {
+	ents, _ := os.ReadDir(l.dir)
+	var out []string
+	for _, e := range ents {
+		if name, ok := strings.CutSuffix(e.Name(), ".json"); ok {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // Day is what domain spent on the day of at.

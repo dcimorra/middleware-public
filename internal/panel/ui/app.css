@@ -551,3 +551,6 @@ details.section[open] summary { border-bottom: 1px solid var(--border); margin-b
 
 /* The site's picture on its overview. */
 .site-shot{width:100%;max-width:420px;aspect-ratio:1200/750;object-fit:cover;object-position:top;border:1px solid var(--border,#ddd);border-radius:8px}
+
+/* The account's usage windows. */
+.usage-row{margin:.75rem 0}.meter{height:8px;border-radius:4px;background:var(--surface-3);overflow:hidden;margin:.35rem 0}.meter .fill{height:100%;background:var(--accent,#2563eb)}.meter .fill.warn{background:#d97706}.meter .fill.bad{background:#dc2626}

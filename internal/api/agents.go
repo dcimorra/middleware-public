@@ -3,10 +3,14 @@ package api
 import (
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/dcimorra/middleware-public/internal/agent"
+	"github.com/dcimorra/middleware-public/internal/agent/claude"
 	"github.com/dcimorra/middleware-public/internal/chat"
 	"github.com/dcimorra/middleware-public/internal/settings"
 )
@@ -15,6 +19,9 @@ import (
 type AgentsOptions struct {
 	Registry *agent.Registry
 	Chat     *chat.Manager
+	// ClaudeToken returns the subscription's token, for the account's
+	// usage windows; nil or empty means none signed in.
+	ClaudeToken func() string
 }
 
 // AgentInfo is one provider as GET /agents lists it.
@@ -63,6 +70,60 @@ func (s *Server) RegisterAgents(o AgentsOptions) {
 	}
 	s.Handle("GET", Prefix+"/agents/capacity", "How many agent turns run now, of how many, per provider, and which conversations hold them", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		return o.Chat.Capacity(), nil
+	})
+	var usageMu sync.Mutex
+	var usage *claude.Usage
+	var usageErr error
+	var usageAt time.Time
+	s.Handle("GET", Prefix+"/agents/usage", "The Claude account's five-hour and seven-day windows, as /usage shows them", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		usageMu.Lock()
+		defer usageMu.Unlock()
+		// A minute of cache: the panel asks every time a tab opens, and
+		// that cannot be a call to Anthropic each time.
+		if time.Since(usageAt) > time.Minute {
+			token := ""
+			if o.ClaudeToken != nil {
+				token = o.ClaudeToken()
+			}
+			usage, usageErr = claude.FetchUsage(r.Context(), token)
+			usageAt = time.Now()
+		}
+		if usageErr != nil {
+			return nil, Errorf(http.StatusServiceUnavailable, "%v", usageErr)
+		}
+		return usage, nil
+	})
+	s.Handle("GET", Prefix+"/agents/cost", "What each project spent on agents, per day, model and turns (?days=30)", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		days := 30
+		if v, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && v > 0 && v <= 400 {
+			days = v
+		}
+		since := time.Now().UTC().AddDate(0, 0, -days+1).Format("2006-01-02")
+		out := []map[string]any{}
+		l := o.Chat.Ledger()
+		for _, book := range l.Books() {
+			f := l.File(book)
+			dayCost := map[string]float64{}
+			total := 0.0
+			turns := 0
+			models := map[string]float64{}
+			for d, v := range f.Days {
+				if d >= since {
+					dayCost[d] = v
+					total += v
+					turns += f.Turns[d]
+					for mdl, c := range f.Models[d] {
+						models[mdl] += c
+					}
+				}
+			}
+			if total == 0 {
+				continue
+			}
+			out = append(out, map[string]any{"book": book, "total_usd": round4(total), "turns": turns, "days": dayCost, "models": models})
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i]["total_usd"].(float64) > out[j]["total_usd"].(float64) })
+		return map[string]any{"days": days, "books": out}, nil
 	})
 	// A new cap applies to the next turn, not to the next restart.
 	s.OnSettingsSaved(func(st settings.Settings) { o.Chat.SetLimits(st.Agents) })
