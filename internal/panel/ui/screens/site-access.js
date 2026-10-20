@@ -21,6 +21,7 @@ export function accessTab(domain) {
 
   const password = h("input", { type: "password", autocomplete: "new-password", value: access.password || "" });
   const allow = h("textarea", { class: "mono", value: lines(access.allow), rows: "3" });
+  const denyIPs = h("textarea", { class: "mono", value: lines(access.deny), rows: "3" });
   const deny = h("input", { type: "text", class: "mono", value: (access.deny_countries || []).join(", ") });
   const routes = h("textarea", { class: "mono", rows: "4", value: Object.keys(access.routes || {}).length ? JSON.stringify(access.routes, null, 2) : "" });
 
@@ -37,6 +38,7 @@ export function accessTab(domain) {
       h("p", { class: "small muted" }, t("access.hint")),
       field(t("access.password"), password, t("access.passwordHint")),
       field(t("access.allow"), allow, t("access.allowHint")),
+      field(t("access.deny"), denyIPs, t("access.denyIPsHint")),
       field(t("access.denyCountries"), deny, t("access.denyHint")),
       field(t("access.routes"), routes, t("access.routesHint")),
     ),
@@ -69,7 +71,11 @@ export function accessTab(domain) {
     }
     const newAccess = {};
     if (password.value) newAccess.password = password.value;
+    // Not on this form, so carried as it was: the PATCH replaces the
+    // whole access section and would drop it.
+    if (access.message) newAccess.message = access.message;
     const al = parseLines(allow.value); if (al.length) newAccess.allow = al;
+    const di = parseLines(denyIPs.value); if (di.length) newAccess.deny = di;
     const dc = parseLines(deny.value).map((x) => x.toUpperCase()); if (dc.length) newAccess.deny_countries = dc;
     if (routesObj && Object.keys(routesObj).length) newAccess.routes = routesObj;
     const newWaf = {};
