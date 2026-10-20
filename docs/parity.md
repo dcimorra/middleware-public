@@ -72,46 +72,39 @@ Left:
 
 ## 4. The engine
 
-Done: docker sites behind V1's walls at their own paths (cap-drop,
-no-new-privileges, pids, cpus, cpu weight, user, HOST=0.0.0.0 inside, house
-label and reaper, logs after adoption), `middleware exec`, `needs`,
-`notice`, `hold.mode`/`until`; proven against a real rootless daemon.
+Done: docker sites behind V1's walls at their own paths, `middleware exec`,
+`needs`, `notice`, `hold.mode`/`until`, `health.expect_status`, `group`;
+task runs re-adopted after a restart and stoppable; agent turns in a cgroup
+of their own (weight, CPU ceiling, memory high/max; needs Delegate= in the
+unit, which the installer writes); rename; archive as one faithful file
+with restore and download; a site folder as a zip; a picture of each site;
+one deploy runner (builds inside the image for docker sites, the whole
+process tree killed on a timeout).
 
-Left:
-- Task runs re-adopted after a restart; `health.expect_status`.
-- cgroups for sites and conversations (memory and CPU for process sites).
-- `group` (panel grouping).
-- Rename a site; archive as one file with restore and download; download a
-  site folder; screenshots.
-- One deploy implementation (`internal/sites/deploy.go` and
-  `internal/deploy` are two).
+Left: nothing of V1's engine. Not proven on a real delegated cgroup yet
+(the tests write a cgroup-shaped folder).
 
 ## 5. The agent conversation
 
-Done: two-hour cap per turn; the MIDDLEWARE_CHAT_ID mark, with the
-conversation's processes listed and killed one by one or all (setsid
-escapes included); deny rules that hold (`//path`, as Claude Code reads
-them), turns with permissions skipped so Bash works, the machine's keys and
-dangerous commands denied, linked and nested site folders; container sites
-told to use `middleware exec`.
-
-Done too: several conversations per site; the site door (`/api/v1/site`,
-site tokens, `claude_api` levels, daily cap, the socket for containers,
-`claude: true`); cost per model and turns per day; loans (`chat.reads`).
+Done: two-hour cap, the conversation's processes listed and killed
+(setsid escapes included), a jail that holds (deny rules as Claude Code
+reads them, Bash working, the machine's keys and dangerous commands
+denied, linked and nested folders), container sites told to use
+`middleware exec`; several conversations per site and the site door
+(`/api/v1/site`, tokens, `claude_api` levels, daily cap, socket for
+containers, `claude: true`); loans; attachments; messages queued while a
+turn runs; turns in flight picked up after a supervisor restart; subagent
+threads; the house's conversation in the panel; the account's usage
+windows and cost per project, day and model; `docs/api.md` checked against
+the routes both ways; Gemini's shell denied the jail's commands.
 
 Left:
 - Prove the site door against the real CLI (the tests use a fake
   provider): ask, JSON, resume, and that `none` cannot read and `read`
   cannot write.
-- The site door's conversations listed in the panel (they are kept and
-  costed, but only reachable by name today).
-- Attachments.
-- Several conversations per site, messages while a turn runs, subagent
-  threads, push when a turn ends, picking turns back up after a restart.
-- The `middleware` conversation in the panel; Gemini's jail beyond the
-  audit (it runs --yolo).
-- Account usage meter; cost per project and day in the panel.
-- `/docs/api` human pages, with a test that keeps them in step with routes.
+- Push when a turn ends (needs the notifications of §6).
+- A human-readable `/docs/api` page served by the panel (the reference is
+  docs/api.md and /api/v1/openapi.json).
 
 ## 6. The guard
 

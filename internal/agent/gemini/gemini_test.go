@@ -105,3 +105,16 @@ func TestAnUnfinishedDocumentIsFlushedAsText(t *testing.T) {
 		t.Fatalf("events = %+v", evs)
 	}
 }
+
+func TestTheJailsCommandsAreExcludedFromGeminisShell(t *testing.T) {
+	home := t.TempDir()
+	if err := writeJail(home, agent.Jail{Commands: []string{"sudo", "docker"}}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(home, ".gemini", "settings.json"))
+	for _, want := range []string{"run_shell_command(sudo)", "run_shell_command(docker)", "excludeTools"} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("missing %s in %s", want, data)
+		}
+	}
+}

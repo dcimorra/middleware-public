@@ -125,6 +125,11 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 			return nil, err
 		}
 	}
+	if req.Jail.Home != "" {
+		if err := writeJail(req.Jail.Home, req.Jail); err != nil {
+			return nil, err
+		}
+	}
 	// Never a browser: a turn runs on a server, and a CLI that tried to
 	// open one would sit waiting for it.
 	env["NO_BROWSER"] = "true"
@@ -344,4 +349,42 @@ func writeCreds(home, creds string) error {
 	st["security"] = sec
 	st["selectedAuthType"] = "oauth-personal"
 	return fsx.WriteJSON(settingsPath, st, 0o600)
+}
+
+// writeJail puts the jail's commands in Gemini's settings as excluded
+// shell commands (tools.exclude, matched by prefix). Gemini's file tools
+// are confined to the working directory by the CLI itself; its shell is
+// not, and it runs with --yolo, so without this the only wall was the
+// audit after the turn. Paths in a shell command are still only caught by
+// the audit: the CLI has no rule that matches a path inside a command.
+func writeJail(home string, j agent.Jail) error {
+	dir := filepath.Join(home, ".gemini")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, "settings.json")
+	var st map[string]any
+	if raw, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(raw, &st)
+	}
+	if st == nil {
+		st = map[string]any{}
+	}
+	var exclude []any
+	for _, c := range j.Commands {
+		exclude = append(exclude, "run_shell_command("+c+")")
+	}
+	tools, _ := st["tools"].(map[string]any)
+	if tools == nil {
+		tools = map[string]any{}
+	}
+	tools["exclude"] = exclude
+	st["tools"] = tools
+	// The older name, read by releases before the settings were nested.
+	st["excludeTools"] = exclude
+	data, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		return err
+	}
+	return fsx.WriteAtomic(path, data, 0o600)
 }
