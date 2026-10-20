@@ -16,6 +16,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/app"
 	"github.com/dcimorra/middleware-public/internal/certs"
 	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/middleware-public/internal/localdns"
 	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/pages"
 	"github.com/dcimorra/middleware-public/internal/proxy"
@@ -49,9 +50,14 @@ type Hook struct {
 	mu    sync.Mutex
 	http  *listener
 	https *listener
+	// The local door: its plain listener and its name server.
+	local        *listener
+	localDNS     *localdns.Server
+	localDNSWant string
 	// lastErr dedupes inbound.failed: a port held by something else would
 	// otherwise emit on every tick, which is noise and not information.
-	lastErr string
+	lastErr      string
+	lastLocalErr string
 }
 
 type listener struct {
@@ -105,7 +111,7 @@ func (h *Hook) Wrap(next http.Handler) http.Handler {
 		host := proxy.Host(r)
 		if !h.isPanel(host) {
 			st := h.file.get()
-			if (door == Tunnel && !st.Tunnel.Open) || (door == Ports && !st.Ports.Open) {
+			if (door == Tunnel && !st.Tunnel.Open) || (door == Ports && !st.Ports.Open) || (door == Local && !st.Local.Open) {
 				pages.Write(w, "doorclosed", http.StatusServiceUnavailable)
 				return
 			}
@@ -118,6 +124,11 @@ func (h *Hook) Wrap(next http.Handler) http.Handler {
 			} else {
 				r.Header.Set("X-Forwarded-Proto", "http")
 			}
+		} else if door == Local {
+			// The bench is plain HTTP and says so; a site that insists on
+			// https would redirect the developer to a door that is not
+			// there.
+			r.Header.Set("X-Forwarded-Proto", "http")
 		} else if r.Header.Get("X-Forwarded-Proto") == "" {
 			// A tunnel sets it; a plain loopback client did not, and the
 			// hop really was http.
@@ -177,6 +188,20 @@ func (h *Hook) Run(ctx context.Context, a *app.App) error {
 	return nil
 }
 
+// LocalAddrs returns where the local door listens (http, dns), empty
+// when closed.
+func (h *Hook) LocalAddrs() (httpAddr, dnsAddr string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.local != nil {
+		httpAddr = h.local.ln.Addr().String()
+	}
+	if h.localDNS != nil {
+		dnsAddr = h.localDNS.Addr()
+	}
+	return
+}
+
 // Addrs returns where the ports door is listening, empty when closed.
 func (h *Hook) Addrs() (httpAddr, httpsAddr string) {
 	h.mu.Lock()
@@ -194,6 +219,7 @@ func (h *Hook) reconcile() {
 	st := h.file.get()
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.reconcileLocalLocked(st)
 	if !st.Ports.Open {
 		if h.http != nil || h.https != nil {
 			h.closeLocked()
@@ -256,6 +282,75 @@ func (h *Hook) openLocked(st State) error {
 	return nil
 }
 
+// reconcileLocalLocked keeps the local door's two sockets equal to the
+// file, the same way the ports door is kept: close what differs, open
+// what the file says, report once when a port is taken.
+func (h *Hook) reconcileLocalLocked(st State) {
+	if !st.Local.Open {
+		if h.local != nil || h.localDNS != nil {
+			h.closeLocalLocked()
+			h.emit("engine", "inbound.stopped", string(Local), "", "local door closed", nil)
+		}
+		return
+	}
+	if h.local != nil && h.localDNS != nil && h.local.want == st.Local.HTTP && h.localDNSWant == st.Local.DNS {
+		return
+	}
+	h.closeLocalLocked()
+	if err := h.openLocalLocked(st); err != nil {
+		h.closeLocalLocked()
+		if err.Error() != h.lastLocalErr {
+			h.lastLocalErr = err.Error()
+			h.emit("engine", "inbound.failed", string(Local), "error", err.Error(), map[string]any{"http": st.Local.HTTP, "dns": st.Local.DNS})
+		}
+		return
+	}
+	h.lastLocalErr = ""
+	h.emit("engine", "inbound.listening", string(Local), "", "local door listening", map[string]any{
+		"http": h.local.ln.Addr().String(), "dns": h.localDNS.Addr(),
+	})
+}
+
+func (h *Hook) openLocalLocked(st State) error {
+	tag := func(ctx context.Context, _ net.Conn) context.Context {
+		return context.WithValue(ctx, ctxKey{}, Local)
+	}
+	ln, err := net.Listen("tcp", st.Local.HTTP)
+	if err != nil {
+		return fmt.Errorf("inbound: local http %s: %w", st.Local.HTTP, err)
+	}
+	// The full chain, straight: no certificate check, no redirect. The
+	// challenge is answered here too, in case a CA is pointed at this
+	// machine on purpose (pebble in a test).
+	h.local = &listener{want: st.Local.HTTP, ln: ln, srv: &http.Server{
+		Handler:           h.Handler,
+		ReadHeaderTimeout: 15 * time.Second,
+		ConnContext:       tag,
+	}}
+	go h.local.srv.Serve(ln)
+
+	dns := &localdns.Server{Serves: h.knownSite}
+	if err := dns.Listen(context.Background(), st.Local.DNS); err != nil {
+		return fmt.Errorf("inbound: local dns %s: %w", st.Local.DNS, err)
+	}
+	h.localDNS, h.localDNSWant = dns, st.Local.DNS
+	return nil
+}
+
+func (h *Hook) closeLocalLocked() {
+	if h.local != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = h.local.srv.Shutdown(ctx)
+		cancel()
+		_ = h.local.ln.Close()
+		h.local = nil
+	}
+	if h.localDNS != nil {
+		h.localDNS.Close()
+		h.localDNS = nil
+	}
+}
+
 // closeLocked stops both servers, giving in-flight responses a moment.
 // The listeners close at once so a reopen on the same address does not
 // race the old socket.
@@ -270,6 +365,7 @@ func (h *Hook) closeLocked() {
 		_ = l.ln.Close()
 	}
 	h.http, h.https = nil, nil
+	h.closeLocalLocked()
 }
 
 // serveHTTP is port 80: the challenge, then a redirect. Everything else
@@ -326,6 +422,8 @@ func (h *Hook) SetDoor(door Door, open bool) error {
 		st.Tunnel.Open = open
 	case Ports:
 		st.Ports.Open = open
+	case Local:
+		st.Local.Open = open
 	default:
 		return fmt.Errorf("inbound: unknown door %q", door)
 	}
@@ -337,6 +435,32 @@ func (h *Hook) SetDoor(door Door, open bool) error {
 		typ = "inbound.opened"
 	}
 	h.emit("operator", typ, string(door), "", "", nil)
+	h.reconcile()
+	return nil
+}
+
+// SetLocal changes the local door's addresses and open flag, persists
+// and acts on it at once. Empty addresses keep what the file has.
+func (h *Hook) SetLocal(open bool, httpAddr, dnsAddr string) error {
+	st := h.file.get()
+	was := st.Local.Open
+	st.Local.Open = open
+	if httpAddr != "" {
+		st.Local.HTTP = httpAddr
+	}
+	if dnsAddr != "" {
+		st.Local.DNS = dnsAddr
+	}
+	if err := h.file.set(st); err != nil {
+		return err
+	}
+	if was != open {
+		typ := "inbound.closed"
+		if open {
+			typ = "inbound.opened"
+		}
+		h.emit("operator", typ, string(Local), "", "", nil)
+	}
 	h.reconcile()
 	return nil
 }
@@ -361,6 +485,15 @@ type DoorsStatus struct {
 		Listening bool   `json:"listening"`
 		Error     string `json:"error,omitempty"`
 	} `json:"ports"`
+	Local struct {
+		Open      bool   `json:"open"`
+		HTTP      string `json:"http"`
+		DNS       string `json:"dns"`
+		Listening bool   `json:"listening"`
+		Error     string `json:"error,omitempty"`
+		// Help is the resolver snippet for this door's dns address.
+		Help string `json:"help"`
+	} `json:"local"`
 }
 
 // DomainStatus is one row.
@@ -378,9 +511,15 @@ func (h *Hook) Status() Status {
 	out.Doors.Ports.Open = st.Ports.Open
 	out.Doors.Ports.HTTP = st.Ports.HTTP
 	out.Doors.Ports.HTTPS = st.Ports.HTTPS
+	out.Doors.Local.Open = st.Local.Open
+	out.Doors.Local.HTTP = st.Local.HTTP
+	out.Doors.Local.DNS = st.Local.DNS
+	out.Doors.Local.Help = ResolverHelp(st.Local.DNS, "middleware")
 	h.mu.Lock()
 	out.Doors.Ports.Listening = h.http != nil && h.https != nil
 	out.Doors.Ports.Error = h.lastErr
+	out.Doors.Local.Listening = h.local != nil && h.localDNS != nil
+	out.Doors.Local.Error = h.lastLocalErr
 	h.mu.Unlock()
 	for _, d := range h.domains(st) {
 		row := DomainStatus{Domain: d, Door: st.DoorOf(d)}
@@ -453,7 +592,7 @@ type Line struct {
 // DNS change away from an outage. To the tunnel it only marks; the
 // certificate stays on disk for the way back.
 func (h *Hook) Move(ctx context.Context, domains []string, to Door) []Line {
-	if _, err := ParseDoor(string(to)); err != nil {
+	if _, err := ParsePublicDoor(string(to)); err != nil {
 		return []Line{{Status: "fail", Text: err.Error()}}
 	}
 	var lines []Line

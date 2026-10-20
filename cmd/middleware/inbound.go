@@ -22,7 +22,7 @@ var inboundHook *inbound.Hook
 func init() {
 	hookBuilders = append(hookBuilders, hookBuilder{Name: "inbound", Order: orderInbound, Build: buildInbound})
 	subcommands["inbound"] = inboundCmd
-	extraUsage += `  inbound      status | open <tunnel|ports> | close <tunnel|ports>
+	extraUsage += `  inbound      status | open <door> | close <door> | local [on|off] [--http addr] [--dns addr]
 `
 }
 
@@ -68,20 +68,26 @@ func buildInbound(a *app.App) app.Hook {
 func inboundCmd(args []string) error {
 	fs := flag.NewFlagSet("inbound", flag.ContinueOnError)
 	root := fs.String("root", "", "installation root (default $MIDDLEWARE_ROOT or /srv/middleware)")
+	// The local door's flags live on the one flag set because the
+	// interleaved parser sees every flag before the verb is known.
+	httpAddr := fs.String("http", "", "local door: plain http listener (default "+inbound.DefaultLocalHTTP+")")
+	dnsAddr := fs.String("dns", "", "local door: name server, udp and tcp (default "+inbound.DefaultLocalDNS+")")
 	rest, err := parseInterleaved(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(rest) == 0 {
-		return fmt.Errorf("usage: middleware inbound status | open <door> | close <door>")
+		return fmt.Errorf("usage: middleware inbound status | open <door> | close <door> | local [on|off] [--http addr] [--dns addr]")
 	}
 	dir := settings.Root(*root)
 	switch rest[0] {
 	case "status":
 		return inboundStatus(dir)
+	case "local":
+		return inboundLocal(dir, rest[1:], *httpAddr, *dnsAddr)
 	case "open", "close":
 		if len(rest) != 2 {
-			return fmt.Errorf("usage: middleware inbound %s <tunnel|ports>", rest[0])
+			return fmt.Errorf("usage: middleware inbound %s <tunnel|ports|local>", rest[0])
 		}
 		door, err := inbound.ParseDoor(rest[1])
 		if err != nil {
@@ -92,7 +98,7 @@ func inboundCmd(args []string) error {
 			return err
 		}
 		state := "closed"
-		if (door == inbound.Tunnel && st.Tunnel.Open) || (door == inbound.Ports && st.Ports.Open) {
+		if (door == inbound.Tunnel && st.Tunnel.Open) || (door == inbound.Ports && st.Ports.Open) || (door == inbound.Local && st.Local.Open) {
 			state = "open"
 		}
 		fmt.Printf("%s door %s (%s)\n", door, state, inbound.Path(dir))
@@ -114,6 +120,7 @@ func inboundStatus(dir string) error {
 	}
 	fmt.Printf("tunnel  %s\n", onOff(st.Tunnel.Open))
 	fmt.Printf("ports   %s  http %s  https %s\n", onOff(st.Ports.Open), st.Ports.HTTP, st.Ports.HTTPS)
+	fmt.Printf("local   %s  http %s  dns %s\n", onOff(st.Local.Open), st.Local.HTTP, st.Local.DNS)
 	if st.ACME.Directory != "" {
 		fmt.Printf("acme    %s\n", st.ACME.Directory)
 	}
@@ -153,4 +160,42 @@ func inboundStatus(dir string) error {
 		fmt.Fprintf(w, "%s\t%s\t%s\n", row.Domain, row.Door, cert)
 	}
 	return w.Flush()
+}
+
+// inboundLocal is the development bench switch: `local on` opens the
+// door, `--http`/`--dns` move its listeners, and the resolver snippet
+// is printed so the operator can paste it, because the door is useless
+// until the machine's resolver forwards the suffix here.
+func inboundLocal(dir string, rest []string, httpAddr, dnsAddr string) error {
+	cur, err := inbound.LoadState(dir)
+	if err != nil {
+		return err
+	}
+	open := cur.Local.Open
+	if len(rest) > 1 {
+		return fmt.Errorf("usage: middleware inbound local [on|off] [--http addr] [--dns addr]")
+	}
+	if len(rest) == 1 {
+		switch rest[0] {
+		case "on":
+			open = true
+		case "off":
+			open = false
+		default:
+			return fmt.Errorf("usage: middleware inbound local [on|off] [--http addr] [--dns addr]")
+		}
+	}
+	st, err := inbound.SetLocal(dir, open, httpAddr, dnsAddr)
+	if err != nil {
+		return err
+	}
+	state := "closed"
+	if st.Local.Open {
+		state = "open"
+	}
+	fmt.Printf("local door %s  http %s  dns %s  (%s)\n", state, st.Local.HTTP, st.Local.DNS, inbound.Path(dir))
+	if st.Local.Open {
+		fmt.Print(inbound.ResolverHelp(st.Local.DNS, "middleware"))
+	}
+	return nil
 }

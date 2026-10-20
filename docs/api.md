@@ -148,9 +148,10 @@ disabling it puts the CLI's own login back.
 
 | method | path | result |
 | --- | --- | --- |
-| GET | `/inbound` | → `{doors: {tunnel: {open}, ports: {open, http, https, listening, error}}, domains: [{domain, door, cert_expires, dns, tunnel_route}], dns_error?}` |
+| GET | `/inbound` | → `{doors: {tunnel: {open}, ports: {open, http, https, listening, error}, local: {open, http, dns, listening, error, help}}, domains: [{domain, door, cert_expires, dns, tunnel_route}], dns_error?}` |
 | POST | `/inbound/move` | `{domains: [], to: "tunnel"|"ports", ip?}` → `{ok, lines: [{status, text}]}` |
-| POST | `/inbound/doors/{door}` | `{open}` → `doors` (door is `tunnel` or `ports`; written to `data/inbound.json` and acted on at once) |
+| POST | `/inbound/doors/{door}` | `{open}` → `doors` (door is `tunnel`, `ports` or `local`; written to `data/inbound.json` and acted on at once) |
+| PUT | `/inbound/local` | `{open, http?, dns?}` → `doors`; the local door's listeners (plain HTTP and the name server), 400 when an address is malformed or collides with the ports door |
 | GET | `/inbound/certificates` | → `[{domain, issued, expires, issuer}]` |
 | POST | `/inbound/certificates/{domain}/renew` | → `{ok}`; 502 with the CA's reason when it fails |
 

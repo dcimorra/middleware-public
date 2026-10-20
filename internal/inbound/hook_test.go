@@ -18,6 +18,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/certs"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/inbound"
+	"github.com/dcimorra/middleware-public/internal/localdns"
 )
 
 type house struct {
@@ -350,5 +351,75 @@ func TestTheStateFileDefaultsAndRefusesWhatCannotListen(t *testing.T) {
 	os.WriteFile(inbound.Path(root), []byte("{not json"), 0o644)
 	if _, err := inbound.LoadState(root); err == nil {
 		t.Fatal("broken file read as fine")
+	}
+}
+
+// TestTheLocalDoorServesPlainHTTPAndResolvesTheSites is the development
+// bench contract: a browser on this machine resolves misite.test through
+// the door's own name server and gets the site over plain http, with no
+// redirect to a 443 that is not there.
+func TestTheLocalDoorServesPlainHTTPAndResolvesTheSites(t *testing.T) {
+	h := newHouse(t, "misite.test")
+	if err := h.hook.SetLocal(true, "127.0.0.1:0", "127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	httpAddr, dnsAddr := h.hook.LocalAddrs()
+	if httpAddr == "" || dnsAddr == "" {
+		t.Fatalf("local door not open: %+v", h.hook.Status().Doors.Local)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ips, err := localdns.Query(ctx, dnsAddr, "misite.test", false)
+	if err != nil || len(ips) != 1 || !ips[0].IsLoopback() {
+		t.Fatalf("misite.test did not resolve to loopback: %v %v", ips, err)
+	}
+	if ips, _ := localdns.Query(ctx, dnsAddr, "panel.test", false); len(ips) != 1 {
+		t.Fatalf("the panel's own name must resolve too: %v", ips)
+	}
+	if ips, _ := localdns.Query(ctx, dnsAddr, "other.test", false); ips != nil {
+		t.Fatalf("a name nobody serves must be NXDOMAIN, got %v", ips)
+	}
+
+	c := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	req, _ := http.NewRequest("GET", "http://"+httpAddr+"/", nil)
+	req.Host = "misite.test"
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || string(body) != "site=misite.test proto=http" {
+		t.Fatalf("local door answered %d %q", resp.StatusCode, body)
+	}
+
+	// Closing the door takes both sockets down and the file says so.
+	if err := h.hook.SetDoor(inbound.Local, false); err != nil {
+		t.Fatal(err)
+	}
+	if a, b := h.hook.LocalAddrs(); a != "" || b != "" {
+		t.Fatalf("still listening after close: %q %q", a, b)
+	}
+	st, _ := inbound.LoadState(h.root)
+	if st.Local.Open || st.Local.HTTP != "127.0.0.1:0" {
+		t.Fatalf("file not updated: %+v", st.Local)
+	}
+}
+
+// TestTheLocalAndPortsDoorsCannotShareAPort: both default to 80, and a
+// file that opens both on it must be refused rather than half-applied.
+func TestTheLocalAndPortsDoorsCannotShareAPort(t *testing.T) {
+	st := inbound.DefaultState()
+	st.Ports.Open, st.Local.Open = true, true
+	if err := st.Validate(); err == nil {
+		t.Fatal("ports :80 and local 127.0.0.1:80 both open must not validate")
+	}
+	st.Local.HTTP = "127.0.0.1:8081"
+	if err := st.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	st.Domains = map[string]inbound.Door{"a.test": inbound.Local}
+	if err := st.Validate(); err == nil {
+		t.Fatal("a domain cannot be recorded on the local door")
 	}
 }

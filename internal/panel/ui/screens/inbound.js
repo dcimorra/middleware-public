@@ -28,7 +28,7 @@ export function inboundScreen() {
     try { certs = await api.get("/inbound/certificates"); } catch { certs = []; }
     const certBy = new Map((certs || []).map((c) => [c.domain, c]));
 
-    const doorCards = h("div", { class: "grid-2" }, doorCard("tunnel", doors.tunnel || {}), doorCard("ports", doors.ports || {}));
+    const doorCards = h("div", { class: "grid-3" }, doorCard("tunnel", doors.tunnel || {}), doorCard("ports", doors.ports || {}), localCard(doors.local || {}));
 
     const moveBtn = h("button", { type: "button", class: "btn", disabled: true }, t("inbound.move"));
     const all = h("input", { type: "checkbox", "aria-label": t("inbound.selectAll") });
@@ -97,6 +97,49 @@ export function inboundScreen() {
       ? h("p", { class: "small muted" }, t("inbound.portsDetail", { http: door.http ?? 80, https: door.https ?? 443 }))
       : h("p", { class: "small muted" }, t("inbound.tunnelDetail"));
     return h("div", { class: "card" }, h("h2", null, t("inbound.door." + key)), details, sw.el, lines.el);
+  }
+
+  // The local door is the development bench: plain http on this machine
+  // and a name server for the sites. Its addresses are edited here
+  // because a Docker install needs them on 0.0.0.0 with the ports mapped.
+  function localCard(door) {
+    const sw = toggle(door.open ? t("inbound.open") : t("inbound.closed"), { checked: Boolean(door.open) });
+    const httpIn = h("input", { type: "text", class: "mono", value: door.http || "", placeholder: "127.0.0.1:80" });
+    const dnsIn = h("input", { type: "text", class: "mono", value: door.dns || "", placeholder: "127.0.0.1:5353" });
+    const saveBtn = h("button", { type: "button", class: "btn sm" }, icon("save"), t("common.save"));
+    const state = door.open
+      ? (door.listening ? h("span", { class: "badge ok" }, t("inbound.localListening")) : h("span", { class: "badge bad", title: door.error || "" }, t("inbound.localNotListening")))
+      : null;
+    const apply = async (open) => {
+      const r = await api.put("/inbound/local", { open, http: httpIn.value.trim(), dns: dnsIn.value.trim() });
+      const l = (r && r.local) || {};
+      sw.input.checked = Boolean(l.open);
+      sw.el.lastChild.textContent = l.open ? t("inbound.open") : t("inbound.closed");
+      if (l.open && !l.listening) toast(l.error || t("inbound.localNotListening"), "bad");
+      return l;
+    };
+    sw.input.addEventListener("change", async () => {
+      sw.input.disabled = true;
+      try {
+        const l = await apply(sw.input.checked);
+        toast(l.open ? t("inbound.opened", { door: t("inbound.door.local") }) : t("inbound.closedNow", { door: t("inbound.door.local") }), "ok");
+        load(body, render);
+      } catch (e) { sw.input.checked = !sw.input.checked; toastError(e); } finally { sw.input.disabled = false; }
+    });
+    saveBtn.addEventListener("click", async () => {
+      saveBtn.classList.add("busy");
+      try { await apply(sw.input.checked); toast(t("inbound.localSaved"), "ok"); load(body, render); }
+      catch (e) { toastError(e); } finally { saveBtn.classList.remove("busy"); }
+    });
+    const help = h("details", { class: "section small" }, h("summary", null, t("inbound.localHelp")), h("pre", { class: "log help" }, door.help || ""));
+    return h("div", { class: "card" },
+      h("h2", null, t("inbound.door.local"), " ", state),
+      h("p", { class: "small muted" }, t("inbound.localDetail")),
+      sw.el,
+      h("div", { class: "form-row local-addrs" }, field(t("inbound.localHTTP"), httpIn), field(t("inbound.localDNS"), dnsIn)),
+      h("div", { class: "actions" }, saveBtn),
+      help,
+    );
   }
 
   function doorBadge(door) {

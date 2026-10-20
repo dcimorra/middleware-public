@@ -295,6 +295,10 @@ input[type="checkbox"], input[type="radio"] { width: 15px; height: 15px; accent-
 .card-title:empty { display: none; }
 .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
 .grid-2 { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+.grid-3 { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: start; margin-bottom: 12px; }
+.grid-3 > .card { margin-top: 0; }
+.local-addrs { margin-top: 12px; }
+pre.log.help { min-height: 0; max-height: 360px; font-size: 11.5px; }
 @media (max-width: 760px) { .grid-2 { grid-template-columns: 1fr; } }
 .stats { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
 .stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px 14px; box-shadow: var(--shadow); }

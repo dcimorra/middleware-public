@@ -50,6 +50,12 @@ services:
       # uncomment so the host's 80 and 443 reach them.
       # - "80:8080"
       # - "443:8443"
+      # The local door (development bench; docs/install.md). Set its
+      # addresses to 0.0.0.0:8080 and 0.0.0.0:5353 on the Inbound screen,
+      # then uncomment. Do not combine with the ports door lines above.
+      # - "127.0.0.1:80:8080"
+      # - "127.0.0.1:5353:5353/udp"
+      # - "127.0.0.1:5353:5353/tcp"
     # tini in the image reaps site processes; init: true would add a second.
     stop_grace_period: 30s
 

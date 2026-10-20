@@ -70,6 +70,41 @@ side of the mapping is `127.0.0.1`, so the panel is still reachable from
 that machine only. `MIDDLEWARE_LISTEN` overrides `listen` in
 `data/settings.json` wherever it is set; leave it unset under systemd.
 
+## Local development bench
+
+The **local door** is for a laptop or a workstation: sites named
+`something.middleware` (any suffix you like) resolve to this machine and
+answer over plain HTTP, with no internet, no hosts file and no certificate.
+It is two listeners: an HTTP one on `127.0.0.1:80` that serves the chain
+straight (no redirect to 443), and a name server on `127.0.0.1:5353` that
+answers loopback for every site here and NXDOMAIN for everything else.
+
+```sh
+middleware inbound local on            # or the Local card on the Inbound screen
+```
+
+The command prints how to tell your resolver to send the suffix there; the
+same text is under "How to point this machine's resolver here" on the
+panel. For Linux with systemd-resolved:
+
+```sh
+sudo mkdir -p /etc/systemd/resolved.conf.d
+printf '[Resolve]\nDNS=127.0.0.1:5353\nDomains=~middleware\n' | sudo tee /etc/systemd/resolved.conf.d/middleware.conf
+sudo systemctl restart systemd-resolved
+```
+
+macOS takes a file in `/etc/resolver/middleware` with `nameserver` and
+`port` lines; Windows takes an NRPT rule (no port there, so run the door's
+DNS on `127.0.0.1:53`). Then create a site called `misite.middleware` and
+open `http://misite.middleware/`. Browsers resolve `*.localhost` to the
+machine on their own, so `misite.localhost` needs no resolver change.
+
+Under Docker the listeners must bind every interface of the container
+and be published on the host's loopback: set the Local card's addresses to
+`0.0.0.0:8080` and `0.0.0.0:5353`, and uncomment the two local-door lines
+in `docker-compose.yml`. The local and ports doors cannot share port 80;
+on a development machine leave the ports door closed.
+
 ## What `middleware install` does
 
 Each step prints one line, `✓` or `✗`, and the command stops at the first

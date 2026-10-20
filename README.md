@@ -34,9 +34,11 @@ registration, no port to pick.
   fails on a single dropped request.
 - **Survives its own restart.** Sites keep running while the supervisor
   restarts or upgrades, and are re-adopted when it comes back.
-- **Opens two doors.** A reverse tunnel pushing to the loopback port, or
+- **Opens three doors.** A reverse tunnel pushing to the loopback port, or
   direct 80/443 with certificates obtained by an ACME client written on the
   standard library. Both at once while you move domains from one to the other.
+  And a local door for development: plain HTTP plus a name server of its
+  own, so `misite.middleware` opens in your browser with no internet.
 - **Filters.** A layer-7 WAF (rate limits, auto-blocking, body limits,
   country and user-agent policies, an "under attack" mode) and per-site
   access control (allow lists, passwords, per-route rules). Blocks go to the

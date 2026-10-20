@@ -96,7 +96,7 @@ func (s *Server) RegisterInbound(o InboundOptions) {
 		if err := ReadJSON(r, &body); err != nil {
 			return nil, err
 		}
-		door, err := inbound.ParseDoor(body.To)
+		door, err := inbound.ParsePublicDoor(body.To)
 		if err != nil {
 			return nil, Errorf(http.StatusBadRequest, "%v", err)
 		}
@@ -135,6 +135,20 @@ func (s *Server) RegisterInbound(o InboundOptions) {
 		}
 		if err := h.SetDoor(door, body.Open); err != nil {
 			return nil, err
+		}
+		return h.Status().Doors, nil
+	})
+	s.Handle("PUT", p+"/local", "Set the local door: open flag and the http and dns addresses it listens on", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		var body struct {
+			Open bool   `json:"open"`
+			HTTP string `json:"http"`
+			DNS  string `json:"dns"`
+		}
+		if err := ReadJSON(r, &body); err != nil {
+			return nil, err
+		}
+		if err := h.SetLocal(body.Open, body.HTTP, body.DNS); err != nil {
+			return nil, Errorf(http.StatusBadRequest, "%v", err)
 		}
 		return h.Status().Doors, nil
 	})
