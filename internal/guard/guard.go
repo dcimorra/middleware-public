@@ -73,7 +73,7 @@ type Options struct {
 	Kill     func(pid int) error
 	Interval time.Duration
 	Now      func() time.Time
-	// OrphanAge is how long a parentless browser may live; ten minutes.
+	// OrphanAge is how long a parentless browser may live; thirty minutes.
 	OrphanAge time.Duration
 	// Contained is called after an intrusion has been acted on (the
 	// processes killed, the site disabled), to ask an agent to find out
@@ -108,7 +108,7 @@ func New(opts Options) *Guard {
 		opts.Interval = 3 * time.Second
 	}
 	if opts.OrphanAge <= 0 {
-		opts.OrphanAge = 10 * time.Minute
+		opts.OrphanAge = 30 * time.Minute
 	}
 	g := &Guard{opts: opts, reader: Reader{Root: opts.ProcRoot}, now: opts.Now, seen: map[string]time.Time{}, offsets: map[string]int64{}}
 	g.kill = opts.Kill
@@ -254,7 +254,7 @@ func (g *Guard) Sweep() ([]Incident, error) {
 			}
 		}
 	}
-	g.huntOrphans(procs, byPID, claimed)
+	g.huntBrowsers(procs, byPID, claimed)
 	return recorded, nil
 }
 
@@ -465,34 +465,6 @@ func (g *Guard) killTree(pid int, byPID map[int]*Process, done map[int]bool) (ki
 	}
 	walk(pid)
 	return
-}
-
-// huntOrphans kills headless browsers whose parent is gone. A Chromium
-// started by a site, a test run or the panel's own browser is reparented
-// to init when its owner dies and then sits there with a gigabyte of
-// memory; after ten minutes nobody is coming back for it.
-func (g *Guard) huntOrphans(procs []Process, byPID map[int]*Process, claimed map[int]bool) {
-	now := g.now()
-	for i := range procs {
-		p := &procs[i]
-		if claimed[p.PID] || (p.PPID > 1 && byPID[p.PPID] != nil) {
-			continue
-		}
-		if !isBrowser(p) {
-			continue
-		}
-		if p.Started.IsZero() || now.Sub(p.Started) < g.opts.OrphanAge {
-			continue
-		}
-		key := "orphan|" + strconv.Itoa(p.PID)
-		if g.recently(key) {
-			continue
-		}
-		killed, failed := g.killTree(p.PID, byPID, map[int]bool{})
-		g.emit(events.Event{Type: "guard.orphan", Actor: "guard", Level: "warn",
-			Message: fmt.Sprintf("orphan browser %s (pid %d) alive for %s, killed %d, failed %d", p.Comm, p.PID, now.Sub(p.Started).Round(time.Minute), killed, failed),
-			Data:    map[string]any{"pid": p.PID, "comm": p.Comm}})
-	}
 }
 
 func isBrowser(p *Process) bool {

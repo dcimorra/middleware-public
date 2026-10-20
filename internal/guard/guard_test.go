@@ -371,7 +371,7 @@ func TestAHealthySiteRaisesNothing(t *testing.T) {
 	}
 }
 
-func TestAnOrphanBrowserIsKilledAfterTenMinutes(t *testing.T) {
+func TestTheReaperWaitsHalfAnHourRespectsCDPAndCapsAConversation(t *testing.T) {
 	fp := newFakeProc(t)
 	h := newHouse(t)
 	fp.add(procSpec{pid: 700, ppid: 1, comm: "chrome", cmdline: []string{"/opt/chromium/chrome", "--headless"}, cwd: "/", exe: "/opt/chromium/chrome", startSec: 100})
@@ -379,20 +379,31 @@ func TestAnOrphanBrowserIsKilledAfterTenMinutes(t *testing.T) {
 	// A browser whose parent is alive is somebody's, young or old.
 	fp.add(procSpec{pid: 800, ppid: 1, comm: "node", cmdline: []string{"node", "scrape.js"}, cwd: "/home/x", startSec: 100})
 	fp.add(procSpec{pid: 801, ppid: 800, pgid: 800, comm: "chrome", cmdline: []string{"chrome", "--headless"}, cwd: "/", startSec: 100})
+	// An orphan someone is driving over CDP right now.
+	fp.add(procSpec{pid: 900, ppid: 1, comm: "chrome", cmdline: []string{"chrome", "--headless", "--remote-debugging-port=9333"}, cwd: "/", startSec: 100})
+	fp.listeners = append(fp.listeners, "   9: 0100007F:2475 0100007F:D431 01 00000000:00000000 00:00000000 00000000  1000        0 99999 1 0000000000000000 100 0 0 10 0")
+	fp.flushNet()
+	// A conversation's agent with five browsers open, all young.
+	fp.add(procSpec{pid: 500, ppid: 1, comm: "claude", cmdline: []string{"claude", "-p"}, cwd: "/srv", startSec: 100})
+	for i := 0; i < 5; i++ {
+		fp.add(procSpec{pid: 510 + i, ppid: 500, comm: "chrome", cmdline: []string{"chrome", "--headless"}, cwd: "/", startSec: int64(1000 + i)})
+	}
 	kills := &killLog{}
-	g, _ := newGuard(t, fp, h, kills, time.Unix(fp.bootUnix+100+300, 0))
-	if _, err := g.Sweep(); err != nil {
-		t.Fatal(err)
+	g, _ := newGuard(t, fp, h, kills, time.Unix(fp.bootUnix+100+20*60, 0))
+	g.Sweep()
+	// Twenty minutes: no orphan yet, but the conversation's two oldest.
+	if got := kills.sorted(); fmt.Sprint(got) != "[510 511]" {
+		t.Fatalf("killed %v, want the conversation's two oldest browsers", got)
 	}
-	if len(kills.sorted()) != 0 {
-		t.Fatalf("a five-minute-old orphan was killed: %v", kills.sorted())
+	g2, _ := newGuard(t, fp, h, kills, time.Unix(fp.bootUnix+100+31*60, 0))
+	g2.Sweep()
+	got := kills.sorted()
+	if fmt.Sprint(got) != "[510 510 511 511 700 701]" && fmt.Sprint(got) != "[510 511 700 701]" {
+		t.Fatalf("killed %v, want also the orphan and its renderer, and not the one driven over CDP", got)
 	}
-	g2, _ := newGuard(t, fp, h, kills, time.Unix(fp.bootUnix+100+700, 0))
-	if _, err := g2.Sweep(); err != nil {
-		t.Fatal(err)
-	}
-	if got := kills.sorted(); fmt.Sprint(got) != "[700 701]" {
-		t.Fatalf("killed %v, want the orphan and its renderer only", got)
+	data, err := os.ReadFile(filepath.Join(h.root, "data", "guard", "reaper.jsonl"))
+	if err != nil || strings.Count(string(data), "\n") < 3 || !strings.Contains(string(data), `"pid":700`) {
+		t.Fatalf("reaper log: %v\n%s", err, data)
 	}
 }
 

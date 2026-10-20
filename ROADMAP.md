@@ -43,8 +43,6 @@ Nothing left.
 
 ## 6. The guard
 
-- The browser reaper: respect open CDP connections, 30 minutes, a JSONL
-  log, a cap for browsers started by conversations.
 - Log rotation and a size cap; `SIGUSR1` diagnostics; resource episodes and
   history; repair after repeated health failures (manifest `autofix`).
 
@@ -121,7 +119,9 @@ Nothing left.
   the house's agent asked to investigate once an intrusion is contained,
   with what was observed fenced as evidence; a daily `npm audit` from each
   site's lockfile (critical and new is an event and a push, never a fix), a
-  Dependencies screen, and publishing that says `vulnerable`.
+  Dependencies screen, and publishing that says `vulnerable`; the browser
+  reaper (thirty minutes, a browser with a CDP client is in use, three per
+  conversation, every kill in data/guard/reaper.jsonl).
 - **§5 Agents**: a jail that holds, two-hour turns, the processes a
   conversation leaves listed and killed, several conversations per site,
   the site door, loans, attachments, queued messages, turns that survive a

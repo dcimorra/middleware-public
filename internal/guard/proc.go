@@ -210,3 +210,31 @@ func (r Reader) fillListening(procs []*Process) {
 		}
 	}
 }
+
+// connected is the set of local TCP ports with an established connection,
+// from net/tcp and net/tcp6: a browser's debugging port in it has a client
+// on the other end.
+func (r Reader) connected() map[int]bool {
+	out := map[int]bool{}
+	for _, name := range []string{"net/tcp", "net/tcp6"} {
+		f, err := os.Open(filepath.Join(r.root(), name))
+		if err != nil {
+			continue
+		}
+		sc := bufio.NewScanner(f)
+		sc.Scan()
+		for sc.Scan() {
+			fields := strings.Fields(sc.Text())
+			if len(fields) < 4 || fields[3] != "01" {
+				continue
+			}
+			if _, portHex, ok := strings.Cut(fields[1], ":"); ok {
+				if port, err := strconv.ParseInt(portHex, 16, 32); err == nil {
+					out[int(port)] = true
+				}
+			}
+		}
+		f.Close()
+	}
+	return out
+}
