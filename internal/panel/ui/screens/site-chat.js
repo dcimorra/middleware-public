@@ -107,6 +107,19 @@ export function chatTab(domain) {
     syncCapacity();
   }));
 
+  function threadEl(turn, id) {
+    turn.threads = turn.threads || new Map();
+    let th = turn.threads.get(id);
+    if (!th) {
+      const pre = h("pre", null, "");
+      const det = h("details", { class: "chat-thread" }, h("summary", null, t("chat.subagent")), pre);
+      turn.el.insertBefore(det, turn.textEl);
+      th = { det, pre };
+      turn.threads.set(id, th);
+    }
+    return th;
+  }
+
   function turnEl(role, body, cost, at) {
     const who = h("div", { class: "who" }, role === "user" ? t("chat.you") : t("chat.agent"), at ? h("span", { class: "muted" }, new Date(at).toLocaleTimeString()) : null, cost ? h("span", { class: "cost" }, fmtCost(cost)) : null);
     const textEl = h("div", { class: "text" }, role === "user" ? (body || "") : stripQuestions(body || ""));
@@ -175,6 +188,10 @@ export function chatTab(domain) {
       const list = conv.turns || [];
       list.forEach((tn, i) => {
         const tu = turnEl(tn.role === "user" ? "user" : "agent", tn.text, tn.cost, tn.at);
+        for (const th of tn.threads || []) {
+          const pre = h("pre", null, (th.text || "") + (th.tools && th.tools.length ? "\n[" + th.tools.join("] [") + "]" : ""));
+          tu.el.insertBefore(h("details", { class: "chat-thread" }, h("summary", null, t("chat.subagent")), pre), tu.textEl);
+        }
         // Only the last turn's questions are still open; earlier ones
         // were answered by whatever came after them.
         if (i === list.length - 1 && tn.role !== "user" && !conv.running) for (const q of tn.questions || []) tu.el.append(questionEl(q));
@@ -216,6 +233,13 @@ export function chatTab(domain) {
     const d = ev.data || {};
     if (ev.type === "agent.start" || ev.type === "agent.turn.started") { if (!running) begin(); return; }
     if (!running) begin();
+    if (d.thread && (ev.type === "agent.text" || ev.type.startsWith("agent.tool"))) {
+      // A subagent's words and tools go in their own fold, out of the way
+      // of what the agent itself is answering.
+      const th = threadEl(running, d.thread);
+      th.pre.textContent += ev.type === "agent.text" ? (th.pre.textContent ? "\n\n" : "") + (d.text || "") : `\n[${d.tool || "tool"}]`;
+      return;
+    }
     if (ev.type === "agent.text" || ev.type === "agent.delta") {
       const piece = d.delta ?? d.text ?? ev.message ?? "";
       running.buf += piece;

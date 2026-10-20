@@ -34,6 +34,9 @@ type Event struct {
 	Input     map[string]any `json:"input,omitempty"`
 	Cost      float64        `json:"cost,omitempty"`
 	SessionID string         `json:"session_id,omitempty"`
+	// Thread is set on what a subagent said or did: the id of the tool
+	// call that started it. Empty is the main agent.
+	Thread string `json:"thread,omitempty"`
 }
 
 // Request is one turn.

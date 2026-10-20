@@ -216,7 +216,10 @@ type line struct {
 	IsError   bool    `json:"is_error"`
 	Result    string  `json:"result"`
 	Cost      float64 `json:"total_cost_usd"`
-	Message   struct {
+	// ParentToolUseID marks a subagent's messages: the Task call that
+	// started it.
+	ParentToolUseID string `json:"parent_tool_use_id"`
+	Message         struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 }
@@ -255,10 +258,10 @@ func (p *parser) Line(raw string) ([]agent.Event, bool) {
 			switch b.Type {
 			case "text":
 				if b.Text != "" {
-					evs = append(evs, agent.Event{Kind: agent.KindText, Text: b.Text, SessionID: p.sessionID})
+					evs = append(evs, agent.Event{Kind: agent.KindText, Text: b.Text, SessionID: p.sessionID, Thread: l.ParentToolUseID})
 				}
 			case "tool_use":
-				evs = append(evs, agent.Event{Kind: agent.KindTool, Tool: b.Name, Input: b.Input, SessionID: p.sessionID})
+				evs = append(evs, agent.Event{Kind: agent.KindTool, Tool: b.Name, Input: b.Input, SessionID: p.sessionID, Thread: l.ParentToolUseID})
 			}
 		}
 		return evs, false

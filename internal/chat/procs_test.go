@@ -170,3 +170,24 @@ func TestAnAttachmentGoesWithTheNextMessage(t *testing.T) {
 		t.Fatal("the attachment is still pending after the turn")
 	}
 }
+
+// What a subagent says is kept apart from the main answer.
+func TestASubagentsWordsAreKeptApart(t *testing.T) {
+	p := &fakeProvider{key: "fake", script: []agent.Event{
+		{Kind: agent.KindText, Text: "let me delegate"},
+		{Kind: agent.KindText, Text: "sub: found it", Thread: "task1"},
+		{Kind: agent.KindTool, Tool: "Grep", Thread: "task1"},
+		{Kind: agent.KindText, Text: "done"},
+		{Kind: agent.KindResult},
+	}}
+	m, _, bus := newManager(t, p)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+	m.Send("a.test", "go", "")
+	waitFor(t, ch, "agent.done")
+	c, _ := m.History("a.test")
+	last := c.Turns[len(c.Turns)-1]
+	if last.Text != "let me delegate\n\ndone" || len(last.Threads) != 1 || last.Threads[0].Text != "sub: found it" || last.Threads[0].Tools[0] != "Grep" {
+		t.Fatalf("%+v", last)
+	}
+}

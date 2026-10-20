@@ -582,5 +582,6 @@
   "chat.queued": "queued for when this turn ends",
   "chat.attach": "Attach",
   "chat.attachHint": "Files go with the next message (25 MB each); drop them here too",
-  "chat.removeFile": "Remove {name}"
+  "chat.removeFile": "Remove {name}",
+  "chat.subagent": "Subagent"
 }

@@ -49,6 +49,16 @@ type Turn struct {
 	Tools     []string  `json:"tools,omitempty"`
 	// Questions are the decisions the agent asked for in this turn.
 	Questions []Question `json:"questions,omitempty"`
+	// Threads are what subagents said, apart from the main answer: kept,
+	// readable, and out of the way of what the agent itself replied.
+	Threads []Thread `json:"threads,omitempty"`
+}
+
+// Thread is one subagent's part of a turn.
+type Thread struct {
+	ID    string   `json:"id"`
+	Text  string   `json:"text,omitempty"`
+	Tools []string `json:"tools,omitempty"`
 }
 
 // Origin says who opened a conversation.
@@ -641,10 +651,34 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 			m.emit("agent.question", name, "", q.Question, map[string]any{"turn_id": turnID, "question": q.Question, "options": q.Options, "recommended": q.Recommended})
 		}
 	}
+	var threads []Thread
+	thread := func(id string) *Thread {
+		for i := range threads {
+			if threads[i].ID == id {
+				return &threads[i]
+			}
+		}
+		threads = append(threads, Thread{ID: id})
+		return &threads[len(threads)-1]
+	}
 	for ev := range run.Events() {
 		all = append(all, ev)
 		if ev.SessionID != "" {
 			sessionID = ev.SessionID
+		}
+		if ev.Thread != "" && (ev.Kind == agent.KindText || ev.Kind == agent.KindTool) {
+			th := thread(ev.Thread)
+			if ev.Kind == agent.KindText {
+				if th.Text != "" {
+					th.Text += "\n\n"
+				}
+				th.Text += ev.Text
+				m.emit("agent.text", name, "", "", map[string]any{"turn_id": turnID, "text": ev.Text, "thread": ev.Thread})
+			} else {
+				th.Tools = append(th.Tools, ev.Tool)
+				m.emit("agent.tool", name, "", "", map[string]any{"turn_id": turnID, "tool": ev.Tool, "input": ev.Input, "thread": ev.Thread})
+			}
+			continue
 		}
 		switch ev.Kind {
 		case agent.KindText:
@@ -705,7 +739,7 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 	if sessionID != "" {
 		c.SessionID = sessionID
 	}
-	turn := Turn{ID: turnID, Role: "assistant", Text: text.String(), Cost: cost, At: time.Now(), SessionID: sessionID, Tools: tools, Questions: questions}
+	turn := Turn{ID: turnID, Role: "assistant", Text: text.String(), Cost: cost, At: time.Now(), SessionID: sessionID, Tools: tools, Questions: questions, Threads: threads}
 	if errText != "" {
 		turn.Role = "error"
 		if turn.Text == "" {
