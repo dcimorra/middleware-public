@@ -353,14 +353,6 @@ func (m *Manager) follow(domain, turnID string, s Settings, run agent.Run, cance
 		m.emit("agent.jail_violation", domain, "error", fmt.Sprintf("the agent referred to %d denied path(s)", len(v)), map[string]any{"turn_id": turnID, "paths": v})
 	}
 
-	// The turn counts as running until its file is written: Running()
-	// returning false is the promise that History() has the turn.
-	defer func() {
-		m.mu.Lock()
-		delete(m.running, domain)
-		m.mu.Unlock()
-	}()
-
 	c := m.load(domain)
 	if sessionID != "" {
 		c.SessionID = sessionID
@@ -378,6 +370,12 @@ func (m *Manager) follow(domain, turnID string, s Settings, run agent.Run, cance
 	if err := m.save(c); err != nil {
 		m.emit("agent.error", domain, "error", "conversation not saved: "+err.Error(), map[string]any{"turn_id": turnID})
 	}
+	// The turn counts as running until its file is written, and the final
+	// event goes out only after that: whoever reacts to agent.done can
+	// Send again and read the turn from History at once.
+	m.mu.Lock()
+	delete(m.running, domain)
+	m.mu.Unlock()
 	if errText != "" {
 		m.emit("agent.error", domain, "error", errText, map[string]any{"turn_id": turnID, "cost": cost})
 		return
