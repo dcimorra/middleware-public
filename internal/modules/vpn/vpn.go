@@ -499,9 +499,13 @@ func (v *VPN) AddPeer(ctx context.Context, name string) (string, error) {
 		ServerPublicKey: v.state.PublicKey,
 		PresharedKey:    psk,
 		Endpoint:        v.state.Endpoint,
-		// Only the VPN subnet is routed: this is a door to the panel, not a
-		// tunnel for all of the client's traffic.
-		AllowedIPs:          []netip.Prefix{v.state.Subnet},
+		// Only the VPN subnet is routed: this is a door to the panel and to
+		// the sites, not a tunnel for all of the client's traffic.
+		AllowedIPs: []netip.Prefix{v.state.Subnet},
+		// The VPN's own resolver, on the server's address in the tunnel:
+		// it answers the house's names with that address (VPN-only sites
+		// exist nowhere else) and forwards every other name.
+		DNS:                 wireguard.ServerAddress(v.state.Subnet).String(),
 		PersistentKeepalive: 25,
 	})
 	if err != nil {
@@ -640,6 +644,29 @@ func (v *VPN) Status(ctx context.Context) Status {
 	}
 	sort.Slice(st.Peers, func(i, j int) bool { return st.Peers[i].Name < st.Peers[j].Name })
 	return st
+}
+
+// ServerAddress is the server's address inside the VPN, ok false while
+// the module is off. Read on every inbound tick: no helper call.
+func (v *VPN) ServerAddress() (netip.Addr, bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if !v.state.Enabled || !v.state.Subnet.IsValid() {
+		return netip.Addr{}, false
+	}
+	return wireguard.ServerAddress(v.state.Subnet), true
+}
+
+// PeerName is the name of the peer with this address in the tunnel, or "".
+func (v *VPN) PeerName(ip netip.Addr) string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, p := range v.peers {
+		if p.Address == ip {
+			return p.Name
+		}
+	}
+	return ""
 }
 
 // Dir is where the module keeps its files.

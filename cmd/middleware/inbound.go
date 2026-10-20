@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -73,6 +74,27 @@ func buildInbound(a *app.App) app.Hook {
 		return ok
 	}
 	inboundHook = inbound.New(a.Root, store, solver)
+	// The VPN door: open while the VPN module is on, VPN-only sites served
+	// nowhere else, narrowed to devices by their address in the tunnel.
+	inboundHook.VPNAddress = func() (netip.Addr, bool) {
+		if theVPN == nil {
+			return netip.Addr{}, false
+		}
+		return theVPN.ServerAddress()
+	}
+	inboundHook.DeviceOf = func(ip netip.Addr) string {
+		if theVPN == nil {
+			return ""
+		}
+		return theVPN.PeerName(ip)
+	}
+	inboundHook.VPNOnly = func(host string) ([]string, bool) {
+		sn, ok := a.Engine.Lookup(host)
+		if !ok || sn.Manifest == nil || sn.Manifest.VPN == nil {
+			return nil, false
+		}
+		return sn.Manifest.VPN.Devices, true
+	}
 	return inboundHook
 }
 

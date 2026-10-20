@@ -23,7 +23,6 @@ What the tests only fake, to be run for real:
 
 ## 2. Getting a site online
 
-- VPN-only sites and the VPN's own DNS.
 - Cloudflare extras: edge purge and cache rules, the DNS record editor, the
   Access app list, narrowing a wide token; domain search and prices.
 
@@ -68,6 +67,11 @@ Nothing left.
   with their own password, `deny`, `message`, projects without a domain,
   `group`, `needs`, `notice`, hold modes and `until`, `container`,
   `claude_api`, `claude`, `chat.reads`.
+- **§2 VPN-only sites**: a VPN door on the server's address in the tunnel
+  (80, 443, 53) while the VPN is up; a site with `vpn` exists only through
+  it, narrowed by device, never published (and taken down if it becomes
+  VPN-only); the VPN's resolver answers the house's names, no AAAA, and
+  forwards the rest; client configs carry it; migrate carries V1's.
 - **§2 House cache**: responses kept in memory by the manifest's
   `cache.rules` (origin, force, never), inside the door (a test that puts it
   outside fails), walls no manifest removes, simultaneous misses coalesced,

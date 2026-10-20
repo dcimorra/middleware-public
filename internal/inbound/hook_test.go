@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -422,4 +423,103 @@ func TestTheLocalAndPortsDoorsCannotShareAPort(t *testing.T) {
 	if err := st.Validate(); err == nil {
 		t.Fatal("a domain cannot be recorded on the local door")
 	}
+}
+
+// TestAVPNOnlySiteExistsOnlyThroughTheVPNDoor opens the VPN door on
+// loopback (standing in for the address inside the tunnel) and asks for a
+// VPN-only site through it and through the other doors, with and without
+// the headers an edge would set.
+func TestAVPNOnlySiteExistsOnlyThroughTheVPNDoor(t *testing.T) {
+	h := newHouse(t, "vpn.test", "open.test")
+	h.hook.VPNPorts = inbound.VPNPorts{HTTP: "0", HTTPS: "0", DNS: "0"}
+	h.hook.VPNAddress = func() (netip.Addr, bool) { return netip.MustParseAddr("127.0.0.1"), true }
+	devices := []string{"phone"}
+	h.hook.VPNOnly = func(host string) ([]string, bool) { return devices, host == "vpn.test" }
+	h.hook.DeviceOf = func(ip netip.Addr) string {
+		if ip == netip.MustParseAddr("127.0.0.1") {
+			return "phone"
+		}
+		return ""
+	}
+	var vhttp, vdns string
+	for deadline := time.Now().Add(5 * time.Second); vhttp == ""; {
+		vhttp, _, vdns = h.hook.VPNAddrs()
+		if time.Now().After(deadline) {
+			t.Fatal("the VPN door did not open")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	ask := func(addr, host string, headers ...string) (int, string) {
+		req, _ := http.NewRequest("GET", "http://"+addr+"/", nil)
+		req.Host = host
+		for _, kv := range headers {
+			k, v, _ := strings.Cut(kv, ": ")
+			req.Header.Set(k, v)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode, string(b)
+	}
+	if code, body := ask(vhttp, "vpn.test"); code != 200 || !strings.Contains(body, "site=vpn.test") {
+		t.Fatalf("through the VPN door: %d %s", code, body)
+	}
+	// Through the handler without the VPN door's tag, which is what the
+	// tunnel and the ports door are: it does not exist, whatever the
+	// headers say.
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "http://vpn.test/", nil)
+	r.Header.Set("CF-Connecting-IP", "127.0.0.1")
+	h.hook.Handler.ServeHTTP(rec, r)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("through the tunnel: %d", rec.Code)
+	}
+	if code, _ := ask(vhttp, "open.test"); code != 200 {
+		t.Fatalf("a public site through the VPN door: %d", code)
+	}
+	// Narrowed to a device that is not this one.
+	devices = []string{"laptop"}
+	if code, _ := ask(vhttp, "vpn.test"); code != http.StatusNotFound {
+		t.Fatalf("another device: %d", code)
+	}
+	// The VPN's DNS answers the house's names with the door's address,
+	// and no AAAA.
+	a, aaaa := dnsAsk(t, vdns, "vpn.test", 1), dnsAsk(t, vdns, "vpn.test", 28)
+	if a != "127.0.0.1" || aaaa != "" {
+		t.Fatalf("A %q AAAA %q", a, aaaa)
+	}
+}
+
+// dnsAsk sends one query over UDP and returns the first answer's address.
+func dnsAsk(t *testing.T, addr, name string, qtype uint16) string {
+	t.Helper()
+	q := []byte{0x12, 0x34, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0}
+	for _, l := range strings.Split(name, ".") {
+		q = append(q, byte(len(l)))
+		q = append(q, l...)
+	}
+	q = append(q, 0, byte(qtype>>8), byte(qtype), 0, 1)
+	c, err := net.Dial("udp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(2 * time.Second))
+	c.Write(q)
+	buf := make([]byte, 512)
+	n, err := c.Read(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if buf[7] == 0 { // no answers
+		return ""
+	}
+	// The answer is the last record: its data is the last 4 or 16 bytes.
+	if qtype == 1 {
+		return net.IP(buf[n-4 : n]).String()
+	}
+	return net.IP(buf[n-16 : n]).String()
 }

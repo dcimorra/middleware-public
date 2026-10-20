@@ -289,6 +289,17 @@ process.
   nothing for a request with `Authorization`, no event streams. Simultaneous
   misses reach the site as one, and a handover empties the site's cache.
   `max_mb` asks for less than the house's budget, never for more.
+- `vpn` makes the site exist only inside the VPN (the module of that name):
+  it is served through the VPN door (the server's address in the tunnel, on
+  80 and 443, open while the VPN is up) and through no other, where it gets
+  the same page as a name nobody serves, whatever the headers say. It is
+  never published, and a published site that becomes VPN-only is taken
+  down. `vpn.devices` narrows it to those peers, by their address in the
+  tunnel, which WireGuard makes trustworthy. The VPN's own resolver, which
+  every device's config points at, answers the house's names with the
+  server's address in the tunnel and no AAAA, and forwards every other
+  name. Its certificate needs dns-01 (the Cloudflare module): no CA can
+  reach it.
 - `autofix: false` keeps the automatic repair (Settings) away from this
   site, whatever the installation says; the panel cannot override it.
 - `aliases` are served exactly like the site. A name that is already a site,

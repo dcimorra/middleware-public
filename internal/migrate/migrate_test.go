@@ -87,7 +87,7 @@ func TestAProxySiteKeepsEverythingItHad(t *testing.T) {
 
 func TestWhatV2CannotDoYetBlocksTheSite(t *testing.T) {
 	cases := map[string]string{
-		`{"kind":"static","vpn":{"devices":["phone"]}}`:                       "vpn",
+		`{"kind":"static","vpn":{"devices":["phone"],"typo":1}}`:              "vpn",
 		`{"kind":"static","attack":{"on":true,"bits":40}}`:                    "attack.bits",
 		`{"kind":"static","cache":{"rules":[{"path":"/","mode":"siempre"}]}}`: "not a V1 mode",
 		`{"kind":"static","hold":{"mode":"302"}}`:                             "hold mode",
@@ -131,7 +131,7 @@ func TestApplyKeepsTheOriginalAndOnlyTouchesReadySites(t *testing.T) {
 		os.WriteFile(filepath.Join(dir, name, manifest.FileName), []byte(body), 0o644)
 	}
 	write("ok.example", `{"kind":"static","title":"ok"}`)
-	write("vpn.example", `{"kind":"static","vpn":{"devices":["p"]}}`)
+	write("app.example", `{"kind":"static","app":"mask"}`)
 	write("v2.example", `{"version":2}`)
 	write("_retirado-x.example-20260101-0000", `{"kind":"static"}`)
 	write("out.example", `{"kind":"static","root":"../ok.example"}`)
@@ -269,5 +269,12 @@ func TestTheHouseCacheRulesAreCarried(t *testing.T) {
 	c := r.Manifest.Cache
 	if c == nil || c.MaxMB != 64 || len(c.Rules) != 3 || c.Rules[0].Mode != "origin" || c.Rules[1].Mode != "force" || c.Rules[1].TTL != 3600 || c.Rules[2].Mode != "never" {
 		t.Fatalf("%+v", c)
+	}
+}
+
+func TestAVPNOnlySiteIsCarried(t *testing.T) {
+	r := Convert("a.example", []byte(`{"kind":"static","vpn":{"devices":["phone"]}}`))
+	if !r.Ready() || r.Manifest.VPN == nil || r.Manifest.VPN.Devices[0] != "phone" {
+		t.Fatalf("%+v %v", r.Manifest, r.Blockers)
 	}
 }

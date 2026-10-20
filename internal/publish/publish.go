@@ -69,8 +69,13 @@ type Options struct {
 	// PublicIP detects the address the ports door is reached at; the
 	// inbound state's public_ip, when set, wins over it.
 	PublicIP func(ctx context.Context) (string, error)
-	Tick     time.Duration
-	Now      func() time.Time
+	// VPNOnly says whether a site exists only inside the VPN. Such a site
+	// is never published, and one that becomes VPN-only is taken down: a
+	// public record would point the world at a door that answers it 404,
+	// and tell it the name exists.
+	VPNOnly func(site string) bool
+	Tick    time.Duration
+	Now     func() time.Time
 }
 
 // Status of one name.
@@ -197,6 +202,9 @@ func (p *Publisher) Publish(ctx context.Context, site string, door inbound.Door)
 	}
 	if _, err := inbound.ParsePublicDoor(string(door)); err != nil {
 		return nil, err
+	}
+	if p.opts.VPNOnly != nil && p.opts.VPNOnly(site) {
+		return nil, fmt.Errorf("%s exists only inside the VPN (its manifest's vpn): it is never published", site)
 	}
 	hosts := p.hostsOf(site)
 	if len(hosts) == 0 {
@@ -332,6 +340,14 @@ func (p *Publisher) Reconcile(ctx context.Context) {
 	for _, s := range names {
 		if ctx.Err() != nil {
 			return
+		}
+		p.mu.Lock()
+		_, intends := p.f.Sites[s]
+		p.mu.Unlock()
+		if intends && p.opts.VPNOnly != nil && p.opts.VPNOnly(s) {
+			p.emit("publish.vpn_only", s, "warn", "the site is VPN-only now: taking its public names down", nil)
+			p.Unpublish(ctx, s)
+			continue
 		}
 		p.work.Lock()
 		p.reconcileSiteLocked(ctx, s)

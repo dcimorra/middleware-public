@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"sort"
 	"strings"
 	"sync"
@@ -45,6 +46,15 @@ type Hook struct {
 	// Tick is how often the listeners are reconciled with the state file.
 	// Default 2 seconds.
 	Tick time.Duration
+	// VPNAddress is the server's address inside the VPN, ok false while
+	// the VPN is down (vpn.go).
+	VPNAddress func() (netip.Addr, bool)
+	// VPNOnly says whether host is a VPN-only site, and for which devices.
+	VPNOnly func(host string) (devices []string, ok bool)
+	// DeviceOf names the VPN peer with an address.
+	DeviceOf func(ip netip.Addr) string
+	// VPNPorts overrides the VPN door's ports (tests).
+	VPNPorts VPNPorts
 
 	file  *stateFile
 	mu    sync.Mutex
@@ -58,6 +68,11 @@ type Hook struct {
 	// otherwise emit on every tick, which is noise and not information.
 	lastErr      string
 	lastLocalErr string
+	// The VPN door (vpn.go).
+	vpnHTTP, vpnHTTPS *listener
+	vpnDNS            *localdns.Server
+	vpnWant           netip.Addr
+	lastVPNErr        string
 }
 
 type listener struct {
@@ -109,6 +124,13 @@ func (h *Hook) Wrap(next http.Handler) http.Handler {
 		}
 		door := doorOf(r)
 		host := proxy.Host(r)
+		if !h.vpnAllows(r, host, door) {
+			// The same page as a name nobody serves: through any other
+			// door, a VPN-only site does not exist, and saying "closed"
+			// would say it does. No header changes that.
+			pages.Write(w, r, "unknown", http.StatusNotFound)
+			return
+		}
 		if !h.isPanel(host) {
 			st := h.file.get()
 			if (door == Tunnel && !st.Tunnel.Open) || (door == Ports && !st.Ports.Open) || (door == Local && !st.Local.Open) {
@@ -119,6 +141,12 @@ func (h *Hook) Wrap(next http.Handler) http.Handler {
 		if door == Ports {
 			// Ours to say: a client on the public port cannot have been
 			// through an edge that set it.
+			if r.TLS != nil {
+				r.Header.Set("X-Forwarded-Proto", "https")
+			} else {
+				r.Header.Set("X-Forwarded-Proto", "http")
+			}
+		} else if door == VPN {
 			if r.TLS != nil {
 				r.Header.Set("X-Forwarded-Proto", "https")
 			} else {
@@ -220,6 +248,7 @@ func (h *Hook) reconcile() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.reconcileLocalLocked(st)
+	h.reconcileVPNLocked()
 	if !st.Ports.Open {
 		if h.http != nil || h.https != nil {
 			h.closeLocked()

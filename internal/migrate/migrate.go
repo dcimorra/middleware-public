@@ -194,6 +194,7 @@ func Convert(name string, data []byte) Result {
 	m.ClaudeAPI = c.claudeAPI
 	m.Security = c.security
 	m.Attack = c.attack
+	m.VPN = c.vpn
 	if c.cache != nil {
 		if m.Cache == nil {
 			m.Cache = c.cache
@@ -227,6 +228,7 @@ type converter struct {
 	// autofixOff carries V1's "autofix": false.
 	autofixOff bool
 	cache      *manifest.Cache
+	vpn        *manifest.VPNOnly
 	chat       *manifest.ChatRules
 }
 
@@ -263,7 +265,15 @@ func (c *converter) blockers(in *v1) {
 		}
 	}
 	if present(in.VPN) {
-		c.block("vpn (VPN-only site; ROADMAP §2)")
+		var v manifest.VPNOnly
+		dec := json.NewDecoder(bytes.NewReader(in.VPN))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&v); err != nil {
+			c.block("vpn: %v", err)
+		} else {
+			c.vpn = &v
+			c.note("vpn: VPN-only in V2 too; its devices are the VPN module's peer names, which a V1 device list may not match")
+		}
 	}
 	if present(in.Security) {
 		c.convertSecurity(in.Security)

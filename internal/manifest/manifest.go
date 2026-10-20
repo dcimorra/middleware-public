@@ -52,6 +52,10 @@ type Manifest struct {
 	// Security decides by what a caller claims to be and where it is
 	// (robots, browsers, countries), and which paths are never served.
 	Security *security.Rules `json:"security,omitempty"`
+	// VPN makes the site exist only inside the VPN: served through the VPN
+	// door and nowhere else, never published, resolved by the VPN's own
+	// DNS. Devices, when listed, narrows it to those peers.
+	VPN *VPNOnly `json:"vpn,omitempty"`
 	// Autofix false keeps the automatic repair away from this site even
 	// when the installation turns it on: some sites are not touched
 	// without someone looking. The panel cannot override it.
@@ -208,6 +212,12 @@ type ClaudeAPI struct {
 	// HideChats keeps the site's conversations out of the panel's list;
 	// they are still kept, costed and readable.
 	HideChats bool `json:"hide_chats,omitempty"`
+}
+
+// VPNOnly is the manifest's vpn section.
+type VPNOnly struct {
+	// Devices are VPN peer names; empty is every device.
+	Devices []string `json:"devices,omitempty"`
 }
 
 // Notice is how the visitor pages of this site look.
@@ -513,6 +523,13 @@ func (m *Manifest) Validate() error {
 			}
 			if err := validAddrs("access.routes."+prefix+".deny", r.Deny); err != nil {
 				return err
+			}
+		}
+	}
+	if m.VPN != nil {
+		for _, d := range m.VPN.Devices {
+			if !validName(d) {
+				return fmt.Errorf("vpn.devices: %q is not a device name", d)
 			}
 		}
 	}

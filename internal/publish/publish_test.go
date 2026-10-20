@@ -313,3 +313,24 @@ func TestMovingOneNameKeepsItThereAndTheRestOnTheSiteDoor(t *testing.T) {
 		t.Fatalf("a move unpublished something:\n%s", f.dns.log())
 	}
 }
+
+func TestAVPNOnlySiteIsNeverPublishedAndOneThatBecomesItIsTakenDown(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	vpnOnly := false
+	f.p.opts.VPNOnly = func(site string) bool { return vpnOnly && site == "a.example.com" }
+	if _, err := f.p.Publish(ctx, "a.example.com", ""); err != nil {
+		t.Fatal(err)
+	}
+	vpnOnly = true
+	if _, err := f.p.Publish(ctx, "a.example.com", ""); err == nil || !strings.Contains(err.Error(), "VPN") {
+		t.Fatalf("publishing a VPN-only site: %v", err)
+	}
+	f.p.Reconcile(ctx)
+	if _, ok := f.p.Published("a.example.com"); ok {
+		t.Fatal("a site that became VPN-only kept its public names")
+	}
+	if !strings.Contains(f.dns.log(), "unpublish a.example.com") {
+		t.Fatalf("its record was not removed:\n%s", f.dns.log())
+	}
+}

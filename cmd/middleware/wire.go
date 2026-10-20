@@ -80,6 +80,9 @@ var (
 	agentGemini *agents.Module
 )
 
+// theVPN is the VPN module, for the inbound hook's VPN door.
+var theVPN *vpn.VPN
+
 // registerExtraModules adds what buildModules cannot build on its own:
 // the VPN, which needs the helper and the secrets box, and the two agent
 // modules, which replace providers in the registry the chat uses. It runs
@@ -94,6 +97,7 @@ func registerExtraModules(mgr *modules.Manager, root string, bus *events.Bus, dm
 		return fmt.Errorf("vpn: %w", err)
 	}
 	mgr.Register(modules.VPNModule(v))
+	theVPN = v
 	reg := providers()
 	agentClaude = agents.Claude(reg)
 	agentGemini = agents.Gemini(reg)
@@ -577,6 +581,10 @@ func buildPublisher(a *app.App, set *moduleSet) *publish.Publisher {
 			return dns
 		},
 		Hosts: a.Engine.Hosts,
+		VPNOnly: func(site string) bool {
+			sn, ok := a.Engine.Lookup(site)
+			return ok && sn.Manifest != nil && sn.Manifest.VPN != nil
+		},
 	})
 	if err != nil {
 		a.Bus.Emit(events.Event{Type: "publish.error", Actor: "engine", Level: "error", Message: "data/publish.json does not read, nothing is published: " + err.Error()})
