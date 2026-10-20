@@ -22,6 +22,10 @@ type Process struct {
 	Cwd     string
 	Exe     string
 	Started time.Time
+	// CPUTicks is user plus system time so far, in clock ticks; RSS the
+	// resident memory in bytes. Summed per site for its resource history.
+	CPUTicks int64
+	RSS      int64
 	// Listening holds the TCP ports this process has open in LISTEN state.
 	// It is filled only for processes the guard attributes to a site,
 	// because mapping sockets to pids means reading every fd they own.
@@ -97,6 +101,14 @@ func (r Reader) read(pid int, boot time.Time) (Process, bool) {
 	p.State = fields[0][0]
 	p.PPID, _ = strconv.Atoi(fields[1])
 	p.PGID, _ = strconv.Atoi(fields[2])
+	ut, _ := strconv.ParseInt(fields[11], 10, 64)
+	st, _ := strconv.ParseInt(fields[12], 10, 64)
+	p.CPUTicks = ut + st
+	if len(fields) > 21 {
+		if pages, err := strconv.ParseInt(fields[21], 10, 64); err == nil {
+			p.RSS = pages * int64(os.Getpagesize())
+		}
+	}
 	if start, err := strconv.ParseInt(fields[19], 10, 64); err == nil && !boot.IsZero() {
 		p.Started = boot.Add(time.Duration(start) * time.Second / time.Duration(r.ticks()))
 	}

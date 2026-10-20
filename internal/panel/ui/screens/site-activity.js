@@ -18,8 +18,13 @@ export function activityTab(domain) {
   const numbers = h("div");
   const trafficErr = h("div");
   const incBox = h("div");
+  const cpu = sparkline({ label: t("activity.cpu") });
+  const mem = sparkline({ label: t("activity.memory") });
+  const resBox = h("div");
   const el = h("div", { class: "cards" },
     h("div", { class: "card" }, h("h2", null, t("activity.traffic")), h("p", { class: "small muted" }, t("activity.trafficHint")), spark.el, numbers, trafficErr),
+    h("div", { class: "card" }, h("h2", null, t("activity.resources")), h("p", { class: "small muted" }, t("activity.resourcesHint")),
+      h("h3", null, t("activity.cpu")), cpu.el, h("h3", null, t("activity.memory")), mem.el, resBox),
     h("div", { class: "card pad0" }, h("div", { class: "log-bar card-pad" }, h("h2", null, t("activity.incidents"))), incBox),
   );
 
@@ -44,6 +49,27 @@ export function activityTab(domain) {
       ]));
     } catch (e) {
       clear(trafficErr).append(errorBox(e));
+    }
+  }
+
+  // A minute a sample: loaded once and on the minute, not every poll.
+  async function loadResources() {
+    try {
+      const r = await api.get(`/sites/${enc(domain)}/resources`);
+      const samples = r.samples || [];
+      cpu.set(samples.map((x) => Math.round(x.cpu)));
+      mem.set(samples.map((x) => Math.round(x.rss / 1048576)));
+      const last = samples[samples.length - 1];
+      clear(resBox).append(
+        last ? h("p", { class: "small" }, t("activity.resourcesNow", { cpu: last.cpu, mem: fmtBytes(last.rss) })) : h("p", { class: "small muted" }, t("activity.resourcesNone")),
+        ...(r.episodes || []).slice(-5).reverse().map((ep) => h("div", { class: "small " + (ep.end ? "" : "level-warn") },
+          t(ep.end ? "activity.episode" : "activity.episodeOpen", {
+            kind: t("activity.kind." + ep.kind), at: fmtTime(ep.start),
+            peak: ep.kind === "cpu" ? Math.round(ep.peak) + "%" : fmtBytes(ep.peak),
+            minutes: ep.end ? Math.round((new Date(ep.end) - new Date(ep.start)) / 60000) : 0,
+          }))));
+    } catch (e) {
+      clear(resBox).append(h("p", { class: "small muted" }, e.message));
     }
   }
 
@@ -78,7 +104,9 @@ export function activityTab(domain) {
 
   poll();
   loadIncidents();
+  loadResources();
   const timer = setInterval(() => { if (!document.hidden) poll(); }, 2000);
+  const resTimer = setInterval(() => { if (!document.hidden) loadResources(); }, 60000);
   const unsub = onEvent("guard.", () => loadIncidents());
-  return { el, destroy() { clearInterval(timer); unsub(); } };
+  return { el, destroy() { clearInterval(timer); clearInterval(resTimer); unsub(); } };
 }

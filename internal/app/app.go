@@ -76,6 +76,7 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	h = recoverer(a.Bus, h)
 	a.Handler = h
+	a.watchDiag(ctx)
 	go a.Engine.Run(ctx)
 	for _, hook := range a.Hooks {
 		if err := hook.Run(ctx, a); err != nil {

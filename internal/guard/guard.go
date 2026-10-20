@@ -94,6 +94,8 @@ type Guard struct {
 	seen map[string]time.Time
 	// offsets is how far each site log has been read.
 	offsets map[string]int64
+	// res is each site's resource meter (resources.go).
+	res meters
 }
 
 // New builds a guard. Nothing runs until Run or Sweep.
@@ -218,6 +220,7 @@ func (g *Guard) Sweep() ([]Incident, error) {
 		root := g.rootPID(site.Domain)
 		tree := g.attribute(site, root, procs, byPID, claimed)
 		recorded = append(recorded, g.judgeLogs(site, tree, byPID)...)
+		g.measure(site.Domain, tree)
 		if len(tree) == 0 {
 			continue
 		}

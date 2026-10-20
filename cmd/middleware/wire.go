@@ -24,6 +24,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/firewall"
 	"github.com/dcimorra/middleware-public/internal/helper"
+	"github.com/dcimorra/middleware-public/internal/logrotate"
 	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/modules"
 	"github.com/dcimorra/middleware-public/internal/modules/agents"
@@ -354,6 +355,14 @@ func (w *wireHook) Run(ctx context.Context, a *app.App) error {
 	if w.fixer != nil {
 		go w.fixer.Run(ctx)
 	}
+	// The logs sites and tasks write, rotated at 10 MB with three kept.
+	go logrotate.Run(ctx, []string{filepath.Join(dataDir(a), "logs", "*", "*.log")}, func(path string, err error) {
+		if err != nil {
+			a.Bus.Emit(events.Event{Type: "logs.rotate_failed", Actor: "engine", Level: "warn", Message: path + ": " + err.Error()})
+			return
+		}
+		a.Bus.Emit(events.Event{Type: "logs.rotated", Actor: "engine", Message: path})
+	})
 	var enabled []string
 	if w.set != nil {
 		for _, info := range w.set.Manager.List() {

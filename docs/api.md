@@ -440,6 +440,7 @@ business, never this process's.
 | --- | --- | --- |
 | GET | `/guard` | `?all=1` → `{rules: [{key, level, description}], incidents: [{id, at, domain, rule, level, where, action, pid, cmdline}]}`; dismissed incidents are left out unless `all=1` |
 | POST | `/guard/incidents/{id}/dismiss` | → `{ok}` |
+| GET | `/sites/{domain}/resources` | → `{samples: [{at, cpu, rss}], episodes: [{kind: cpu|memory, start, end?, peak}]}`; CPU in percent of one core and resident bytes, summed over every process of the site, a sample a minute for a day. An episode is five minutes or more over 90% of a core or 2 GB, and is a `resources.episode` event when it starts and `resources.episode_end` when it ends |
 
 The rules are listed from the code that applies them: there is no way to
 turn one off through the API, which is the point of a watchdog.

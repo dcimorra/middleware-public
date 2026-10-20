@@ -57,7 +57,7 @@ func (fp *fakeProc) add(s procSpec) {
 		s.pgid = s.pid
 	}
 	// pid (comm) state ppid pgrp session tty tpgid flags minflt cminflt majflt cmajflt utime stime cutime cstime priority nice threads itrealvalue starttime …
-	stat := fmt.Sprintf("%d (%s) S %d %d %d 0 -1 4194304 0 0 0 0 0 0 0 0 20 0 1 0 %d 0 0", s.pid, s.comm, s.ppid, s.pgid, s.pgid, s.startSec*100)
+	stat := statLine(s, 0, 0)
 	if err := os.WriteFile(filepath.Join(dir, "stat"), []byte(stat), 0o644); err != nil {
 		fp.t.Fatal(err)
 	}
@@ -86,6 +86,22 @@ func (fp *fakeProc) add(s procSpec) {
 		}
 	}
 	fp.flushNet()
+}
+
+// statLine is a stat file with CPU ticks and resident pages filled in.
+func statLine(s procSpec, ticks, pages int64) string {
+	return fmt.Sprintf("%d (%s) S %d %d %d 0 -1 4194304 0 0 0 0 %d 0 0 0 20 0 1 0 %d 0 %d", s.pid, s.comm, s.ppid, s.pgid, s.pgid, ticks, s.startSec*100, pages)
+}
+
+// setUsage rewrites a process's stat with new CPU ticks and memory.
+func (fp *fakeProc) setUsage(s procSpec, ticks, pages int64) {
+	fp.t.Helper()
+	if s.pgid == 0 {
+		s.pgid = s.pid
+	}
+	if err := os.WriteFile(filepath.Join(fp.root, strconv.Itoa(s.pid), "stat"), []byte(statLine(s, ticks, pages)), 0o644); err != nil {
+		fp.t.Fatal(err)
+	}
 }
 
 func (fp *fakeProc) flushNet() {

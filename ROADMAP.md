@@ -43,8 +43,7 @@ Nothing left.
 
 ## 6. The guard
 
-- Log rotation and a size cap; `SIGUSR1` diagnostics; resource episodes and
-  history.
+Nothing left.
 
 ## 7. The panel
 
@@ -123,7 +122,10 @@ Nothing left.
   reaper (thirty minutes, a browser with a CDP client is in use, three per
   conversation, every kill in data/guard/reaper.jsonl); automatic repair
   (off by default, two attempts thirty minutes apart, a daily cap,
-  `autofix: false` per site, every intervention in data/repairs.jsonl).
+  `autofix: false` per site, every intervention in data/repairs.jsonl);
+  site logs rotated by copy and truncate (10 MB, three kept), diagnostics
+  on SIGUSR1 into data/diag, and each site's CPU and memory a minute at a
+  time for a day with episodes as events.
 - **§5 Agents**: a jail that holds, two-hour turns, the processes a
   conversation leaves listed and killed, several conversations per site,
   the site door, loans, attachments, queued messages, turns that survive a

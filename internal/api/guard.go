@@ -37,6 +37,16 @@ func (s *Server) RegisterGuard(o GuardOptions) {
 		}
 		return map[string]any{"rules": rules, "incidents": incidents}, nil
 	})
+	s.Handle("GET", Prefix+"/sites/{domain}/resources", "A site's CPU and memory, a sample a minute for a day, and its episodes", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		if o.Guard == nil {
+			return nil, Errorf(http.StatusServiceUnavailable, "the guard is not running")
+		}
+		domain, err := domainOf(r)
+		if err != nil {
+			return nil, err
+		}
+		return o.Guard.Resources(domain), nil
+	})
 	s.Handle("POST", p+"/incidents/{id}/dismiss", "Mark an incident as seen", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		if o.Guard == nil {
 			return nil, Errorf(http.StatusServiceUnavailable, "the guard is not running")

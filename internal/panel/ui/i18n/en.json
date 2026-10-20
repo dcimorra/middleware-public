@@ -840,5 +840,15 @@
   "autofix.daily": "Daily cap (USD)",
   "autofix.saved": "Automatic repair saved",
   "autofix.recent": "Recent repairs",
-  "autofix.none": "No repairs yet."
+  "autofix.none": "No repairs yet.",
+  "activity.resources": "CPU and memory",
+  "activity.resourcesHint": "Every process of this site added up, a sample a minute for the last day. Five minutes over 90% of a core or 2 GB is an episode.",
+  "activity.cpu": "CPU (% of one core)",
+  "activity.memory": "Memory (MB)",
+  "activity.resourcesNow": "Last minute: {cpu}% of a core, {mem}.",
+  "activity.resourcesNone": "No samples yet: the first comes a minute after the site is seen running.",
+  "activity.episode": "{kind} high from {at} for {minutes} min, peak {peak}",
+  "activity.episodeOpen": "{kind} high since {at}, peak {peak} so far",
+  "activity.kind.cpu": "CPU",
+  "activity.kind.memory": "Memory"
 }

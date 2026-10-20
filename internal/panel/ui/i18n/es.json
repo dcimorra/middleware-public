@@ -840,5 +840,15 @@
   "autofix.daily": "Tope diario (USD)",
   "autofix.saved": "Arreglo automático guardado",
   "autofix.recent": "Arreglos recientes",
-  "autofix.none": "Sin arreglos todavía."
+  "autofix.none": "Sin arreglos todavía.",
+  "activity.resources": "CPU y memoria",
+  "activity.resourcesHint": "Todos los procesos de este sitio sumados, una muestra por minuto durante el último día. Cinco minutos por encima del 90% de un núcleo o de 2 GB es un episodio.",
+  "activity.cpu": "CPU (% de un núcleo)",
+  "activity.memory": "Memoria (MB)",
+  "activity.resourcesNow": "Último minuto: {cpu}% de un núcleo, {mem}.",
+  "activity.resourcesNone": "Aún sin muestras: la primera llega un minuto después de ver el sitio en marcha.",
+  "activity.episode": "{kind} alta desde {at} durante {minutes} min, pico {peak}",
+  "activity.episodeOpen": "{kind} alta desde {at}, pico {peak} por ahora",
+  "activity.kind.cpu": "CPU",
+  "activity.kind.memory": "Memoria"
 }
