@@ -1,28 +1,25 @@
 # Roadmap
 
-V2 replaces V1 only when it does everything V1 does. This file is the one
-list of what is still missing, by area; what is done is summarised at the
-end. Each feature is rebuilt the V2 way (its packages, its hooks, its
-manifest): V1 is read for what it does and what it learned, never for code
-to copy. A line leaves this file in the commit that makes it true, with the
-test that proves it. `middleware migrate` names the section here that
-unblocks each V1 site it cannot convert yet.
+V2 has to do everything V1 does. It is a product of its own, not the next
+version of the machine V1 runs on: that installation stays as it is, and
+nothing here plans to move it. This file is the one list of what V2 still
+lacks, by area; what is done is summarised at the end. Each feature is
+rebuilt the V2 way (its packages, its hooks, its manifest): V1 is read for
+what it does and what it learned, never for code to copy. A line leaves
+this file in the commit that makes it true, with the test that proves it.
+`middleware migrate` (for anyone bringing V1 manifests over) names the
+section here that unblocks each one it cannot convert yet.
 
-## Before cutting over from V1
+## Not proven yet
 
-- **The two V1 sites still blocked**: one uses `cache` rules (§2), one is
-  VPN-only (§2). Every other production manifest converts.
-- **Prove what the tests only fake**:
-  - the site door against the real Claude CLI: ask, JSON, resume, and that
-    `none` cannot read and `read` cannot write (§5);
-  - the agents' cgroup on a real unit with `Delegate=` (the tests write a
-    cgroup-shaped folder) (§4).
-- **CI visible from the conversations**: a read-only Actions token so CI
-  results can be checked after a push, not only reproduced locally.
-- **The cutover itself**, written as a runbook and rehearsed on a copy:
-  install V2 beside V1, `middleware migrate --apply` on a copy of `sites/`,
-  move the tunnel's ingress to V2's listener, watch, and the way back
-  (`site.v1.json` is kept beside each converted manifest).
+What the tests only fake, to be run for real:
+
+- The site door against the real Claude CLI: ask, JSON, resume, and that
+  `none` cannot read and `read` cannot write (§5).
+- The agents' cgroup on a real unit with `Delegate=` (the tests write a
+  cgroup-shaped folder) (§4).
+- CI results readable from the conversations (a read-only Actions token),
+  so a push is checked where it runs and not only reproduced locally.
 
 ## 2. Getting a site online
 
