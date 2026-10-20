@@ -91,7 +91,7 @@ func New(opts Options) *Engine {
 		opts.Tick = 2 * time.Second
 	}
 	if opts.Runtimes == nil {
-		opts.Runtimes = map[string]runtime.Runtime{"process": runtime.Process{}, "docker": runtime.Docker{}}
+		opts.Runtimes = map[string]runtime.Runtime{"process": runtime.Process{}, "docker": runtime.Docker{House: opts.SitesDir}}
 	}
 	if opts.Ports == nil {
 		opts.Ports = ports.New(0, 0)
@@ -106,6 +106,7 @@ func New(opts Options) *Engine {
 // Sites are left running on exit on purpose: they outlive the supervisor.
 func (e *Engine) Run(ctx context.Context) {
 	e.adoptAll(ctx)
+	e.reapContainers(ctx)
 	e.tick(ctx)
 	t := time.NewTicker(e.opts.Tick)
 	defer t.Stop()
@@ -613,4 +614,28 @@ func (e *Engine) rebuildAliases() {
 		}
 	}
 	e.aliases = next
+}
+
+// reapContainers removes this house's containers that no state file
+// claimed, once, after adoption: what a supervisor that died mid-start left.
+func (e *Engine) reapContainers(ctx context.Context) {
+	d, ok := e.opts.Runtimes["docker"].(runtime.Docker)
+	if !ok || d.House == "" {
+		return
+	}
+	keep := map[string]bool{}
+	e.mu.RLock()
+	for _, s := range e.sites {
+		if s.Instance != nil {
+			if c := s.Instance.State().Container; c != "" {
+				keep[c] = true
+			}
+		}
+	}
+	e.mu.RUnlock()
+	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	for _, name := range d.Reap(rctx, keep) {
+		e.emit("container.reaped", "", "warn", name+": left by an earlier supervisor and claimed by no site", nil)
+	}
 }

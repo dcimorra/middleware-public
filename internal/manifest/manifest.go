@@ -93,6 +93,15 @@ type Docker struct {
 	Build   string   `json:"build,omitempty"` // Dockerfile path, relative to the site
 	Volumes []string `json:"volumes,omitempty"`
 	Memory  string   `json:"memory,omitempty"`
+	// Pids caps the processes inside (default 1024). CPUs is a hard cap
+	// in cores; CPUWeight is the relative share under contention (docker's
+	// cpu-shares, 1024 is the default share).
+	Pids      int     `json:"pids,omitempty"`
+	CPUs      float64 `json:"cpus,omitempty"`
+	CPUWeight int     `json:"cpu_weight,omitempty"`
+	// User is uid:gid inside; empty is the right default for the daemon
+	// (see runtime.Docker).
+	User string `json:"user,omitempty"`
 }
 
 // Worker is an always-on process that belongs to a site and answers no
@@ -301,6 +310,14 @@ func (m *Manifest) Validate() error {
 		if m.Run.Runtime == "docker" && (m.Run.Docker == nil || (m.Run.Docker.Image == "" && m.Run.Docker.Build == "")) {
 			return errors.New("run.docker: needs image or build")
 		}
+		if d := m.Run.Docker; d != nil {
+			if d.Pids < 0 || d.CPUs < 0 || d.CPUWeight < 0 {
+				return errors.New("run.docker: pids, cpus and cpu_weight cannot be negative")
+			}
+			if d.User != "" && !userRe.MatchString(d.User) {
+				return fmt.Errorf("run.docker.user: %q is not uid[:gid]", d.User)
+			}
+		}
 		for k := range m.Run.Env {
 			if !validEnvKey(k) {
 				return fmt.Errorf("run.env: %q is not a variable name", k)
@@ -423,6 +440,7 @@ func (m *Manifest) Mode() Mode {
 	}
 }
 
+var userRe = regexp.MustCompile(`^[0-9]{1,10}(:[0-9]{1,10})?$`)
 var envKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 

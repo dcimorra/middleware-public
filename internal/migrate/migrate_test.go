@@ -81,7 +81,6 @@ func TestAProxySiteKeepsEverythingItHad(t *testing.T) {
 func TestWhatV2CannotDoYetBlocksTheSite(t *testing.T) {
 	cases := map[string]string{
 		`{"kind":"static","vpn":{"devices":["phone"]}}`:                      "vpn",
-		`{"kind":"proxy","command":["x"],"container":{"image":"node:22"}}`:   "container",
 		`{"kind":"proxy","command":["x"],"claude_api":{"daily_usd":1}}`:      "claude_api",
 		`{"kind":"static","attack":{"on":true}}`:                             "attack mode on",
 		`{"kind":"static","cache":{"rules":[{"path":"/","mode":"origen"}]}}`: "cache rules",
@@ -176,5 +175,19 @@ func TestWwwFalseIsCarried(t *testing.T) {
 	}
 	if h := r.Manifest.Hosts("a.example"); len(h) != 1 {
 		t.Fatalf("hosts %v", h)
+	}
+}
+
+func TestAContainedSiteRunsInDockerWithItsLimits(t *testing.T) {
+	r := Convert("a.example", []byte(`{"kind":"proxy","command":["node","s.js"],"container":{"image":"node:22-slim","memory":"512m","pids":200,"cpus":1.5,"cpu_weight":512}}`))
+	if !r.Ready() {
+		t.Fatalf("%v", r.Blockers)
+	}
+	run := r.Manifest.Run
+	if run.Runtime != "docker" || run.Docker == nil || run.Docker.Image != "node:22-slim" || run.Docker.Memory != "512m" || run.Docker.Pids != 200 || run.Docker.CPUs != 1.5 || run.Docker.CPUWeight != 512 {
+		t.Fatalf("%+v %+v", run, run.Docker)
+	}
+	if r := Convert("a.example", []byte(`{"kind":"proxy","command":["x"],"container":{"image":"i","gpu":true}}`)); r.Ready() {
+		t.Fatal("an unknown container setting was dropped silently")
 	}
 }

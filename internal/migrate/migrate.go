@@ -230,9 +230,6 @@ func (c converter) blockers(in *v1) {
 	if present(in.ClaudeAPI) {
 		c.block("claude_api (the site door; parity §5)")
 	}
-	if present(in.Container) {
-		c.block("container (the site runs in docker; parity §4)")
-	}
 	if in.Health.Expect != 0 {
 		c.block("health.expect_status %d (parity §4)", in.Health.Expect)
 	}
@@ -292,6 +289,28 @@ func (c converter) serve(in *v1, m *manifest.Manifest, name string) {
 		}
 		if in.Root != "" {
 			c.note("root %q dropped: a proxy site serves its process, not files", in.Root)
+		}
+		if present(in.Container) {
+			// V1 ran the same command inside the image with the folder at
+			// its own path; V2's docker runtime does exactly that now.
+			var ct struct {
+				Image     string  `json:"image"`
+				Memory    string  `json:"memory"`
+				Pids      int     `json:"pids"`
+				CPUs      float64 `json:"cpus"`
+				CPUWeight int     `json:"cpu_weight"`
+				User      string  `json:"user"`
+			}
+			dec := json.NewDecoder(bytes.NewReader(in.Container))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&ct); err != nil {
+				c.block("container: %v", err)
+			} else if ct.Image == "" {
+				c.block("container without an image")
+			} else {
+				run.Runtime = "docker"
+				run.Docker = &manifest.Docker{Image: ct.Image, Memory: ct.Memory, Pids: ct.Pids, CPUs: ct.CPUs, CPUWeight: ct.CPUWeight, User: ct.User}
+			}
 		}
 		m.Run = run
 	default:

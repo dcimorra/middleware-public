@@ -237,8 +237,11 @@ Go binary, built in place:
 }
 ```
 
-Docker image (the site folder is bind-mounted at `/site`; bind `0.0.0.0`
-inside the container, the published port is loopback-only on the host):
+Docker image. The site folder and its HOME are mounted **at their own
+paths**, so `$SITE_DIR`, relative paths and the command mean the same inside
+and out. `HOST` is `0.0.0.0` inside (the published port is loopback-only on
+the host). The container has no capabilities, cannot gain privileges, and
+at most `pids` processes (default 1024):
 
 ```json
 {
@@ -246,15 +249,22 @@ inside the container, the published port is loopback-only on the host):
   "run": {
     "command": ["node", "server.js"],
     "runtime": "docker",
-    "docker": { "build": "Dockerfile", "volumes": ["data:/site/data"], "memory": "512m" },
+    "docker": { "image": "node:22-slim", "memory": "512m", "pids": 512, "cpus": 1.5, "volumes": ["data:/var/lib/app"] },
     "health": { "path": "/" }
   }
 }
 ```
 
-Or a pulled image: `"docker": { "image": "ghcr.io/acme/app:1.4.2" }`. Pin a
-tag; `latest` makes the revision lie. `memory` is a hard limit: the kernel
-kills what exceeds it.
+Or built from the site: `"docker": { "build": "Dockerfile" }`. Pin a tag;
+`latest` makes the revision lie. `memory` is a hard limit: the kernel kills
+what exceeds it. A named volume is the site's own (`mw-<domain>-data`).
+
+**A docker site's dependencies are installed inside its image, never on the
+host**: `middleware exec <domain> -- npm install` runs the command where the
+site runs (its container, its folder, its HOME). Run on the host, native
+modules are built for the wrong system and `node_modules` belongs to the
+host's Node; the site then fails at start with errors that point nowhere
+near the cause.
 
 Upstream on a fixed port someone else owns (nothing is supervised; the house
 only proxies):

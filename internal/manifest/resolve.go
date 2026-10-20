@@ -144,7 +144,8 @@ func (s *Spec) hash() string {
 		w(k, s.Env[k])
 	}
 	if s.Docker != nil {
-		w(s.Docker.Image, s.Docker.Build, s.Docker.Memory)
+		w(s.Docker.Image, s.Docker.Build, s.Docker.Memory, s.Docker.User,
+			strconv.Itoa(s.Docker.Pids), strconv.FormatFloat(s.Docker.CPUs, 'f', -1, 64), strconv.Itoa(s.Docker.CPUWeight))
 		w(s.Docker.Volumes...)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]

@@ -30,7 +30,11 @@ never shell strings. Paths are relative to the site folder.
       "image": "ghcr.io/acme/app:latest",
       "build": "Dockerfile",
       "volumes": ["data:/app/data"],
-      "memory": "512m"
+      "memory": "512m",
+      "pids": 1024,
+      "cpus": 1.5,
+      "cpu_weight": 1024,
+      "user": ""
     }
   },
 
@@ -107,6 +111,18 @@ In `run.command`, `run.env` values, `upstream` and `workers.*.command`:
 
 The process also receives `PORT`, `HOST=127.0.0.1`, `MIDDLEWARE_DOMAIN`,
 `MIDDLEWARE_SITE_DIR` and `HOME` (a per-site home under `data/homes/`).
+
+## Docker
+
+The folder and the site's HOME are mounted at their own paths, so nothing in
+the command changes between runtimes. Every container has no capabilities,
+`no-new-privileges`, no restart policy (the engine restarts), at most `pids`
+processes (default 1024), the port on loopback only, and `HOST=0.0.0.0`
+inside. `user` empty is right for the daemon: the supervisor's uid on a
+rootful daemon, none on a rootless one (where root inside is the supervisor
+outside). Containers carry the label `middleware.house`; leftovers no site
+claims are removed when the engine starts. `middleware exec <domain> -- …`
+runs a one-off command inside the site's image with the same mounts.
 
 ## Paths stay inside the site
 
