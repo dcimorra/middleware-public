@@ -168,7 +168,8 @@ func agentsCmd(args []string) error {
 	return nil
 }
 
-func (chatHook) Wrap(next http.Handler) http.Handler       { return next }
+func (chatHook) Wrap(next http.Handler) http.Handler { return next }
+
 // Run picks up the turns a previous supervisor left in flight.
 func (chatHook) Run(ctx context.Context, a *app.App) error {
 	if chatManager != nil {
