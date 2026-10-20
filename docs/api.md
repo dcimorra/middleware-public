@@ -141,6 +141,19 @@ failure of a streak is a `repo.failed` event. Pulling is not deploying.
 | POST | `/repos/{id}/pull` | → the repository after a fetch and merge now |
 | PUT | `/repos/{id}/auto` | `{enabled}` → the repository; marking pulls once at once. Kept in `data/repos.json` |
 
+## Response cache
+
+The house's cache of responses, behind the door, by the manifest's
+`cache.rules` (docs/manifest.md). Responses carry `X-Middleware-Cache:
+hit|miss` and, on a hit, `Age`. The budget is `cache.max_mb` in the
+settings (256 by default), changed at once on save.
+
+| method | path | result |
+| --- | --- | --- |
+| GET | `/cache` | → `{bytes, budget, entries}` for the whole house |
+| GET | `/sites/{domain}/cache` | → `{entries, bytes, hits, misses, limit}` |
+| DELETE | `/sites/{domain}/cache` | → `{ok}`; empties it (a handover does that by itself) |
+
 ## Dependency audit
 
 `npm audit --package-lock-only` over each site with a `package-lock.json`, a

@@ -61,6 +61,7 @@ const (
 	orderAttack   = 27
 	orderAccess   = 30
 	orderTraffic  = 40
+	orderCache    = 45
 	orderAPI      = 50
 	orderChat     = 60
 	orderTasks    = 70
@@ -296,6 +297,10 @@ func buildWire(a *app.App) app.Hook {
 		srv.Handle("GET", api.Prefix+"/autofix", "The automatic repairs, oldest first (data/repairs.jsonl)", func(_ http.ResponseWriter, _ *http.Request) (any, error) {
 			return w.fixer.Repairs(), nil
 		})
+	}
+	if theCache != nil {
+		srv.RegisterCache(theCache)
+		srv.OnSettingsSaved(func(s settings.Settings) { theCache.SetBudget(s.Cache.Bytes()) })
 	}
 	srv.RegisterAudit(w.auditor, func(domain string) (audit.Site, bool) {
 		sn, ok := a.Engine.Lookup(domain)

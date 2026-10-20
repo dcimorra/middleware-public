@@ -81,7 +81,15 @@ never shell strings. Paths are relative to the site folder.
 
   "attack": { "on": false, "bits": 16, "life": "30m", "until": "", "skip": ["/hooks/stripe"], "message": "" },
 
-  "cache": { "static_max_age": "1h" },
+  "cache": {
+    "static_max_age": "1h",
+    "rules": [
+      { "path": "/product", "mode": "origin" },
+      { "path": "/img", "mode": "force", "ttl": 3600, "note": "logos, never change" },
+      { "path": "/product/admin", "mode": "never" }
+    ],
+    "max_mb": 64
+  },
   "headers": { "X-Frame-Options": "DENY" },
 
   "deploy": {
@@ -269,6 +277,18 @@ process.
   site's `skip`) and to the panel, except requests that carry their own
   credentials (an API token, the site door). The old `waf.under_attack:
   true` is read as `attack.on` with the defaults.
+- `cache.rules` are the house's response cache, kept in memory and served
+  without asking the site, behind the door so nothing passes a password.
+  `origin` keeps what the site marks (`s-maxage`, else `max-age`) for as
+  long as it says, so switching it on over an app that sends nothing changes
+  nothing; `force` keeps `ttl` seconds whatever the site says, for what is
+  known to be public and still; `never` keeps nothing, for `/admin`.
+  Prefixes go by whole segments and the longest wins. What no rule can
+  change: nothing with `Set-Cookie`, `private`, `no-store` or `no-cache`,
+  `Vary: *`, `Cookie` or `Authorization`, nothing but a 200 to GET or HEAD,
+  nothing for a request with `Authorization`, no event streams. Simultaneous
+  misses reach the site as one, and a handover empties the site's cache.
+  `max_mb` asks for less than the house's budget, never for more.
 - `autofix: false` keeps the automatic repair (Settings) away from this
   site, whatever the installation says; the panel cannot override it.
 - `aliases` are served exactly like the site. A name that is already a site,

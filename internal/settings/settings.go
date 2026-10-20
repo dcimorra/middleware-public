@@ -33,6 +33,23 @@ type Settings struct {
 	Deps Deps `json:"deps"`
 	// Autofix hands a site that went down to its agent (internal/autofix).
 	Autofix Autofix `json:"autofix"`
+	// Cache is the house's response cache budget.
+	Cache Cache `json:"cache"`
+}
+
+// Cache is the memory every site's response cache shares. The sum is what
+// leaves a machine without memory, not one site, so the house holds the
+// budget and takes from the largest when it is over.
+type Cache struct {
+	MaxMB int `json:"max_mb,omitempty"`
+}
+
+// Bytes is the budget with its default, 256 MB.
+func (c Cache) Bytes() int64 {
+	if c.MaxMB <= 0 {
+		return 256 << 20
+	}
+	return int64(c.MaxMB) << 20
 }
 
 // Autofix is the automatic repair's switch and brakes. Off by default:

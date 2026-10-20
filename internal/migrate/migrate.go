@@ -23,6 +23,7 @@ import (
 
 	"github.com/dcimorra/middleware-public/internal/access"
 	"github.com/dcimorra/middleware-public/internal/attack"
+	"github.com/dcimorra/middleware-public/internal/httpcache"
 	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/security"
 )
@@ -101,7 +102,45 @@ type v1IP struct {
 // are never converted.
 type v1Cache struct {
 	Enabled *bool             `json:"enabled"`
+	MaxMB   int               `json:"max_mb"`
 	Rules   []json.RawMessage `json:"rules"`
+}
+
+// v1Modes are V1's cache modes, in Spanish, and V2's names for them.
+var v1Modes = map[string]string{"": httpcache.ModeOrigin, "origen": httpcache.ModeOrigin, "forzar": httpcache.ModeForce, "nunca": httpcache.ModeNever}
+
+// convertCache carries V1's house cache rules. A rule that also cached
+// other methods than GET is carried for GET only and said: V2 keeps GET
+// and HEAD and nothing else.
+func (c *converter) convertCache(cr v1Cache) {
+	out := &manifest.Cache{MaxMB: cr.MaxMB}
+	for i, raw := range cr.Rules {
+		var r struct {
+			Path    string   `json:"path"`
+			Note    string   `json:"note"`
+			Mode    string   `json:"mode"`
+			TTL     int      `json:"ttl"`
+			Methods []string `json:"methods"`
+		}
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&r); err != nil {
+			c.block("cache.rules[%d]: %v", i, err)
+			return
+		}
+		mode, ok := v1Modes[r.Mode]
+		if !ok {
+			c.block("cache.rules[%d].mode %q is not a V1 mode", i, r.Mode)
+			return
+		}
+		for _, m := range r.Methods {
+			if !strings.EqualFold(m, "GET") && !strings.EqualFold(m, "HEAD") {
+				c.note("cache.rules[%d]: %s is not cached in V2, only GET and HEAD", i, m)
+			}
+		}
+		out.Rules = append(out.Rules, httpcache.Rule{Path: r.Path, Mode: mode, TTL: r.TTL, Note: r.Note})
+	}
+	c.cache = out
 }
 
 type v1Worker struct {
@@ -155,6 +194,13 @@ func Convert(name string, data []byte) Result {
 	m.ClaudeAPI = c.claudeAPI
 	m.Security = c.security
 	m.Attack = c.attack
+	if c.cache != nil {
+		if m.Cache == nil {
+			m.Cache = c.cache
+		} else {
+			m.Cache.Rules, m.Cache.MaxMB = c.cache.Rules, c.cache.MaxMB
+		}
+	}
 	if c.autofixOff {
 		off := false
 		m.Autofix = &off
@@ -180,6 +226,7 @@ type converter struct {
 	attack    *attack.Rules
 	// autofixOff carries V1's "autofix": false.
 	autofixOff bool
+	cache      *manifest.Cache
 	chat       *manifest.ChatRules
 }
 
@@ -244,7 +291,7 @@ func (c *converter) blockers(in *v1) {
 		if cr.Enabled != nil && !*cr.Enabled {
 			c.note("cache: written but off; its rules are not carried")
 		} else if len(cr.Rules) > 0 {
-			c.block("cache rules (house cache; ROADMAP §2)")
+			c.convertCache(cr)
 		}
 	}
 	if present(in.Chat) {

@@ -87,13 +87,13 @@ func TestAProxySiteKeepsEverythingItHad(t *testing.T) {
 
 func TestWhatV2CannotDoYetBlocksTheSite(t *testing.T) {
 	cases := map[string]string{
-		`{"kind":"static","vpn":{"devices":["phone"]}}`:                      "vpn",
-		`{"kind":"static","attack":{"on":true,"bits":40}}`:                   "attack.bits",
-		`{"kind":"static","cache":{"rules":[{"path":"/","mode":"origen"}]}}`: "cache rules",
-		`{"kind":"static","hold":{"mode":"302"}}`:                            "hold mode",
-		`{"kind":"static","notice":{"theme":"neon"}}`:                        "notice.theme",
-		`{"kind":"static","comand":["typo"]}`:                                "does not read",
-		`{"kind":"cgi"}`:                                                     "kind",
+		`{"kind":"static","vpn":{"devices":["phone"]}}`:                       "vpn",
+		`{"kind":"static","attack":{"on":true,"bits":40}}`:                    "attack.bits",
+		`{"kind":"static","cache":{"rules":[{"path":"/","mode":"siempre"}]}}`: "not a V1 mode",
+		`{"kind":"static","hold":{"mode":"302"}}`:                             "hold mode",
+		`{"kind":"static","notice":{"theme":"neon"}}`:                         "notice.theme",
+		`{"kind":"static","comand":["typo"]}`:                                 "does not read",
+		`{"kind":"cgi"}`:                                                      "kind",
 	}
 	for in, want := range cases {
 		r := Convert("a.example", []byte(in))
@@ -258,5 +258,16 @@ func TestTheAttackBlockIsCarriedWithItsShortDeadline(t *testing.T) {
 	r = Convert("a.example", []byte(`{"kind":"static","attack":{"on":true,"until":"2020-01-01 00:00"}}`))
 	if !r.Ready() || r.Manifest.Attack.On || r.Manifest.Attack.Until != "" {
 		t.Fatalf("a passed deadline: %+v %v", r.Manifest.Attack, r.Blockers)
+	}
+}
+
+func TestTheHouseCacheRulesAreCarried(t *testing.T) {
+	r := Convert("a.example", []byte(`{"kind":"static","cache":{"max_mb":64,"rules":[{"path":"/product","mode":"origen"},{"path":"/img","mode":"forzar","ttl":3600,"note":"logos"},{"path":"/admin","mode":"nunca"}]}}`))
+	if !r.Ready() {
+		t.Fatalf("%v", r.Blockers)
+	}
+	c := r.Manifest.Cache
+	if c == nil || c.MaxMB != 64 || len(c.Rules) != 3 || c.Rules[0].Mode != "origin" || c.Rules[1].Mode != "force" || c.Rules[1].TTL != 3600 || c.Rules[2].Mode != "never" {
+		t.Fatalf("%+v", c)
 	}
 }

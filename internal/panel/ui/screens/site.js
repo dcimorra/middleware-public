@@ -22,9 +22,10 @@ import { chatTab } from "./site-chat.js";
 import { accessTab } from "./site-access.js";
 import { securityTab } from "./site-security.js";
 import { activityTab } from "./site-activity.js";
+import { cacheTab } from "./site-cache.js";
 
-const TABS = ["overview", "activity", "manifest", "logs", "files", "chat", "access", "security"];
-const TAB_ICON = { overview: "gauge", activity: "activity", manifest: "code", logs: "list", files: "folder", chat: "chat", access: "lock", security: "shield" };
+const TABS = ["overview", "activity", "manifest", "logs", "files", "chat", "access", "security", "cache"];
+const TAB_ICON = { overview: "gauge", activity: "activity", manifest: "code", logs: "list", files: "folder", chat: "chat", access: "lock", security: "shield", cache: "box" };
 
 export function siteScreen({ domain, tab }) {
   const active = TABS.includes(tab) ? tab : "overview";
@@ -62,6 +63,7 @@ export function siteScreen({ domain, tab }) {
       case "access": view = accessTab(domain); break;
       case "security": view = securityTab(domain); break;
       case "activity": view = activityTab(domain); break;
+      case "cache": view = cacheTab(domain); break;
       default: view = overviewTab(domain);
     }
     body.append(view.el);

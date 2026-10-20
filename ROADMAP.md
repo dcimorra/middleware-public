@@ -23,7 +23,6 @@ What the tests only fake, to be run for real:
 
 ## 2. Getting a site online
 
-- House response cache (manifest `cache` modes), behind the door.
 - VPN-only sites and the VPN's own DNS.
 - Cloudflare extras: edge purge and cache rules, the DNS record editor, the
   Access app list, narrowing a wide token; domain search and prices.
@@ -47,7 +46,7 @@ Nothing left.
 
 ## 7. The panel
 
-- Per site: a cache screen (waits for §2's house cache).
+Nothing left.
 
 ## 8. Apps
 
@@ -69,6 +68,11 @@ Nothing left.
   with their own password, `deny`, `message`, projects without a domain,
   `group`, `needs`, `notice`, hold modes and `until`, `container`,
   `claude_api`, `claude`, `chat.reads`.
+- **§2 House cache**: responses kept in memory by the manifest's
+  `cache.rules` (origin, force, never), inside the door (a test that puts it
+  outside fails), walls no manifest removes, simultaneous misses coalesced,
+  emptied on a handover, one house budget taken from the largest site, and
+  a Cache tab per site; migrate carries V1's rules.
 - **§2 Getting online**: one publisher for creation, deletion and moves;
   every name published and certified; the door for new sites and the
   public address; dns-01 through Cloudflare; `cloudflared` run, re-adopted

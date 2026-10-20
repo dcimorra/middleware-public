@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/access"
 	"github.com/dcimorra/middleware-public/internal/api"
 	"github.com/dcimorra/middleware-public/internal/app"
 	"github.com/dcimorra/middleware-public/internal/auth"
@@ -57,6 +58,14 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 		os.WriteFile(filepath.Join(dir, "index.html"), []byte("<p>"+name+"</p>"), 0o644)
 		os.WriteFile(filepath.Join(dir, "site.json"), []byte(`{"version":2,"attack":`+attack+`}`), 0o644)
 	}
+	// A private site with its pages kept by the house cache: the second
+	// visit with the password is a hit, and one without it stays at the
+	// door, which is the whole point of the cache being inside it.
+	hash, _ := access.HashPassword("secret")
+	cached := filepath.Join(root, "sites", "cached.example")
+	os.MkdirAll(cached, 0o755)
+	os.WriteFile(filepath.Join(cached, "index.html"), []byte("<p>members only</p>"), 0o644)
+	os.WriteFile(filepath.Join(cached, "site.json"), []byte(`{"version":2,"access":{"password":"`+hash+`"},"cache":{"rules":[{"path":"/","mode":"force","ttl":60}]}}`), 0o644)
 	a, err := app.New(root)
 	if err != nil {
 		t.Fatal(err)
@@ -229,6 +238,48 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 	sweepOnce(a, time.Now())
 	if m, err := manifest.Load(filepath.Join(root, "sites", "past.example")); err != nil || m.Attack == nil || m.Attack.On || m.Attack.Until != "" || m.Attack.Bits != 10 {
 		t.Errorf("the sweep did not write the passed deadline down as off, keeping the rest: %+v %v", m.Attack, err)
+	}
+	// In through the form, as a visitor does: Basic auth carries
+	// Authorization, which the cache never answers.
+	form, _ := http.NewRequest("POST", "http://"+s.Listen+access.LoginPath, strings.NewReader("password=secret&next=/"))
+	form.Host = "cached.example"
+	form.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	lresp, err := noRedirect.Do(form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lresp.Body.Close()
+	pass := lresp.Cookies()
+	if len(pass) == 0 {
+		t.Fatalf("no pass from the login form: %d", lresp.StatusCode)
+	}
+	visit := func(withPassword bool) (int, string) {
+		t.Helper()
+		req, _ := http.NewRequest("GET", "http://"+s.Listen+"/", nil)
+		req.Host = "cached.example"
+		if withPassword {
+			for _, c := range pass {
+				req.AddCookie(c)
+			}
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode == 200 && !strings.Contains(string(body), "members only") {
+			t.Fatalf("200 without the page: %s", body)
+		}
+		return resp.StatusCode, resp.Header.Get("X-Middleware-Cache")
+	}
+	visit(true)
+	if code, mark := visit(true); code != 200 || mark != "hit" {
+		t.Errorf("the second visit with the password: %d %q", code, mark)
+	}
+	if code, _ := visit(false); code != 401 {
+		t.Errorf("a visit without the password got %d: the cache served past the door", code)
 	}
 	if code, body := get("/sites/shop.example/security/blocks"); code != 200 || !strings.Contains(body, "GPTBot") || !strings.Contains(body, `".git/"`) {
 		t.Errorf("the refusals are not listed: %d %s", code, body)

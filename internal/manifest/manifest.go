@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/attack"
+	"github.com/dcimorra/middleware-public/internal/httpcache"
 	"github.com/dcimorra/middleware-public/internal/pages"
 	"github.com/dcimorra/middleware-public/internal/security"
 )
@@ -255,6 +256,12 @@ type Rate struct {
 // Cache is what the house cache may keep.
 type Cache struct {
 	StaticMaxAge Duration `json:"static_max_age,omitempty"`
+	// Rules are the house's response cache (internal/httpcache): which
+	// paths are kept and how. None keeps nothing.
+	Rules []httpcache.Rule `json:"rules,omitempty"`
+	// MaxMB caps this site's share; it can only ask for less than the
+	// house's budget (Settings), never reserve more.
+	MaxMB int `json:"max_mb,omitempty"`
 }
 
 // Deploy is how new code gets in.
@@ -506,6 +513,21 @@ func (m *Manifest) Validate() error {
 			}
 			if err := validAddrs("access.routes."+prefix+".deny", r.Deny); err != nil {
 				return err
+			}
+		}
+	}
+	if c := m.Cache; c != nil {
+		if c.MaxMB < 0 {
+			return errors.New("cache.max_mb cannot be negative")
+		}
+		for i, r := range c.Rules {
+			switch {
+			case !strings.HasPrefix(r.Path, "/"):
+				return fmt.Errorf("cache.rules[%d].path: %q must start with /", i, r.Path)
+			case r.Mode != httpcache.ModeOrigin && r.Mode != httpcache.ModeForce && r.Mode != httpcache.ModeNever:
+				return fmt.Errorf("cache.rules[%d].mode: %q is not origin, force or never", i, r.Mode)
+			case r.Mode == httpcache.ModeForce && r.TTL <= 0:
+				return fmt.Errorf("cache.rules[%d].ttl: force needs the seconds to keep", i)
 			}
 		}
 	}
