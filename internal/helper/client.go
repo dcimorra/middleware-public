@@ -69,11 +69,14 @@ func (c *Client) Call(ctx context.Context, op string, args any, result any) erro
 			return err
 		}
 	}
-	if err := json.NewEncoder(conn).Encode(req); err != nil {
-		return fmt.Errorf("helper: send %s: %w", op, err)
-	}
+	// A failed write is not the end: a server that refused the peer may
+	// have queued its answer and closed, and that answer says why.
+	sendErr := json.NewEncoder(conn).Encode(req)
 	line, err := bufio.NewReaderSize(conn, 1<<20).ReadBytes('\n')
 	if err != nil && len(line) == 0 {
+		if sendErr != nil {
+			return fmt.Errorf("helper: send %s: %w", op, sendErr)
+		}
 		return fmt.Errorf("helper: %s: no answer: %w", op, err)
 	}
 	var resp Response

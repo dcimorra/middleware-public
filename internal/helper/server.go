@@ -175,15 +175,23 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
 		s.Log.Printf("refused connection: %v", err)
 		return
 	}
-	if !s.allowed(peer) {
-		s.Log.Printf("refused uid=%d gid=%d pid=%d: %v", peer.UID, peer.GID, peer.PID, errNotAllowed)
-		// Answer so the client sees why instead of a closed socket.
-		enc := json.NewEncoder(conn)
-		_ = enc.Encode(Response{Error: errNotAllowed.Error()})
-		return
-	}
 	r := bufio.NewReaderSize(conn, 1<<20)
 	enc := json.NewEncoder(conn)
+	if !s.allowed(peer) {
+		s.Log.Printf("refused uid=%d gid=%d pid=%d: %v", peer.UID, peer.GID, peer.PID, errNotAllowed)
+		// Read the request before answering: closing the socket while the
+		// client is still writing turns the refusal into a broken pipe on
+		// its side, and it never learns why. The request is not acted on.
+		var id string
+		if line, err := r.ReadBytes('\n'); err == nil {
+			var req Request
+			if json.Unmarshal(line, &req) == nil {
+				id = req.ID
+			}
+		}
+		_ = enc.Encode(Response{ID: id, Error: errNotAllowed.Error()})
+		return
+	}
 	for {
 		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 		line, err := r.ReadBytes('\n')
