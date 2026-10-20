@@ -570,5 +570,12 @@
   "site.picture": "Picture",
   "site.pictureAlt": "{domain} as a visitor sees it",
   "site.pictureAgain": "Take again",
-  "site.pictureTaking": "Taking the picture"
+  "site.pictureTaking": "Taking the picture",
+  "chat.conversation": "Conversation",
+  "chat.newConversation": "Another conversation",
+  "chat.mainConversation": "Main conversation",
+  "chat.fromSite": "From the site's code",
+  "chat.siteDoorNote": "This conversation was opened by the site's own code through the site door. It can be read and stopped here, not written into.",
+  "nav.house": "House agent",
+  "house.sub": "An agent working on the installation itself: its settings, its tasks, new sites. Existing sites are each their own conversation's."
 }

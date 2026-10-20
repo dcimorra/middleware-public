@@ -68,6 +68,56 @@ func (s *Server) RegisterAgents(o AgentsOptions) {
 	s.OnSettingsSaved(func(st settings.Settings) { o.Chat.SetLimits(st.Agents) })
 	s.registerChat(o.Chat, Prefix+"/sites/{domain}/chat", domainOf)
 	s.registerChat(o.Chat, Prefix+"/chat/middleware", func(*http.Request) (string, error) { return chat.Middleware, nil })
+	// More conversations per site: the panel's own beyond the first, and
+	// the ones the site's code opened through the site door, which the
+	// panel reads and stops but does not write into (a program is on the
+	// other side of those, and its turns follow its own rules).
+	s.registerChat(o.Chat, Prefix+"/sites/{domain}/chats/{id}", func(r *http.Request) (string, error) {
+		domain, err := domainOf(r)
+		if err != nil {
+			return "", err
+		}
+		name := chat.Name(domain, r.PathValue("id"))
+		if _, err := o.Chat.Conversation(name); err != nil || r.PathValue("id") == "" {
+			return "", Errorf(http.StatusNotFound, "no such conversation")
+		}
+		return name, nil
+	})
+	s.Handle("GET", Prefix+"/sites/{domain}/chats", "The site's other conversations: the panel's and the ones its code opened (?all=1 includes those the manifest hides)", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		domain, err := domainOf(r)
+		if err != nil {
+			return nil, err
+		}
+		out := []chat.Summary{}
+		for _, sm := range o.Chat.List(domain) {
+			if sm.Hidden && !isTrue(r.URL.Query().Get("all")) {
+				continue
+			}
+			out = append(out, sm)
+		}
+		return out, nil
+	})
+	s.Handle("POST", Prefix+"/sites/{domain}/chats", "Open another conversation about the site (body: title?)", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		domain, err := domainOf(r)
+		if err != nil {
+			return nil, err
+		}
+		var body struct {
+			Title string `json:"title"`
+		}
+		if r.ContentLength != 0 {
+			if err := ReadJSON(r, &body); err != nil {
+				return nil, err
+			}
+		}
+		name, err := o.Chat.Create(domain, chat.CreateOptions{Origin: chat.OriginPanel, Title: body.Title})
+		if err != nil {
+			return nil, chatError(err)
+		}
+		_, id, _ := strings.Cut(name, "#")
+		WriteJSON(w, http.StatusCreated, map[string]string{"name": name, "id": id})
+		return Handled, nil
+	})
 }
 
 func (s *Server) registerChat(m *chat.Manager, p string, name func(*http.Request) (string, error)) {
@@ -93,6 +143,9 @@ func (s *Server) registerChat(m *chat.Manager, p string, name func(*http.Request
 		}
 		if err := ReadJSON(r, &body); err != nil {
 			return nil, err
+		}
+		if c, err := m.Conversation(domain); err == nil && c.Origin == chat.OriginSite {
+			return nil, Errorf(http.StatusConflict, "this conversation belongs to the site's code; open one of your own to talk about the site")
 		}
 		id, err := m.Send(domain, body.Text, body.Model)
 		if err != nil {

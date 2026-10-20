@@ -14,7 +14,11 @@ import { loading, errorBox } from "../components/page.js";
 import { confirm, open } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 
+// chatTab is a site's chat. For the house's own conversation, domain is
+// "middleware": no other conversations, no site manifest to write the
+// provider into.
 export function chatTab(domain) {
+  const house = domain === "middleware";
   const turns = h("div", { class: "chat-turns", "aria-live": "polite" });
   const text = h("textarea", { placeholder: t("chat.placeholder"), "aria-label": t("chat.message") });
   const provider = h("select", { "aria-label": t("chat.provider") });
@@ -29,7 +33,45 @@ export function chatTab(domain) {
   const status = h("span", { class: "small muted", role: "status" });
   const capacity = h("span", { class: "small muted chat-capacity", title: t("chat.capacityTitle") });
   const form = h("form", { class: "chat-form" }, text, h("div", { class: "row" }, provider, model, h("span", { class: "grow" }), status, procsBtn, reset, stop, send));
-  const el = h("div", { class: "chat" }, h("div", { class: "chat-head" }, capacity), turns, form);
+  // Which conversation is open: the site's first one, another of the
+  // panel's, or one the site's code opened through the site door (read
+  // and stopped from here, never written into: a program is on the other
+  // side, and its turns follow its own rules).
+  const base = `/sites/${enc(domain)}`;
+  let cur = house ? { name: domain, path: "/chat/middleware", origin: "panel" } : { name: domain, path: `${base}/chat`, origin: "panel" };
+  const picker = h("select", { "aria-label": t("chat.conversation") });
+  const newConv = h("button", { type: "button", class: "btn ghost sm" }, icon("plus"), t("chat.newConversation"));
+  const readonlyNote = h("div", { class: "small muted", hidden: true }, t("chat.siteDoorNote"));
+  async function fillPicker() {
+    if (house) { picker.hidden = true; newConv.hidden = true; return; }
+    let others = [];
+    try { others = await api.get(`${base}/chats`); } catch { others = []; }
+    clear(picker).append(h("option", { value: "" }, t("chat.mainConversation")));
+    for (const c of others) {
+      const label = (c.origin === "site" ? t("chat.fromSite") + " · " : "") + (c.title || c.id) + (c.running ? " ●" : "");
+      picker.append(h("option", { value: c.id, "data-origin": c.origin }, label));
+    }
+    picker.value = cur.name === domain ? "" : cur.name.split("#")[1];
+    picker.hidden = others.length === 0;
+  }
+  picker.addEventListener("change", () => {
+    const id = picker.value;
+    const origin = id ? picker.selectedOptions[0].dataset.origin : "panel";
+    cur = id ? { name: `${domain}#${id}`, path: `${base}/chats/${enc(id)}`, origin } : { name: domain, path: `${base}/chat`, origin: "panel" };
+    form.hidden = origin === "site";
+    readonlyNote.hidden = origin !== "site";
+    loadTurns();
+  });
+  newConv.addEventListener("click", async () => {
+    try {
+      const r = await api.post(`${base}/chats`, {});
+      cur = { name: `${domain}#${r.id}`, path: `${base}/chats/${enc(r.id)}`, origin: "panel" };
+      await fillPicker();
+      form.hidden = false; readonlyNote.hidden = true;
+      loadTurns();
+    } catch (e) { toastError(e); }
+  });
+  const el = h("div", { class: "chat" }, h("div", { class: "chat-head row" }, picker, newConv, h("span", { class: "grow" }), capacity), readonlyNote, turns, form);
   let agents = [];
   let running = null; // {turnEl, textEl, textBuf}
   const subs = [];
@@ -120,7 +162,7 @@ export function chatTab(domain) {
   async function loadTurns() {
     clear(turns).append(loading());
     try {
-      const conv = await api.get(`/sites/${enc(domain)}/chat`);
+      const conv = await api.get(cur.path);
       clear(turns);
       if (conv.provider && [...provider.options].some((o) => o.value === conv.provider)) provider.value = conv.provider;
       fillModels();
@@ -165,7 +207,7 @@ export function chatTab(domain) {
   // Events: agent.text (delta), agent.tool / agent.tool.result, agent.cost,
   // agent.end / agent.error / agent.stopped.
   subs.push(onEvent("agent.", (ev) => {
-    if (ev.subject !== domain || ev.type === "agent.capacity") return;
+    if (ev.subject !== cur.name || ev.type === "agent.capacity") return;
     const d = ev.data || {};
     if (ev.type === "agent.start" || ev.type === "agent.turn.started") { if (!running) begin(); return; }
     if (!running) begin();
@@ -227,11 +269,11 @@ export function chatTab(domain) {
     send.classList.add("busy");
     try {
       const s = store.site(domain);
-      const cur = (s && s.manifest && s.manifest.agent) || {};
-      if (provider.value && provider.value !== cur.provider) {
-        await api.patch(`/sites/${enc(domain)}/manifest`, { agent: { ...cur, provider: provider.value, model: model.value } });
+      const agentCfg = (s && s.manifest && s.manifest.agent) || {};
+      if (!house && provider.value && provider.value !== agentCfg.provider) {
+        await api.patch(`/sites/${enc(domain)}/manifest`, { agent: { ...agentCfg, provider: provider.value, model: model.value } });
       }
-      await api.post(`/sites/${enc(domain)}/chat`, { text: msg, model: model.value || undefined });
+      await api.post(cur.path, { text: msg, model: model.value || undefined });
       if (!running) begin();
     } catch (err) {
       if (err.status === 429) {
@@ -256,18 +298,18 @@ export function chatTab(domain) {
   });
   provider.addEventListener("change", fillModels);
   stop.addEventListener("click", async () => {
-    try { await api.post(`/sites/${enc(domain)}/chat/stop`); status.textContent = t("chat.stopping"); } catch (err) { toastError(err); }
+    try { await api.post(`${cur.path}/stop`); status.textContent = t("chat.stopping"); } catch (err) { toastError(err); }
   });
   procsBtn.addEventListener("click", async () => {
     const list = h("div", { class: "stack-sm" });
     const fill = async () => {
       clear(list);
-      const procs = await api.get(`/sites/${enc(domain)}/chat/processes`);
+      const procs = await api.get(`${cur.path}/processes`);
       if (!procs.length) { list.append(h("p", { class: "muted" }, t("chat.noProcesses"))); return; }
       for (const pr of procs) {
         const kill = h("button", { type: "button", class: "btn sm danger" }, t("chat.kill"));
         kill.addEventListener("click", async () => {
-          try { await api.post(`/sites/${enc(domain)}/chat/processes/${pr.pid}/kill`); await fill(); } catch (err) { toastError(err); }
+          try { await api.post(`${cur.path}/processes/${pr.pid}/kill`); await fill(); } catch (err) { toastError(err); }
         });
         list.append(h("div", { class: "row" }, h("code", { class: "grow small" }, `${pr.pid}  ${pr.command}`), kill));
       }
@@ -277,7 +319,7 @@ export function chatTab(domain) {
       title: t("chat.processesTitle"),
       body: [h("p", { class: "dim" }, t("chat.processesBody")), list],
       buttons: [{ label: t("common.close"), value: null }, { label: t("chat.killAll"), primary: true, onClick: async () => {
-        const r = await api.post(`/sites/${enc(domain)}/chat/reap`);
+        const r = await api.post(`${cur.path}/reap`);
         toast(t("chat.killed", { n: r.killed }), "ok");
         await fill();
         return false;
@@ -286,9 +328,9 @@ export function chatTab(domain) {
   });
   reset.addEventListener("click", async () => {
     if (!(await confirm({ title: t("chat.newQ"), body: t("chat.newBody"), confirmLabel: t("chat.new") }))) return;
-    try { await api.del(`/sites/${enc(domain)}/chat`); await loadTurns(); } catch (err) { toastError(err); }
+    try { await api.del(cur.path); await loadTurns(); } catch (err) { toastError(err); }
   });
 
-  loadAgents().then(loadTurns);
+  loadAgents().then(fillPicker).then(loadTurns);
   return { el, destroy() { subs.forEach((u) => u()); } };
 }

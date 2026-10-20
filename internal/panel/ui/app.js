@@ -23,6 +23,7 @@ import { eventsScreen } from "./screens/events.js";
 import { guardScreen } from "./screens/guard.js";
 import { settingsScreen } from "./screens/settings.js";
 import { systemScreen } from "./screens/system.js";
+import { houseScreen } from "./screens/house.js";
 
 const app = document.getElementById("app");
 const main = document.getElementById("main");
@@ -45,6 +46,7 @@ const NAV = [
   ["waf", "/waf", "g w", "shield"],
   ["modules", "/modules", "g m", "blocks"],
   ["tasks", "/tasks", "g t", "clock"],
+  ["house", "/house", "g h", "sparkles"],
   ["events", "/events", "g e", "activity"],
   ["guard", "/guard", "g g", "eye"],
   ["settings", "/settings", "g c", "sliders"],
@@ -115,6 +117,7 @@ route("/events", eventsScreen);
 route("/guard", guardScreen);
 route("/settings", settingsScreen);
 route("/system", systemScreen);
+route("/house", houseScreen);
 
 let authView = null;
 let authed = false;
