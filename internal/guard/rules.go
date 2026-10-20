@@ -135,6 +135,22 @@ var rules = []Rule{
 	},
 }
 
+func init() {
+	// The text signatures judge each process's command line too, with the
+	// site's own HOME and folder taken out first.
+	for _, tr := range textRules {
+		tr := tr
+		rules = append(rules, Rule{Key: tr.Key, Level: tr.Level, Description: tr.Description,
+			Match: func(v View) (string, bool) {
+				if len(v.Proc.Cmdline) == 0 {
+					return "", false
+				}
+				r, where, ok := MatchText(strings.Join(v.Proc.Cmdline, " "), v.Site.Home, v.Site.Dir)
+				return where, ok && r.Key == tr.Key
+			}})
+	}
+}
+
 // Rules lists what the guard looks for, in the order it checks.
 func Rules() []Rule {
 	out := make([]Rule, len(rules))

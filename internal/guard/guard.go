@@ -1,4 +1,4 @@
-// Package guard is the watchdog: every thirty seconds it reads the process
+// Package guard is the watchdog: every three seconds it reads the process
 // table, attributes processes to the sites that spawned them, and checks
 // each against rules written in code. A suspicious finding is an event; an
 // intrusion kills the process tree and switches the site off through its
@@ -35,6 +35,12 @@ type SiteInfo struct {
 	Dir    string
 	// Ports the engine assigned: the instance's and the workers'.
 	Ports []int
+	// Home is the HOME the engine gives the site's processes
+	// (data/homes/<domain>); what is inside it is the site's own.
+	Home string
+	// Logs are the files the site's processes write (the instance's and
+	// the workers'), scanned for new lines on every sweep.
+	Logs []string
 }
 
 // Incident is one finding, kept at data/guard/incidents/<id>.json.
@@ -69,6 +75,10 @@ type Options struct {
 	Now      func() time.Time
 	// OrphanAge is how long a parentless browser may live; ten minutes.
 	OrphanAge time.Duration
+	// Contained is called after an intrusion has been acted on (the
+	// processes killed, the site disabled), to ask an agent to find out
+	// how it got in. Called in its own goroutine; nil does nothing.
+	Contained func(Incident)
 }
 
 // Guard is the watchdog.
@@ -82,6 +92,8 @@ type Guard struct {
 	// seen remembers (domain, rule, pid) findings so a suspicious process
 	// that stays alive is reported once an hour, not every thirty seconds.
 	seen map[string]time.Time
+	// offsets is how far each site log has been read.
+	offsets map[string]int64
 }
 
 // New builds a guard. Nothing runs until Run or Sweep.
@@ -90,12 +102,15 @@ func New(opts Options) *Guard {
 		opts.Now = time.Now
 	}
 	if opts.Interval <= 0 {
-		opts.Interval = 30 * time.Second
+		// Three seconds, not thirty: V1's credential theft lived for
+		// milliseconds and a thirty-second sweep saw its aftermath at best.
+		// Reading /proc is cheap; sockets are read only for site processes.
+		opts.Interval = 3 * time.Second
 	}
 	if opts.OrphanAge <= 0 {
 		opts.OrphanAge = 10 * time.Minute
 	}
-	g := &Guard{opts: opts, reader: Reader{Root: opts.ProcRoot}, now: opts.Now, seen: map[string]time.Time{}}
+	g := &Guard{opts: opts, reader: Reader{Root: opts.ProcRoot}, now: opts.Now, seen: map[string]time.Time{}, offsets: map[string]int64{}}
 	g.kill = opts.Kill
 	if g.kill == nil {
 		g.kill = func(pid int) error { return syscall.Kill(pid, syscall.SIGKILL) }
@@ -202,6 +217,7 @@ func (g *Guard) Sweep() ([]Incident, error) {
 	for _, site := range sites {
 		root := g.rootPID(site.Domain)
 		tree := g.attribute(site, root, procs, byPID, claimed)
+		recorded = append(recorded, g.judgeLogs(site, tree, byPID)...)
 		if len(tree) == 0 {
 			continue
 		}
@@ -241,6 +257,49 @@ func (g *Guard) Sweep() ([]Incident, error) {
 	g.huntOrphans(procs, byPID, claimed)
 	return recorded, nil
 }
+
+// judgeLogs reads what the site's processes wrote since the last sweep.
+// A log intrusion has no process to point at: the site is disabled and
+// every process attributed to it is killed, which is what the line says
+// someone made it do.
+func (g *Guard) judgeLogs(site SiteInfo, tree []*Process, byPID map[int]*Process) []Incident {
+	var out []Incident
+	disabled := false
+	killed := map[int]bool{}
+	for _, path := range site.Logs {
+		for _, line := range g.newLines(path) {
+			r, where, ok := MatchLog(line, site.Home, site.Dir)
+			if !ok {
+				continue
+			}
+			key := site.Domain + "|log|" + r.Key + "|" + where
+			if g.recently(key) {
+				continue
+			}
+			rule := Rule{Key: r.Key, Level: r.Level, Description: r.Description}
+			excerpt := line
+			if len(excerpt) > 500 {
+				excerpt = excerpt[:500] + "…"
+			}
+			p := Process{Cmdline: []string{excerpt}}
+			if rule.Level == LevelIntrusion {
+				for _, t := range tree {
+					if !killed[t.PID] {
+						g.killTree(t.PID, byPID, killed)
+					}
+				}
+			}
+			inc := g.act(site, rule, p, "log "+filepathBase(path)+": "+where, byPID, &disabled, killed)
+			out = append(out, inc)
+			if rule.Level == LevelIntrusion {
+				return out
+			}
+		}
+	}
+	return out
+}
+
+func filepathBase(p string) string { return filepath.Base(p) }
 
 // rootPID reads the instance pid the engine recorded for a domain.
 func (g *Guard) rootPID(domain string) int {
@@ -354,6 +413,12 @@ func (g *Guard) act(site SiteInfo, rule Rule, p Process, where string, byPID map
 	g.emit(events.Event{Type: typ, Subject: site.Domain, Actor: "guard", Level: level,
 		Message: rule.Description + ": " + where,
 		Data:    map[string]any{"id": inc.ID, "rule": rule.Key, "pid": p.PID, "action": inc.Action}})
+	// Only after acting: the rule decides and cuts, and only then may a
+	// model be asked to explain. The other way round, a turn takes a
+	// minute and the theft takes milliseconds.
+	if rule.Level == LevelIntrusion && g.opts.Contained != nil {
+		go g.opts.Contained(inc)
+	}
 	return inc
 }
 
@@ -373,6 +438,12 @@ func (g *Guard) disable(site SiteInfo) error {
 // re-spawns while its parent is still alive to notice. done records what
 // was signalled so the same sweep does not judge or kill it twice.
 func (g *Guard) killTree(pid int, byPID map[int]*Process, done map[int]bool) (killed, failed int) {
+	// Never below 2: the children of 0 are init and kthreadd, and a walk
+	// from there is every process on the machine. A finding from a log
+	// line has no pid, and must not become that.
+	if pid < 2 {
+		return 0, 0
+	}
 	children := map[int][]int{}
 	for _, p := range byPID {
 		children[p.PPID] = append(children[p.PPID], p.PID)

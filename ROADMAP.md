@@ -43,11 +43,6 @@ Nothing left.
 
 ## 6. The guard
 
-- Rules for credentials (`~/.ssh`, `/proc/*/environ`), download-and-run
-  (`curl | sh`) and credential sweeps, with the own-HOME exemption.
-- Scan site logs (V1's `MatchLog`, ignoring 4xx paths); sweep every 3 s
-  rather than 30.
-- Call the agent on an incident once it is contained.
 - A daily `npm audit` (critical and new), a dependencies screen, and
   `vulnerable` on publish (docs/security.md claims it).
 - The browser reaper: respect open CDP connections, 30 minutes, a JSONL
@@ -121,6 +116,12 @@ Nothing left.
   aes128gcm against the standard library (RFC 8291's example reproduced
   byte for byte), for intrusions, criticals, repositories that stop
   pulling and turns that end in the panel's conversations (§5, §6).
+- **§6 Guard rules**: credentials, download-and-run and credential sweeps
+  over command lines and over the lines sites write to their logs (a
+  client's request answered 4xx is nothing, 2xx a suspicion, never an
+  intrusion), the site's own HOME exempt, a sweep every three seconds, and
+  the house's agent asked to investigate once an intrusion is contained,
+  with what was observed fenced as evidence.
 - **§5 Agents**: a jail that holds, two-hour turns, the processes a
   conversation leaves listed and killed, several conversations per site,
   the site door, loans, attachments, queued messages, turns that survive a
