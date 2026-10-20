@@ -6,7 +6,7 @@
 // that looks migrated and has quietly lost something (a VPN-only site served
 // to everyone, a password zone gone), which is the failure that looks
 // exactly like success. As V2 gains each feature, its blocker becomes a
-// conversion here; docs/parity.md is the list.
+// conversion here; ROADMAP.md is the list.
 //
 // Settings that change nothing V1 would have done (an attack mode written
 // but off, a health timeout V2 measures differently) are converted or
@@ -196,25 +196,25 @@ func present(raw json.RawMessage) bool {
 }
 
 // blockers lists the V1 settings in use that V2 cannot honour yet, each
-// with the phase of docs/parity.md that brings it.
+// with the section of ROADMAP.md that brings it.
 func (c *converter) blockers(in *v1) {
 	if in.App != "" {
-		c.block("app %q (apps; parity §8)", in.App)
+		c.block("app %q (apps; ROADMAP §8)", in.App)
 	}
 	if in.AutoFix != nil && *in.AutoFix {
-		c.block("autofix (repair after failed health checks; parity §6)")
+		c.block("autofix (repair after failed health checks; ROADMAP §6)")
 	}
 	if present(in.VPN) {
-		c.block("vpn (VPN-only site; parity §2)")
+		c.block("vpn (VPN-only site; ROADMAP §2)")
 	}
 	if present(in.Security) {
-		c.block("security (bots, browsers, probe paths; parity §3)")
+		c.block("security (bots, browsers, probe paths; ROADMAP §3)")
 	}
 	if present(in.Attack) {
 		var a v1Attack
 		_ = json.Unmarshal(in.Attack, &a)
 		if a.On {
-			c.block("attack mode on (proof of work; parity §3)")
+			c.block("attack mode on (proof of work; ROADMAP §3)")
 		} else {
 			c.note("attack: written but off; its settings are not carried (bits %d)", a.Bits)
 		}
@@ -239,7 +239,7 @@ func (c *converter) blockers(in *v1) {
 		if cr.Enabled != nil && !*cr.Enabled {
 			c.note("cache: written but off; its rules are not carried")
 		} else if len(cr.Rules) > 0 {
-			c.block("cache rules (house cache; parity §2)")
+			c.block("cache rules (house cache; ROADMAP §2)")
 		}
 	}
 	if present(in.Chat) {
