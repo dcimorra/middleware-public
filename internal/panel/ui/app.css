@@ -301,6 +301,7 @@ input[type="checkbox"], input[type="radio"] { width: 15px; height: 15px; accent-
 .grid-3 > .card { margin-top: 0; }
 .local-addrs { margin-top: 12px; }
 pre.log.help { min-height: 0; max-height: 360px; font-size: 11.5px; }
+pre.log.exec-out { min-height: 0; max-height: 50vh; }
 @media (max-width: 760px) { .grid-2 { grid-template-columns: 1fr; } }
 .stats { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
 .stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px 14px; box-shadow: var(--shadow); }
@@ -371,6 +372,7 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .dot.bad { background: var(--bad); }
 .dot.warn { background: var(--warn); }
 .status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.level-ok { color: var(--ok); }
 .level-warn { color: var(--warn); }
 .level-error { color: var(--bad); }
 

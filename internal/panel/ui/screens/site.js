@@ -21,9 +21,10 @@ import { filesTab } from "./site-files.js";
 import { chatTab } from "./site-chat.js";
 import { accessTab } from "./site-access.js";
 import { securityTab } from "./site-security.js";
+import { activityTab } from "./site-activity.js";
 
-const TABS = ["overview", "manifest", "logs", "files", "chat", "access", "security"];
-const TAB_ICON = { overview: "gauge", manifest: "code", logs: "list", files: "folder", chat: "chat", access: "lock", security: "shield" };
+const TABS = ["overview", "activity", "manifest", "logs", "files", "chat", "access", "security"];
+const TAB_ICON = { overview: "gauge", activity: "activity", manifest: "code", logs: "list", files: "folder", chat: "chat", access: "lock", security: "shield" };
 
 export function siteScreen({ domain, tab }) {
   const active = TABS.includes(tab) ? tab : "overview";
@@ -60,6 +61,7 @@ export function siteScreen({ domain, tab }) {
       case "chat": view = chatTab(domain); break;
       case "access": view = accessTab(domain); break;
       case "security": view = securityTab(domain); break;
+      case "activity": view = activityTab(domain); break;
       default: view = overviewTab(domain);
     }
     body.append(view.el);
@@ -135,6 +137,7 @@ function overviewTab(domain) {
       // site of gigabytes streams instead of passing through memory.
       actions.append(h("a", { class: "btn", href: `/api/v1/sites/${enc(domain)}/download.zip`, download: `${domain}.zip`, title: t("site.downloadHint") }, icon("download"), t("site.download")));
       actions.append(btn(t("site.rename"), "edit", rename));
+      actions.append(btn(t("site.exec"), "terminal", runCommand));
     }
     actions.append(btn(t("site.delete"), "trash", del, "danger"));
 
@@ -181,11 +184,58 @@ function overviewTab(domain) {
         cell(def.port || w.port ? String(def.port || w.port) : "", t("site.port"), "num mono"),
         cell(def.command ? h("code", null, def.command.join(" ")) : "", t("site.command"), "mono"),
         cell(w.error ? h("span", { class: "level-error small" }, w.error) : "", t("site.error")),
+        cell(workerActions(name, def, w), null, "right nowrap"),
       );
     });
     return h("div", { class: "card pad0" }, h("div", { class: "log-bar card-pad" }, h("h2", null, t("site.workers"))), table([
-      { label: t("site.worker") }, { label: t("site.status") }, { label: t("site.port"), class: "num" }, { label: t("site.command") }, { label: t("site.error") },
+      { label: t("site.worker") }, { label: t("site.status") }, { label: t("site.port"), class: "num" }, { label: t("site.command") }, { label: t("site.error") }, { label: "" },
     ], rows, { responsive: true }).el);
+  }
+
+  // Restart is for now; stop and start are written to the manifest
+  // (workers.<name>.disabled), so they survive a restart of the house.
+  function workerActions(name, def, w) {
+    const box = h("div", { class: "actions" });
+    const path = `/sites/${enc(domain)}/workers/${enc(name)}`;
+    if (def.disabled) {
+      box.append(btn(t("site.workerStart"), "play", () => act("start", path + "/start", t("site.workerStarted", { name })), "sm"));
+      return box;
+    }
+    if (w.alive) box.append(btn(t("site.restart"), "refresh", () => act("restart", path + "/restart", t("site.workerRestarted", { name })), "sm"));
+    box.append(btn(t("site.stop"), "stop", async () => {
+      if (await confirm({ title: t("site.workerStopQ", { name }), body: t("site.workerStopBody"), confirmLabel: t("site.stop"), danger: true })) {
+        await act("stop", path + "/stop", t("site.workerStopped", { name }));
+      }
+    }, "sm"));
+    return box;
+  }
+
+  // One command where the site runs, answered in the same dialog. Not a
+  // terminal: no input, a minute by default; anything longer is a task.
+  async function runCommand() {
+    const cmd = h("input", { type: "text", class: "mono", placeholder: "npm ls --depth=0", autocomplete: "off", spellcheck: "false" });
+    const timeout = h("select", null, ...["30s", "1m", "5m", "10m"].map((d) => h("option", { value: d }, d)));
+    timeout.value = "1m";
+    const out = h("pre", { class: "log exec-out", hidden: true });
+    const status = h("p", { class: "small" });
+    await open({
+      title: t("site.execQ", { domain }),
+      wide: true,
+      body: [h("p", { class: "dim small" }, t("site.execBody")), h("div", { class: "form-row" }, field(t("site.execCommand"), cmd), field(t("site.execTimeout"), timeout)), status, out],
+      buttons: [{ label: t("common.close"), value: null }, { label: t("site.execRun"), submit: true, primary: true }],
+      onSubmit: async () => {
+        if (!cmd.value.trim()) return false;
+        status.textContent = t("site.execRunning");
+        out.hidden = true;
+        const r = await api.post(`/sites/${enc(domain)}/exec`, { command: cmd.value, timeout: timeout.value });
+        out.textContent = r.output || t("site.execNoOutput");
+        out.hidden = false;
+        status.textContent = (r.timed_out ? t("site.execTimedOut") : t("site.execExit", { code: r.exit_code })) +
+          " · " + r.seconds.toFixed(1) + " s" + (r.truncated ? " · " + t("site.execTruncated") : "");
+        status.className = "small " + (r.exit_code === 0 && !r.timed_out ? "level-ok" : "level-error");
+        return false; // stay open: the answer is the point
+      },
+    });
   }
 
   async function loadEnv() {
@@ -374,5 +424,55 @@ function manifestTab(domain) {
     if (!editor.dirty) { editor.setValue(site.manifest || {}); stamp.textContent = ""; return; }
     stamp.textContent = t("manifest.changedUnderneath", { at: fmtTime(new Date().toISOString()) });
   });
+  el.append(historyCard(domain, editor));
   return { el, destroy: unsub };
+}
+
+// The versions the engine kept, whoever wrote them. Looking at one puts
+// nothing in the editor; restoring writes it back through the same
+// validation as a save, and becomes the newest version itself.
+function historyCard(domain, editor) {
+  const box = h("div");
+  const wrap = h("div", null, h("hr"), h("h3", null, t("manifest.history")), h("p", { class: "small muted" }, t("manifest.historyHint")), box);
+  async function load() {
+    try {
+      const versions = await api.get(`/sites/${enc(domain)}/manifest/history`);
+      clear(box);
+      if (!versions.length) { box.append(h("p", { class: "small muted" }, t("manifest.historyNone"))); return; }
+      box.append(table([{ label: t("manifest.historyAt") }, { label: t("manifest.historySize"), class: "num" }, { label: "" }],
+        versions.map((v, i) => h("tr", null,
+          cell(h("span", { title: fmtTime(v.at) }, fmtTime(v.at)), t("manifest.historyAt")),
+          cell(String(v.bytes) + " B", t("manifest.historySize"), "num"),
+          cell(i === 0 ? h("span", { class: "badge ok" }, t("manifest.historyCurrent")) : versionActions(v), null, "right nowrap"),
+        )), { responsive: true }).el);
+    } catch (e) { clear(box).append(errorBox(e)); }
+  }
+  function versionActions(v) {
+    const view = h("button", { type: "button", class: "btn sm" }, icon("eye"), t("manifest.historyView"));
+    view.addEventListener("click", async () => {
+      try {
+        const text = await api.text(`/sites/${enc(domain)}/manifest/history/${enc(v.id)}`);
+        const restore = await open({
+          title: t("manifest.historyOf", { at: fmtTime(v.at) }), wide: true,
+          body: h("pre", { class: "log" }, text),
+          buttons: [{ label: t("common.close"), value: false }, { label: t("manifest.historyRestore"), value: true, primary: true }],
+        });
+        if (restore) await doRestore(v);
+      } catch (e) { toastError(e); }
+    });
+    const back = h("button", { type: "button", class: "btn sm" }, icon("history"), t("manifest.historyRestore"));
+    back.addEventListener("click", () => doRestore(v));
+    return h("div", { class: "actions" }, view, back);
+  }
+  async function doRestore(v) {
+    if (!(await confirm({ title: t("manifest.historyRestoreQ", { at: fmtTime(v.at) }), body: t("manifest.historyRestoreBody"), confirmLabel: t("manifest.historyRestore") }))) return;
+    try {
+      const updated = await api.post(`/sites/${enc(domain)}/manifest/history/${enc(v.id)}/restore`);
+      if (updated && updated.domain) { store.putSite(updated); editor.setValue(updated.manifest || {}); }
+      toast(t("manifest.historyRestored"), "ok");
+      setTimeout(load, 3500); // the engine keeps it on its next tick
+    } catch (e) { toastError(e); }
+  }
+  load();
+  return wrap;
 }
