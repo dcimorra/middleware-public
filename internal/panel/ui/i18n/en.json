@@ -595,5 +595,6 @@
   "house.col.cost": "Cost",
   "house.col.turns": "Turns",
   "house.col.models": "By model",
-  "house.noCost": "Nothing spent in these 30 days."
+  "house.noCost": "Nothing spent in these 30 days.",
+  "chat.emptyHintHouse": "The agent works on the installation itself; every existing site is closed to it."
 }

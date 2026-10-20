@@ -197,7 +197,7 @@ export function chatTab(domain) {
         if (i === list.length - 1 && tn.role !== "user" && !conv.running) for (const q of tn.questions || []) tu.el.append(questionEl(q));
         turns.append(tu.el);
       });
-      if (!(conv.turns || []).length) turns.append(h("div", { class: "empty" }, h("strong", null, t("chat.emptyTitle")), t("chat.emptyHint")));
+      if (!(conv.turns || []).length) turns.append(h("div", { class: "empty" }, h("strong", null, t("chat.emptyTitle")), t(house ? "chat.emptyHintHouse" : "chat.emptyHint")));
       scroll();
     } catch (e) {
       clear(turns).append(errorBox(e));
