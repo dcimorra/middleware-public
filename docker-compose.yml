@@ -23,10 +23,19 @@ services:
       # into data/modules-key inside the volume, which is fine as long as the
       # volume is backed up with it; set it here to keep the two apart.
       MIDDLEWARE_SECRET_KEY: ${MIDDLEWARE_SECRET_KEY:?set MIDDLEWARE_SECRET_KEY in .env}
+    # The image runs as the unprivileged user `middleware` (a system uid).
+    # A named volume is created owned by it; a host directory is not. To
+    # bind-mount one instead of the volume below, run as the owner of that
+    # directory (your uid:gid, `id -u`:`id -g`) or chown it to the
+    # container's user: otherwise every write, `middleware setup` included,
+    # fails with "permission denied".
+    # user: "1000:1000"
     volumes:
       # Everything: sites, tasks, data, modules. One volume so a backup is
       # one thing.
       - root:/srv/middleware
+      # Or a host directory, with `user:` above set to its owner:
+      # - /home/me/middleware-data:/srv/middleware
       # Uncomment to let the docker runtime start site containers on the
       # host's daemon. This hands the container root-equivalent access to
       # the host; only do it on a machine where that is acceptable.

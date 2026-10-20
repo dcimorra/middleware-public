@@ -56,7 +56,11 @@ open http://127.0.0.1:46100
 ```
 
 `docker-compose.yml` keeps everything in one named volume and maps the panel
-to loopback only. The 80/443 lines are commented until the ports door is
+to loopback only. The container runs as an unprivileged system user, so a
+host directory bind-mounted in place of the volume must be writable by it:
+set `user:` in the compose file to the directory's owner (`id -u`:`id -g`),
+or `chown` the directory to the container's user. Keep `MIDDLEWARE_ROOT`
+pointing at the path *inside* the container. The 80/443 lines are commented until the ports door is
 enabled; the comments say what to do.
 
 Inside the container the supervisor binds `0.0.0.0:46100` (the image sets
