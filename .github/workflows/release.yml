@@ -33,17 +33,28 @@ jobs:
       - id: pick
         env:
           INPUT_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             case "$INPUT_TAG" in v[0-9]*) ;; *) echo "tag must look like v2.0.0" >&2; exit 1 ;; esac
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
+            # A tag whose run failed before publishing is moved to the
+            # current commit; a tag that already has a release is never
+            # touched, because binaries people downloaded must keep
+            # matching it.
             if git rev-parse -q --verify "refs/tags/$INPUT_TAG" >/dev/null; then
-              echo "tag $INPUT_TAG already exists" >&2; exit 1
+              if gh release view "$INPUT_TAG" >/dev/null 2>&1; then
+                echo "tag $INPUT_TAG already has a release" >&2; exit 1
+              fi
+              echo "tag $INPUT_TAG exists without a release: moving it to $(git rev-parse --short HEAD)"
+              git tag -f -a "$INPUT_TAG" -m "$INPUT_TAG"
+              git push -f origin "refs/tags/$INPUT_TAG"
+            else
+              git tag -a "$INPUT_TAG" -m "$INPUT_TAG"
+              git push origin "refs/tags/$INPUT_TAG"
             fi
-            git tag -a "$INPUT_TAG" -m "$INPUT_TAG"
-            git push origin "refs/tags/$INPUT_TAG"
             echo "version=$INPUT_TAG" >> "$GITHUB_OUTPUT"
           else
             echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
