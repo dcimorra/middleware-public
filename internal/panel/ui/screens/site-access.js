@@ -28,7 +28,9 @@ export function accessTab(domain) {
   const window_ = h("input", { type: "text", class: "mono", placeholder: "1m", value: rate.window || "" });
   const burst = h("input", { type: "number", min: "0", value: rate.burst ?? "" });
   const maxBody = h("input", { type: "text", class: "mono", placeholder: "20m", value: waf.max_body || "" });
-  const underAttack = toggle(t("access.underAttack"), { checked: Boolean(waf.under_attack) });
+  // The switch reads the attack block, and the old waf boolean for a
+  // manifest written before it; flipping it moves the old one over.
+  const underAttack = toggle(t("access.underAttack"), { checked: Boolean((m.attack && m.attack.on) || waf.under_attack) });
 
   const save = h("button", { type: "submit", class: "btn primary" }, t("common.save"));
   const err = h("div", { class: "error-box", hidden: true, role: "alert" });
@@ -91,7 +93,9 @@ export function accessTab(domain) {
     if (burst.value !== "") r.burst = Number(burst.value);
     if (Object.keys(r).length) newWaf.rate = r;
     if (maxBody.value) newWaf.max_body = maxBody.value.trim();
-    if (underAttack.input.checked) newWaf.under_attack = true;
+    // Saving the form must not switch off a manifest that is under attack
+    // through the old boolean; the switch above moves it to `attack`.
+    if (underAttack.input.checked && !m.attack) newWaf.under_attack = true;
     save.classList.add("busy");
     try {
       const updated = await api.patch(`/sites/${enc(domain)}/manifest`, { access: newAccess, waf: newWaf });

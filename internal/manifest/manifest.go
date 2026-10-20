@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/attack"
 	"github.com/dcimorra/middleware-public/internal/pages"
 	"github.com/dcimorra/middleware-public/internal/security"
 )
@@ -50,6 +51,9 @@ type Manifest struct {
 	// Security decides by what a caller claims to be and where it is
 	// (robots, browsers, countries), and which paths are never served.
 	Security *security.Rules `json:"security,omitempty"`
+	// Attack is under-attack mode: a proof of work before anything is
+	// served (internal/attack).
+	Attack *attack.Rules `json:"attack,omitempty"`
 	// Needs is what this site needs up to do its job: another site's
 	// domain, or one of a site's workers as "name@domain". A first start
 	// waits for them (a minute at most) and the panel names what is
@@ -229,9 +233,12 @@ type RouteAccess struct {
 
 // WAF is the per-site layer-7 policy.
 type WAF struct {
-	Rate        *Rate  `json:"rate,omitempty"`
-	MaxBody     string `json:"max_body,omitempty"`
-	UnderAttack bool   `json:"under_attack,omitempty"`
+	Rate    *Rate  `json:"rate,omitempty"`
+	MaxBody string `json:"max_body,omitempty"`
+	// UnderAttack is the switch from before `attack` existed, read as
+	// `attack.on` with its defaults; switching from the panel or the API
+	// moves it there.
+	UnderAttack bool `json:"under_attack,omitempty"`
 }
 
 // Rate is a token bucket per client address.
@@ -497,6 +504,9 @@ func (m *Manifest) Validate() error {
 				return err
 			}
 		}
+	}
+	if err := m.Attack.Validate(); err != nil {
+		return fmt.Errorf("attack.%w", err)
 	}
 	if _, err := security.Compile(m.Security); err != nil {
 		return fmt.Errorf("security.%w", err)

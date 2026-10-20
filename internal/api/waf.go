@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/attack"
 	"github.com/dcimorra/middleware-public/internal/traffic"
 	"github.com/dcimorra/middleware-public/internal/waf"
 )
@@ -16,6 +17,8 @@ import (
 type WAFOptions struct {
 	WAF     *waf.WAF
 	Traffic *traffic.Recorder
+	// Attack holds the challenge counters; nil when it did not start.
+	Attack *attack.Guard
 }
 
 // RegisterWAF adds the /waf routes.
@@ -39,7 +42,11 @@ func (s *Server) RegisterWAF(o WAFOptions) {
 		if recent == nil {
 			recent = []waf.Hit{}
 		}
-		return map[string]any{"global": wf.Policy(), "blocked": blocked, "recent": recent}, nil
+		att := map[string]any{"global": wf.GlobalAttack(), "counts": map[string]attack.Counter{}}
+		if o.Attack != nil {
+			att["counts"] = o.Attack.Counts()
+		}
+		return map[string]any{"global": wf.Policy(), "blocked": blocked, "recent": recent, "attack": att}, nil
 	})
 	s.Handle("PUT", p, "Replace the global policy", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		wf, err := need()
@@ -107,17 +114,56 @@ func (s *Server) RegisterWAF(o WAFOptions) {
 		if err != nil {
 			return nil, err
 		}
+		// Every field but enabled is optional and left as it was when
+		// absent. The deadline is "for" and is turned into a date here:
+		// the clock that decides whether it has passed is this machine's,
+		// not the browser's that asked. It is recomputed only when sent,
+		// because a deadline that stretches whenever something else is
+		// saved is not a deadline. "for": "" is permanent.
 		var body struct {
-			Enabled bool   `json:"enabled"`
-			Domain  string `json:"domain"`
+			Enabled bool      `json:"enabled"`
+			Domain  string    `json:"domain"`
+			For     *string   `json:"for"`
+			Bits    *int      `json:"bits"`
+			Life    *string   `json:"life"`
+			Skip    *[]string `json:"skip"`
+			Message *string   `json:"message"`
 		}
 		if err := ReadJSON(r, &body); err != nil {
 			return nil, err
 		}
-		if err := wf.SetUnderAttack(strings.ToLower(strings.TrimSpace(body.Domain)), body.Enabled); err != nil {
-			if strings.HasSuffix(err.Error(), "no such site") {
-				return nil, Errorf(http.StatusNotFound, "%v", err)
+		until := ""
+		if body.For != nil && *body.For != "" {
+			d, err := time.ParseDuration(*body.For)
+			if err != nil || d <= 0 {
+				return nil, Errorf(http.StatusBadRequest, "for: %q is not a positive duration", *body.For)
 			}
+			until = time.Now().Add(d).UTC().Format(time.RFC3339)
+		}
+		err = wf.SetAttack(strings.ToLower(strings.TrimSpace(body.Domain)), func(a *attack.Rules) {
+			a.On = body.Enabled
+			if body.For != nil {
+				a.Until = until
+			}
+			if body.Bits != nil {
+				a.Bits = *body.Bits
+			}
+			if body.Life != nil {
+				a.Life = *body.Life
+			}
+			if body.Skip != nil {
+				a.Skip = *body.Skip
+			}
+			if body.Message != nil {
+				a.Message = *body.Message
+			}
+		})
+		switch {
+		case err != nil && strings.HasSuffix(err.Error(), "no such site"):
+			return nil, Errorf(http.StatusNotFound, "%v", err)
+		case err != nil && strings.Contains(err.Error(), "attack."):
+			return nil, Errorf(http.StatusBadRequest, "%v", err)
+		case err != nil:
 			return nil, err
 		}
 		return OK, nil

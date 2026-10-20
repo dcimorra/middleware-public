@@ -446,7 +446,8 @@ What a visitor page means (the title is what a visitor reads):
 | "This entrance is closed" | the door the request came by is closed | the Inbound screen; open the door or move the domain |
 | "No certificate yet" | ports door, certificate being requested | wait; `cert.failed` says why if it does not come |
 | "Access restricted" | `access` denied this client | the allow list, the country list, the password |
-| "Slow down" / "Request too large" / "Checking your browser" | `waf.rate`, `waf.max_body`, `waf.under_attack` | raise the limit or exempt the client |
+| "Slow down" / "Request too large" | `waf.rate`, `waf.max_body` | raise the limit or exempt the client |
+| "Checking your browser" | `attack.on` (or the WAF policy's `attack`) | `attack.skip` for webhooks, or switch it off |
 
 Events to know: `instance.starting`, `instance.started`, `instance.failed`
 (carries the error and the retry wait; the panel shows it with the log
@@ -580,16 +581,21 @@ decision, not yours. Each site has a daily cap (`claude_api.daily_usd`); a
 {
   "version": 2,
   "static": { "root": "public" },
-  "waf": { "rate": { "requests": 600, "window": "1m", "burst": 100 }, "max_body": "20m", "under_attack": false }
+  "waf": { "rate": { "requests": 600, "window": "1m", "burst": 100 }, "max_body": "20m" },
+  "attack": { "on": false, "bits": 16, "life": "30m", "until": "", "skip": ["/hooks/stripe"] }
 }
 ```
 
 `rate` is a token bucket per client address; an address that trips it is
 blocked for a while, and pushed to the kernel firewall when the helper runs.
-`under_attack: true` challenges browsers before serving. While it is on,
+`attack.on` makes every browser solve a proof of work before serving (a
+fraction of a second at 16 bits; each bit doubles it). While it is on,
 **anything that is not a browser does not get in**: webhooks, your own API
-clients, a payment gateway's callback. Say so before turning it on, and turn
-it off after; it protects nothing, it only makes the first request cost.
+clients, a payment gateway's callback. Put the narrowest path that works in
+`skip` (each line is an open door), give it an `until` (switch it on with
+`POST /api/v1/waf/under-attack {"enabled":true,"domain":…,"for":"2h"}`), and
+say so before turning it on; it protects nothing, it only makes the first
+request cost. A POST interrupted by the challenge is lost.
 
 **Maintenance** → `hold` (§ 3), not `disabled`: hold keeps the domain, the
 DNS and the door, and shows a page you wrote.

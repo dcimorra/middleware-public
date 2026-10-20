@@ -76,9 +76,10 @@ never shell strings. Paths are relative to the site folder.
 
   "waf": {
     "rate": { "requests": 600, "window": "1m", "burst": 100 },
-    "max_body": "20m",
-    "under_attack": false
+    "max_body": "20m"
   },
+
+  "attack": { "on": false, "bits": 16, "life": "30m", "until": "", "skip": ["/hooks/stripe"], "message": "" },
 
   "cache": { "static_max_age": "1h" },
   "headers": { "X-Frame-Options": "DENY" },
@@ -251,6 +252,23 @@ process.
   cannot be listed. An unknown family, browser, country or a malformed
   time rejects the manifest. The last 50 refusals per site are kept in
   memory for the panel.
+- `attack` is under-attack mode: before anything is served, the browser
+  finds a number whose SHA-256 with the challenge starts with `bits` zero
+  bits (8 to 24, default 16; each bit doubles the work, checking it is one
+  hash) and gets a pass for `life` (default 30m), signed with a key kept on
+  disk, so a restart sends nobody back, and bound to the address and
+  User-Agent that solved it. It guards nothing (whoever runs JavaScript gets
+  through): `access` does that. While it is on, what is not a browser does
+  not get in; `skip` lists the paths that never get the challenge, by whole
+  segments, and each line is an open door. A POST interrupted by it is lost.
+  `until` (RFC 3339) switches it off by itself; empty is permanent. The
+  clock stops charging at once and the house writes it down as off within a
+  minute, keeping `bits` and `skip`. It runs after `security` and before the
+  password, so a flood never reaches a key derivation without paying first.
+  The WAF policy's `attack` applies to every site whose own is off (with the
+  site's `skip`) and to the panel, except requests that carry their own
+  credentials (an API token, the site door). The old `waf.under_attack:
+  true` is read as `attack.on` with the defaults.
 - `aliases` are served exactly like the site. A name that is already a site,
   or that two sites claim, is served by neither, and an event says so.
 

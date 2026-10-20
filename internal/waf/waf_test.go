@@ -2,6 +2,7 @@ package waf
 
 import (
 	"errors"
+	"github.com/dcimorra/middleware-public/internal/attack"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -191,48 +192,25 @@ func TestTheSiteManifestTightensTheGlobalRate(t *testing.T) {
 	}
 }
 
-func TestTheChallengeCookieRoundTrips(t *testing.T) {
-	w, c, _ := newTestWAF(t, t.TempDir(), nil)
-	if err := w.SetUnderAttack("", true); err != nil {
-		t.Fatal(err)
-	}
-	h := w.Wrap(okHandler())
-	first := get(h, "a.example", "203.0.113.9:1", nil)
-	if first.Code != http.StatusServiceUnavailable {
-		t.Fatalf("first visit got %d, want the challenge", first.Code)
-	}
-	if first.Header().Get("Refresh") != "2" {
-		t.Fatal("the challenge must tell the browser to come back")
-	}
-	cookies := first.Result().Cookies()
-	if len(cookies) != 1 || cookies[0].Name != clearanceCookie {
-		t.Fatalf("cookies: %+v", cookies)
-	}
-	cookie := cookies[0].Name + "=" + cookies[0].Value
-	if rec := get(h, "a.example", "203.0.113.9:1", map[string]string{"Cookie": cookie}); rec.Code != 200 {
-		t.Fatalf("with the cookie got %d, want 200", rec.Code)
-	}
-	// The cookie is bound to the address: another client cannot reuse it.
-	if rec := get(h, "a.example", "203.0.113.10:1", map[string]string{"Cookie": cookie}); rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("another address with a stolen cookie got %d, want the challenge", rec.Code)
-	}
-	// A bot that never keeps cookies never gets in.
-	if rec := get(h, "a.example", "203.0.113.9:1", nil); rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("without the cookie got %d", rec.Code)
-	}
-	// And a clearance expires.
-	c.advance(2 * time.Hour)
-	if rec := get(h, "a.example", "203.0.113.9:1", map[string]string{"Cookie": cookie}); rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expired cookie got %d", rec.Code)
-	}
-	// An allowed crawler is let through without one.
+func TestTheGlobalSwitchMovesTheOldBooleanToTheAttackBlock(t *testing.T) {
+	w, _, _ := newTestWAF(t, t.TempDir(), nil)
 	p := w.Policy()
-	p.AllowAgents = []string{"Googlebot"}
+	p.UnderAttack = true
 	if err := w.SetPolicy(p); err != nil {
 		t.Fatal(err)
 	}
-	if rec := get(h, "a.example", "203.0.113.11:1", map[string]string{"User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1)"}); rec.Code != 200 {
-		t.Fatalf("allowed crawler got %d", rec.Code)
+	if g := w.GlobalAttack(); g == nil || !g.On {
+		t.Fatalf("the old boolean is not read as on: %+v", g)
+	}
+	if err := w.SetAttack("", func(r *attack.Rules) { r.Bits = 12 }); err != nil {
+		t.Fatal(err)
+	}
+	p = w.Policy()
+	if p.UnderAttack || p.Attack == nil || !p.Attack.On || p.Attack.Bits != 12 {
+		t.Fatalf("policy after the switch: %+v %+v", p, p.Attack)
+	}
+	if err := w.SetAttack("", func(r *attack.Rules) { r.Bits = 40 }); err == nil {
+		t.Fatal("40 bits were accepted")
 	}
 }
 
@@ -252,17 +230,17 @@ func TestUnderAttackPerSiteIsWrittenToTheManifest(t *testing.T) {
 		return Site{}, false
 	}
 	w, _, _ := newTestWAF(t, filepath.Join(root, "data"), lookup)
-	if err := w.SetUnderAttack("s.example", true); err != nil {
+	if err := w.SetAttack("s.example", func(r *attack.Rules) { r.On, r.Skip = true, []string{"/hooks"} }); err != nil {
 		t.Fatal(err)
 	}
 	m, err := manifest.Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.WAF == nil || !m.WAF.UnderAttack {
-		t.Fatal("under_attack was not written to site.json")
+	if m.Attack == nil || !m.Attack.On || m.Attack.Skip[0] != "/hooks" || m.WAF != nil {
+		t.Fatalf("attack was not written to site.json: %+v %+v", m.Attack, m.WAF)
 	}
-	if err := w.SetUnderAttack("nope.example", true); err == nil {
+	if err := w.SetAttack("nope.example", func(r *attack.Rules) { r.On = true }); err == nil {
 		t.Fatal("an unknown site must be an error")
 	}
 }

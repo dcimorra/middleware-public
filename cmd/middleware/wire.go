@@ -39,7 +39,9 @@ import (
 // Request chain, outermost first: inbound (the ACME challenge and the
 // doors, before anything else sees the request), waf (refuse the abusive
 // before anything is spent on them), security (probe paths, robots,
-// browsers and countries: two lists are cheaper than a password), access
+// browsers and countries: two lists are cheaper than a password), attack
+// (the proof of work: outside the password, so a flood never reaches a
+// key derivation without paying first), access
 // (the door the operator closed), traffic (count whatever came out, error pages included), then
 // the proxy. Everything after traffic wraps nothing and only runs: the
 // api hangs from the proxy's panel slot, the chat, the tasks and the
@@ -49,6 +51,7 @@ const (
 	orderInbound  = 10
 	orderWAF      = 20
 	orderSecurity = 25
+	orderAttack   = 27
 	orderAccess   = 30
 	orderTraffic  = 40
 	orderAPI      = 50
@@ -143,7 +146,7 @@ func buildWire(a *app.App) app.Hook {
 		w.publisher = buildPublisher(a, set)
 		srv.RegisterInbound(api.InboundOptions{Hook: inboundHook, DNS: cloudflareDNS{set: set}, Publisher: w.publisher})
 	}
-	srv.RegisterWAF(api.WAFOptions{WAF: theWAF, Traffic: theTraffic})
+	srv.RegisterWAF(api.WAFOptions{WAF: theWAF, Traffic: theTraffic, Attack: theAttack})
 	srv.RegisterSecurity(api.SecurityOptions{Door: theSecurity, Country: edgeCountry})
 	w.shots = shots.New(shots.Options{
 		DataDir: dataDir(a),

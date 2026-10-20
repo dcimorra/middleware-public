@@ -4,6 +4,7 @@ import (
 	"net"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/dcimorra/middleware-public/internal/traffic"
 	"github.com/dcimorra/middleware-public/internal/waf"
@@ -54,9 +55,27 @@ func TestTheWAFRoutesBlockUnblockAndChangeThePolicy(t *testing.T) {
 	if resp.StatusCode != 400 {
 		t.Fatalf("invalid policy: %d", resp.StatusCode)
 	}
-	resp, _ = f.call("POST", "/api/v1/waf/under-attack", map[string]any{"enabled": true})
-	if resp.StatusCode != 200 || !w.Policy().UnderAttack {
-		t.Fatalf("under attack: %d", resp.StatusCode)
+	resp, _ = f.call("POST", "/api/v1/waf/under-attack", map[string]any{"enabled": true, "for": "2h", "bits": 18})
+	g := w.GlobalAttack()
+	if resp.StatusCode != 200 || !g.On || g.Bits != 18 || g.Until == "" {
+		t.Fatalf("under attack: %d %+v", resp.StatusCode, g)
+	}
+	if until, _ := time.Parse(time.RFC3339, g.Until); until.Before(time.Now().Add(119*time.Minute)) || until.After(time.Now().Add(121*time.Minute)) {
+		t.Fatalf("for 2h gave until %s", g.Until)
+	}
+	// Changing the difficulty leaves the deadline alone; "for": "" makes
+	// it permanent.
+	f.call("POST", "/api/v1/waf/under-attack", map[string]any{"enabled": true, "bits": 12})
+	if g2 := w.GlobalAttack(); g2.Until != g.Until || g2.Bits != 12 {
+		t.Fatalf("the deadline moved or the bits did not: %+v", g2)
+	}
+	f.call("POST", "/api/v1/waf/under-attack", map[string]any{"enabled": true, "for": ""})
+	if w.GlobalAttack().Until != "" {
+		t.Fatal("for \"\" did not make it permanent")
+	}
+	resp, _ = f.call("POST", "/api/v1/waf/under-attack", map[string]any{"enabled": true, "bits": 99})
+	if resp.StatusCode != 400 {
+		t.Fatalf("99 bits: %d", resp.StatusCode)
 	}
 	resp, _ = f.call("POST", "/api/v1/waf/under-attack", map[string]any{"enabled": true, "domain": "nope.test"})
 	if resp.StatusCode != 500 && resp.StatusCode != 404 {

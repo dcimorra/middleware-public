@@ -276,11 +276,21 @@ var SiteCatalog = map[string]SiteEntry{
 	// say why in a way the visitor can act on ("not from your country"
 	// means reloading will not help) and never what the rule holds; and
 	// a refused robot must not carry an index away from here.
+	"challenge":       {503, Waiting, "Checking", "Checking your browser before letting you in. It takes a moment and there is nothing to do.", 0, 0, "noindex, nofollow"},
 	"notfound":        {404, Nothing, "Not found", "There is nothing at this address.", 0, 0, "noindex, nofollow"},
 	"refused-country": {403, Locked, "Closed", "This site cannot be opened from the country you are connecting from.", 0, 0, "noindex, nofollow"},
 	"refused-bot":     {403, Locked, "Closed", "This site is closed to robots. If you are a person, something in your browser says you are not.", 0, 0, "noindex, nofollow"},
 	"refused-browser": {403, Locked, "Closed", "This site cannot be opened with this browser. Please try another one.", 0, 0, "noindex, nofollow"},
 	"refused-agent":   {403, Locked, "Closed", "This site is closed to this program.", 0, 0, "noindex, nofollow"},
+}
+
+// ChallengeText is what the under-attack challenge says while it works.
+var ChallengeText = map[string]string{
+	"working":  "Checking…",
+	"done":     "Done, going in…",
+	"again":    "That check is no longer valid. Here is another one.",
+	"noscript": "This check needs JavaScript. Turn it on and reload the page.",
+	"nocookie": "Your browser is not keeping this site's cookie, and without it you cannot get past this page. Allow cookies for this site or leave private mode.",
 }
 
 // RobotWindow is the line a refused robot reads when its family is let in

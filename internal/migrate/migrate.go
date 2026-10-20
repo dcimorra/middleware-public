@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/access"
+	"github.com/dcimorra/middleware-public/internal/attack"
 	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/security"
 )
@@ -96,13 +97,8 @@ type v1IP struct {
 	Deny  []string `json:"deny"`
 }
 
-// v1Attack and v1Cache are read leniently, only for whether they are on:
-// their other fields are never converted.
-type v1Attack struct {
-	On   bool `json:"on"`
-	Bits int  `json:"bits"`
-}
-
+// v1Cache is read leniently, only for whether it is on: its other fields
+// are never converted.
 type v1Cache struct {
 	Enabled *bool             `json:"enabled"`
 	Rules   []json.RawMessage `json:"rules"`
@@ -158,6 +154,7 @@ func Convert(name string, data []byte) Result {
 	m.Notice = c.notice
 	m.ClaudeAPI = c.claudeAPI
 	m.Security = c.security
+	m.Attack = c.attack
 	m.Claude = in.Claude
 	m.Chat = c.chat
 	if len(r.Blockers) > 0 {
@@ -176,6 +173,7 @@ type converter struct {
 	notice    *manifest.Notice
 	claudeAPI *manifest.ClaudeAPI
 	security  *security.Rules
+	attack    *attack.Rules
 	chat      *manifest.ChatRules
 }
 
@@ -214,13 +212,7 @@ func (c *converter) blockers(in *v1) {
 		c.convertSecurity(in.Security)
 	}
 	if present(in.Attack) {
-		var a v1Attack
-		_ = json.Unmarshal(in.Attack, &a)
-		if a.On {
-			c.block("attack mode on (proof of work; ROADMAP §3)")
-		} else {
-			c.note("attack: written but off; its settings are not carried (bits %d)", a.Bits)
-		}
+		c.convertAttack(in.Attack)
 	}
 	if present(in.Notice) {
 		var nt struct {
@@ -559,4 +551,48 @@ func (c *converter) convertSecurity(raw json.RawMessage) {
 		return
 	}
 	c.security = out
+}
+
+// convertAttack carries V1's `attack` whole, on or off: a block written
+// and off is a difficulty and exemptions someone chose, ready for the day
+// it is switched on. V1 also accepted a short "YYYY-MM-DD HH:MM" until in
+// the machine's time; V2 stores RFC 3339. A deadline already gone is
+// carried as off, which is what V1's engine would have written.
+func (c *converter) convertAttack(raw json.RawMessage) {
+	var in struct {
+		On      bool     `json:"on"`
+		Bits    int      `json:"bits"`
+		Life    string   `json:"life"`
+		Skip    []string `json:"skip"`
+		Until   string   `json:"until"`
+		Message string   `json:"message"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		c.block("attack: %v", err)
+		return
+	}
+	out := &attack.Rules{On: in.On, Bits: in.Bits, Life: in.Life, Skip: in.Skip, Message: in.Message}
+	if u := strings.TrimSpace(in.Until); u != "" {
+		t, err := time.Parse(time.RFC3339, u)
+		if err != nil {
+			t, err = time.ParseInLocation("2006-01-02 15:04", u, time.Local)
+		}
+		if err != nil {
+			c.block("attack.until: %q is not a date", in.Until)
+			return
+		}
+		if t.Before(time.Now()) {
+			out.On = false
+			c.note("attack: its deadline %s has passed, carried as off", u)
+		} else {
+			out.Until = t.Format(time.RFC3339)
+		}
+	}
+	if err := out.Validate(); err != nil {
+		c.block("attack.%v", err)
+		return
+	}
+	c.attack = out
 }

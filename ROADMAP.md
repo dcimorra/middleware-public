@@ -30,8 +30,6 @@ What the tests only fake, to be run for real:
 
 ## 3. The door
 
-- Attack mode with proof of work, a key that survives restarts, `skip`
-  paths, `until`, counters, and panel exemptions.
 - Panel access: passkeys (docs/security.md claims them), passkey-only, a
   panel IP allow list, emergency open/close from the shell, CSRF across
   sibling subdomains.
@@ -107,7 +105,11 @@ cgroup above.
   IPv6), and at most two key derivations at once; the `security` block
   (robot families with exceptions and an hours window, browsers,
   countries, User-Agent fragments, per-site paths, the house's probe
-  paths answered 404, the last refusals per site), converted by `migrate`.
+  paths answered 404, the last refusals per site), converted by `migrate`;
+  under-attack mode as a proof of work (a key on disk, `skip`, `until`
+  written down as off when it passes, served/solved counters, the panel
+  under the global switch with token callers exempt), proven with node and
+  a headless Chromium, and converted by `migrate`.
 - **§4 Engine**: docker sites behind V1's walls at their own paths
   (proven on a rootless daemon), `middleware exec`, `needs`, task runs
   re-adopted and stoppable, agent turns in a cgroup of their own, rename,

@@ -59,7 +59,7 @@ export function wafScreen() {
     const deny = h("input", { type: "text", class: "mono", value: (policy.deny_countries || []).join(", ") });
     const agents = h("textarea", { class: "mono", rows: "3", value: (policy.deny_user_agents || []).join("\n") });
     const blockFor = h("input", { type: "text", class: "mono", placeholder: "1h", value: policy.block_duration || "" });
-    const underAttack = toggle(t("waf.underAttack"), { checked: Boolean(policy.under_attack) });
+    const underAttack = toggle(t("waf.underAttack"), { checked: Boolean((policy.attack && policy.attack.on) || policy.under_attack) });
     const save = h("button", { type: "submit", class: "btn primary" }, t("common.save"));
     const err = h("div", { class: "error-box", hidden: true });
     const form = h("form", { novalidate: true },
@@ -95,7 +95,6 @@ export function wafScreen() {
       const ua = agents.value.split("\n").map((x) => x.trim()).filter(Boolean);
       if (ua.length) out.deny_user_agents = ua; else delete out.deny_user_agents;
       if (blockFor.value) out.block_duration = blockFor.value.trim(); else delete out.block_duration;
-      out.under_attack = underAttack.input.checked;
       save.classList.add("busy");
       err.hidden = true;
       try { await api.put("/waf", out); toast(t("waf.saved"), "ok"); }

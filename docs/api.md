@@ -218,11 +218,11 @@ through the house takes names off the internet.
 
 | method | path | result |
 | --- | --- | --- |
-| GET | `/waf` | → `{global: policy, blocked: [{ip, until, reason, strikes}], recent: [{ip, hits, status}]}` |
+| GET | `/waf` | → `{global: policy, blocked: [{ip, until, reason, strikes}], recent: [{ip, hits, status}], attack: {global: rules, counts: {domain or "panel": {served, solved}}}}` |
 | PUT | `/waf` | global policy → policy (400 with the field when it does not validate) |
 | POST | `/waf/block` | `{ip, duration?: "1h", reason?}` → `{ok}` (default one day; pushed to the kernel through the helper when it runs) |
 | DELETE | `/waf/block/{ip}` | → `{ok}` |
-| POST | `/waf/under-attack` | `{enabled, domain?}` → `{ok}`; without `domain` the global policy, with it the site's manifest |
+| POST | `/waf/under-attack` | `{enabled, domain?, for?: "2h", bits?, life?, skip?, message?}` → `{ok}`; without `domain` the global policy, with it the site's manifest. Absent fields keep their value; `for` becomes `until` on this machine's clock and `"for": ""` is permanent (400 when the rules do not validate) |
 | GET | `/waf/traffic` | → `{per_second, requests, bytes, by_domain: {…}, by_status: {…}, seconds: []}` (last minute) |
 
 The routes answer 503 when the WAF did not start (a broken block list); the

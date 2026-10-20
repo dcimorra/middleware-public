@@ -66,7 +66,7 @@ in the API ([api.md](api.md)) and the panel.
 | `site publish <domain> [--door d]` / `site unpublish <domain>` / `site published` | put every name of a site on the internet, take them back, and list what the house published with each name's state |
 | `migrate [--sites dir] [--apply]` | convert V1 manifests; see [upgrade.md](upgrade.md) |
 | `inbound local [on\|off] [--http addr] [--dns addr]` | the development bench: plain HTTP and a name server for the sites on this machine; prints the resolver snippet. See [install.md](install.md#local-development-bench) |
-| `waf list` / `waf block <ip> [duration] [reason]` / `waf unblock <ip>` | the block list, [security.md](security.md); the duration defaults to one day. Under-attack mode and the traffic are `/waf/under-attack` and `/waf/traffic` in the API |
+| `waf list` / `waf block <ip> [duration] [reason]` / `waf unblock <ip>` | the block list, [security.md](security.md); the duration defaults to one day. Under-attack mode (`attack` in the manifest, [manifest.md](manifest.md)) and the traffic are `/waf/under-attack` and `/waf/traffic` in the API |
 | `guard incidents` | what the guard found and has not been dismissed; dismissing is `POST /guard/incidents/{id}/dismiss` |
 | `tasks` (or `tasks list`) / `tasks run <name>` | scheduled work, [manifest.md](manifest.md#tasks-tasksnamejson); `run` waits and prints the log's path. The log itself is `GET /tasks/{name}/log` |
 | `agents [--json]` | the providers, whether each can run, and the capacity: how many turns run of the cap, per provider, and which conversations hold them (`GET /agents`) |

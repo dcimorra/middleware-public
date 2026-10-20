@@ -126,7 +126,8 @@ cannot lock you out.
 
 Layer 7 lives in the core and is always on, configured per site and globally:
 rate limits per route, country and user-agent policies, request body limits,
-an "under attack" mode that challenges or rejects, and automatic blocking of
+an "under attack" switch (the proof of work itself is `internal/attack`, a
+hook after `security` and before `access`), and automatic blocking of
 addresses that trip the limits. Blocking also goes to layer 3 through
 `firewall.block` when the helper is present, so a flood never reaches Go.
 

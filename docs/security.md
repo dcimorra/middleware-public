@@ -88,6 +88,13 @@ request, to what no website serves: `.git/`, `.ssh/`, `.env*`, private keys,
 too; that part trusts the User-Agent, so it filters what identifies itself
 and guards nothing.
 
+**Under attack.** `attack` in a manifest, or in the WAF policy for the whole
+installation and the panel, puts a proof of work in front of the site: the
+browser spends a fraction of a second, a flood pays it on every request,
+and checking costs one hash. The pass is signed with a key on disk and bound
+to the client. It filters floods, not people: whoever runs JavaScript gets
+through.
+
 **WAF, in layers.** Layer 7 in the core, always on: rate limits per route
 with burst, body size limits, country and user-agent policies, a password or
 an allow list per route, and an "under attack" mode that challenges or

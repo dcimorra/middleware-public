@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dcimorra/middleware-public/internal/access"
 	"github.com/dcimorra/middleware-public/internal/manifest"
@@ -74,7 +75,10 @@ func TestAProxySiteKeepsEverythingItHad(t *testing.T) {
 		t.Fatalf("needs: %v", m.Needs)
 	}
 	notes := strings.Join(r.Notes, "\n")
-	for _, want := range []string{"health.timeout", "attack: written but off", "in the clear"} {
+	if a := r.Manifest.Attack; a == nil || a.On || a.Bits != 20 {
+		t.Errorf("the attack block written and off was not carried: %+v", a)
+	}
+	for _, want := range []string{"health.timeout", "in the clear"} {
 		if !strings.Contains(notes, want) {
 			t.Errorf("no note about %q in:\n%s", want, notes)
 		}
@@ -84,7 +88,7 @@ func TestAProxySiteKeepsEverythingItHad(t *testing.T) {
 func TestWhatV2CannotDoYetBlocksTheSite(t *testing.T) {
 	cases := map[string]string{
 		`{"kind":"static","vpn":{"devices":["phone"]}}`:                      "vpn",
-		`{"kind":"static","attack":{"on":true}}`:                             "attack mode on",
+		`{"kind":"static","attack":{"on":true,"bits":40}}`:                   "attack.bits",
 		`{"kind":"static","cache":{"rules":[{"path":"/","mode":"origen"}]}}`: "cache rules",
 		`{"kind":"static","hold":{"mode":"302"}}`:                            "hold mode",
 		`{"kind":"static","notice":{"theme":"neon"}}`:                        "notice.theme",
@@ -238,5 +242,21 @@ func TestTheSecuritySectionIsCarried(t *testing.T) {
 	}
 	if r := Convert("a.example", []byte(`{"kind":"static","security":{"bots":{"deny":["ia"]}}}`)); r.Ready() {
 		t.Fatal("a family V1 would not have accepted either converted")
+	}
+}
+
+func TestTheAttackBlockIsCarriedWithItsShortDeadline(t *testing.T) {
+	r := Convert("a.example", []byte(`{"kind":"static","attack":{"on":true,"bits":18,"life":"1h","skip":["/hooks"],"until":"2099-01-02 03:04"}}`))
+	if !r.Ready() {
+		t.Fatalf("%v", r.Blockers)
+	}
+	a := r.Manifest.Attack
+	want, _ := time.ParseInLocation("2006-01-02 15:04", "2099-01-02 03:04", time.Local)
+	if a == nil || !a.On || a.Bits != 18 || a.Life != "1h" || a.Skip[0] != "/hooks" || a.Until != want.Format(time.RFC3339) {
+		t.Fatalf("%+v", a)
+	}
+	r = Convert("a.example", []byte(`{"kind":"static","attack":{"on":true,"until":"2020-01-01 00:00"}}`))
+	if !r.Ready() || r.Manifest.Attack.On || r.Manifest.Attack.Until != "" {
+		t.Fatalf("a passed deadline: %+v %v", r.Manifest.Attack, r.Blockers)
 	}
 }

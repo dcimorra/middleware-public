@@ -4,10 +4,12 @@
 // per-site section in the manifest merged over it.
 //
 // Per request, in this order: client address, allow list (bypasses all of
-// what follows), block list, rate limit, body limit, under-attack challenge,
-// user-agent and country policy. The order is deliberate: the cheap checks
-// that end most abusive traffic come first, and the challenge comes after
-// the rate limit so a flood cannot use the challenge page itself as a lever.
+// what follows), block list, rate limit, body limit, user-agent and country
+// policy. The order is deliberate: the cheap checks that end most abusive
+// traffic come first. The under-attack challenge is its own hook
+// (internal/attack) right after this one, so a flood is rate-limited
+// before it can use the challenge page itself as a lever; the global
+// switch for it lives in this policy.
 //
 // Country lookups are not built in. The Country field takes a function;
 // the house wires the edge's CF-IPCountry header (internal/edge, believed
@@ -17,7 +19,6 @@ package waf
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"net"
@@ -31,6 +32,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/attack"
 	"github.com/dcimorra/middleware-public/internal/edge"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/fsx"
@@ -43,14 +45,19 @@ import (
 // are global only, because a deny list that differs per site is a thing
 // nobody can audit.
 type Policy struct {
-	Rate        *manifest.Rate `json:"rate,omitempty"`
-	MaxBody     string         `json:"max_body,omitempty"`
-	UnderAttack bool           `json:"under_attack,omitempty"`
+	Rate    *manifest.Rate `json:"rate,omitempty"`
+	MaxBody string         `json:"max_body,omitempty"`
+	// Attack is under-attack mode for every site and the panel.
+	Attack *attack.Rules `json:"attack,omitempty"`
+	// UnderAttack is the switch before Attack existed, read as Attack on
+	// with its defaults; SetAttack writes Attack and clears it.
+	UnderAttack bool `json:"under_attack,omitempty"`
 	// DenyCountries are ISO 3166-1 alpha-2 codes, upper case.
 	DenyCountries []string `json:"deny_countries,omitempty"`
 	// DenyAgents are substrings matched case-insensitively against User-Agent.
 	DenyAgents []string `json:"deny_agents,omitempty"`
-	// AllowAgents are substrings of crawlers let through the challenge.
+	// AllowAgents are substrings of crawlers let through the
+	// under-attack challenge.
 	AllowAgents []string `json:"allow_agents,omitempty"`
 	// Allow are CIDRs (or single addresses) that bypass everything.
 	Allow []string `json:"allow,omitempty"`
@@ -87,6 +94,9 @@ func (p Policy) Validate() error {
 		if len(c) != 2 {
 			return fmt.Errorf("deny_countries: %q is not a two-letter code", c)
 		}
+	}
+	if err := p.Attack.Validate(); err != nil {
+		return fmt.Errorf("attack.%w", err)
 	}
 	if p.Trips < 0 {
 		return errors.New("trips: must not be negative")
@@ -148,7 +158,6 @@ type WAF struct {
 
 	buckets [64]shard
 	trips   sync.Map // ip → *tripCounter
-	key     []byte   // per-boot challenge key
 	// OnBlock is called after an address is blocked; the privileged helper
 	// plugs in layer-3 blocking here. It runs synchronously, keep it fast.
 	OnBlock func(ip net.IP, dur time.Duration)
@@ -171,10 +180,6 @@ func New(opts Options) (*WAF, error) {
 		opts.Now = time.Now
 	}
 	w := &WAF{opts: opts, now: opts.Now, blocked: map[string]*Entry{}}
-	w.key = make([]byte, 32)
-	if _, err := rand.Read(w.key); err != nil {
-		return nil, err
-	}
 	var policyErr error
 	p := DefaultPolicy()
 	if err := fsx.ReadJSON(w.policyPath(), &p); err != nil && !fsx.IsNotExist(err) {
@@ -256,18 +261,37 @@ func (w *WAF) setPolicy(p Policy) error {
 	return nil
 }
 
-// SetUnderAttack switches the challenge on or off, globally (domain "") or
-// for one site. The per-site switch is written into the site's manifest,
-// because a decision kept only in memory would not survive a restart; the
-// engine picks the change up on its next tick without restarting the site.
-func (w *WAF) SetUnderAttack(domain string, on bool) error {
+// GlobalAttack is the installation-wide under-attack rules, with the old
+// boolean read as the mode on with its defaults.
+func (w *WAF) GlobalAttack() *attack.Rules {
+	p := w.Policy()
+	return Effective(p.Attack, p.UnderAttack)
+}
+
+// Effective is the under-attack rules a section means: its own block,
+// or, from before it existed, a bare under_attack read as on.
+func Effective(rules *attack.Rules, legacy bool) *attack.Rules {
+	if rules == nil && legacy {
+		return &attack.Rules{On: true}
+	}
+	return rules
+}
+
+// SetAttack changes under-attack mode, globally (domain "") or for one
+// site, by applying change to the current rules. The site's is written
+// into its manifest, because a decision kept only in memory would not
+// survive a restart; the engine picks the change up on its next tick
+// without restarting the site.
+func (w *WAF) SetAttack(domain string, change func(*attack.Rules)) error {
 	if domain == "" {
 		p := w.Policy()
-		p.UnderAttack = on
+		r := cloneRules(Effective(p.Attack, p.UnderAttack))
+		change(r)
+		p.Attack, p.UnderAttack = r, false
 		if err := w.SetPolicy(p); err != nil {
 			return err
 		}
-		w.emit(events.Event{Type: "waf.under_attack", Actor: "operator", Message: underAttackMsg(on), Data: map[string]any{"enabled": on}})
+		w.emit(events.Event{Type: "waf.under_attack", Actor: "operator", Message: attackMsg(r), Data: map[string]any{"enabled": r.On, "until": r.Until}})
 		return nil
 	}
 	if w.opts.Lookup == nil {
@@ -281,22 +305,41 @@ func (w *WAF) SetUnderAttack(domain string, on bool) error {
 	if err != nil {
 		return err
 	}
-	if m.WAF == nil {
-		m.WAF = &manifest.WAF{}
+	legacy := m.WAF != nil && m.WAF.UnderAttack
+	r := cloneRules(Effective(m.Attack, legacy))
+	change(r)
+	m.Attack = r
+	if m.WAF != nil {
+		m.WAF.UnderAttack = false
+		if *m.WAF == (manifest.WAF{}) {
+			m.WAF = nil
+		}
 	}
-	m.WAF.UnderAttack = on
 	if err := manifest.Save(site.Dir, m); err != nil {
 		return err
 	}
-	w.emit(events.Event{Type: "waf.under_attack", Subject: domain, Actor: "operator", Message: underAttackMsg(on), Data: map[string]any{"enabled": on}})
+	w.emit(events.Event{Type: "waf.under_attack", Subject: domain, Actor: "operator", Message: attackMsg(r), Data: map[string]any{"enabled": r.On, "until": r.Until}})
 	return nil
 }
 
-func underAttackMsg(on bool) string {
-	if on {
-		return "under-attack mode enabled"
+func cloneRules(r *attack.Rules) *attack.Rules {
+	if r == nil {
+		return &attack.Rules{}
 	}
-	return "under-attack mode disabled"
+	c := *r
+	c.Skip = append([]string(nil), r.Skip...)
+	return &c
+}
+
+func attackMsg(r *attack.Rules) string {
+	switch {
+	case !r.On:
+		return "under-attack mode disabled"
+	case r.Until != "":
+		return "under-attack mode enabled until " + r.Until
+	default:
+		return "under-attack mode enabled with no end date"
+	}
 }
 
 // Blocked returns the live block list, soonest to expire first.
@@ -514,14 +557,13 @@ func parsePrefix(s string) (netip.Prefix, error) {
 // effective is the policy for one request after the site's section is
 // merged over the global one.
 type effective struct {
-	rate        *manifest.Rate
-	maxBody     int64
-	underAttack bool
+	rate    *manifest.Rate
+	maxBody int64
 }
 
 func (w *WAF) effectiveFor(site *manifest.WAF) effective {
 	w.mu.RLock()
-	e := effective{rate: w.policy.Rate, maxBody: w.compiled.maxBody, underAttack: w.policy.UnderAttack}
+	e := effective{rate: w.policy.Rate, maxBody: w.compiled.maxBody}
 	w.mu.RUnlock()
 	if site == nil {
 		return e
@@ -533,9 +575,6 @@ func (w *WAF) effectiveFor(site *manifest.WAF) effective {
 		if n, err := ParseSize(site.MaxBody); err == nil {
 			e.maxBody = n
 		}
-	}
-	if site.UnderAttack {
-		e.underAttack = true
 	}
 	return e
 }
@@ -594,10 +633,6 @@ func (w *WAF) Wrap(next http.Handler) http.Handler {
 			}
 		}
 		ua := strings.ToLower(r.UserAgent())
-		if pol.underAttack && !w.cleared(r, ip) && !matchesAny(ua, c.allowAgents) {
-			w.challenge(rw, r, ip)
-			return
-		}
 		if matchesAny(ua, c.denyAgents) {
 			w.refuse(rw, r, ip, "forbidden", http.StatusForbidden)
 			return
@@ -646,4 +681,12 @@ func (w *WAF) Run(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// AllowAgents are the policy's crawler fragments, lower-cased, that the
+// under-attack challenge lets through.
+func (w *WAF) AllowAgents() []string {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return append([]string(nil), w.compiled.allowAgents...)
 }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/dcimorra/middleware-public/internal/api"
 	"github.com/dcimorra/middleware-public/internal/app"
+	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/settings"
 )
 
@@ -51,6 +52,17 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 	os.MkdirAll(shop, 0o755)
 	os.WriteFile(filepath.Join(shop, "index.html"), []byte("<p>shop</p>"), 0o644)
 	os.WriteFile(filepath.Join(shop, "site.json"), []byte(`{"version":2,"security":{"bots":{"deny":["ai"]},"paths":["/wp-login.php"]}}`), 0o644)
+	// And two under attack: one charging, one whose deadline has passed
+	// and that the sweep must write down as off.
+	for name, attack := range map[string]string{
+		"busy.example": `{"on":true,"bits":8,"skip":["/hooks"]}`,
+		"past.example": `{"on":true,"bits":10,"until":"2020-01-01T00:00:00Z"}`,
+	} {
+		dir := filepath.Join(root, "sites", name)
+		os.MkdirAll(dir, 0o755)
+		os.WriteFile(filepath.Join(dir, "index.html"), []byte("<p>"+name+"</p>"), 0o644)
+		os.WriteFile(filepath.Join(dir, "site.json"), []byte(`{"version":2,"attack":`+attack+`}`), 0o644)
+	}
 	a, err := app.New(root)
 	if err != nil {
 		t.Fatal(err)
@@ -171,6 +183,36 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 		if code := ask(p, browser); code != 404 {
 			t.Errorf("%s got %d", p, code)
 		}
+	}
+	// Under attack, after the security door (a probe is still a plain 404
+	// and costs nothing) and before the site.
+	challenged := func(host, path string) (int, string) {
+		t.Helper()
+		req, _ := http.NewRequest("GET", "http://"+s.Listen+path, nil)
+		req.Host = host
+		req.Header.Set("User-Agent", browser)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode, resp.Header.Get("X-Middleware-Challenge")
+	}
+	if code, mark := challenged("busy.example", "/"); code != 503 || mark != "1" {
+		t.Errorf("a site under attack answered %d without the challenge", code)
+	}
+	if code, _ := challenged("busy.example", "/.env"); code != 404 {
+		t.Errorf("a probe on a site under attack got %d", code)
+	}
+	if code, _ := challenged("busy.example", "/hooks/x"); code == 503 {
+		t.Errorf("a skipped path was challenged")
+	}
+	if code, _ := challenged("past.example", "/"); code != 200 {
+		t.Errorf("a passed deadline still charges: %d", code)
+	}
+	sweepOnce(a, time.Now())
+	if m, err := manifest.Load(filepath.Join(root, "sites", "past.example")); err != nil || m.Attack == nil || m.Attack.On || m.Attack.Until != "" || m.Attack.Bits != 10 {
+		t.Errorf("the sweep did not write the passed deadline down as off, keeping the rest: %+v %v", m.Attack, err)
 	}
 	if code, body := get("/sites/shop.example/security/blocks"); code != 200 || !strings.Contains(body, "GPTBot") || !strings.Contains(body, `".git/"`) {
 		t.Errorf("the refusals are not listed: %d %s", code, body)
