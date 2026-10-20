@@ -194,3 +194,41 @@ func TestEveryStringKeyUsedInTheJavaScriptExistsInTheCatalog(t *testing.T) {
 		}
 	}
 }
+
+// TestThePanelIsInstallable checks what a browser reads to install it:
+// the manifest at the root, every icon it names actually served as what
+// it says it is, and the worker at the root with its scope allowed. A
+// manifest that names a missing icon fails installation with nothing
+// visible on the page.
+func TestThePanelIsInstallable(t *testing.T) {
+	h := Handler()
+	rec := get(t, h, "/manifest.webmanifest")
+	if rec.Code != 200 || !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/manifest+json") {
+		t.Fatalf("manifest: %d %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	var m struct {
+		Name, StartURL, Display string
+		Icons                   []struct{ Src, Sizes, Type, Purpose string }
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
+		t.Fatal(err)
+	}
+	sizes := map[string]bool{}
+	for _, ic := range m.Icons {
+		r := get(t, h, ic.Src)
+		if r.Code != 200 || r.Header().Get("Content-Type") != ic.Type {
+			t.Errorf("icon %s: %d %q, the manifest says %s", ic.Src, r.Code, r.Header().Get("Content-Type"), ic.Type)
+		}
+		sizes[ic.Sizes] = true
+	}
+	if !sizes["192x192"] || !sizes["512x512"] {
+		t.Errorf("installation wants 192 and 512 icons, got %v", sizes)
+	}
+	rec = get(t, h, "/sw.js")
+	if rec.Code != 200 || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/javascript") || rec.Header().Get("Service-Worker-Allowed") != "/" {
+		t.Fatalf("worker: %d %v", rec.Code, rec.Header())
+	}
+	if shell := get(t, h, "/").Body.String(); !strings.Contains(shell, `rel="manifest" href="/manifest.webmanifest"`) {
+		t.Fatal("the shell does not link the manifest")
+	}
+}

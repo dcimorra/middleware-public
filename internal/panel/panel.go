@@ -72,6 +72,18 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "same-origin")
 	w.Header().Set("X-Frame-Options", "DENY")
 
+	// The worker and the manifest answer at the root: a worker controls
+	// only the paths under its own, and one at /assets/sw.js would control
+	// /assets/ and none of the panel.
+	switch r.URL.Path {
+	case "/sw.js":
+		w.Header().Set("Service-Worker-Allowed", "/")
+		h.serve(w, r, "sw.js")
+		return
+	case "/manifest.webmanifest":
+		h.serve(w, r, "manifest.webmanifest")
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, AssetPrefix) {
 		name := strings.TrimPrefix(path.Clean("/"+strings.TrimPrefix(r.URL.Path, AssetPrefix)), "/")
 		// index.html is the shell, not an asset: a module request that got
@@ -113,6 +125,10 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, name string) {
 		ct = "text/html; charset=utf-8"
 	case ".svg":
 		ct = "image/svg+xml"
+	case ".webmanifest":
+		ct = "application/manifest+json"
+	case ".png":
+		ct = "image/png"
 	default:
 		ct = mime.TypeByExtension(path.Ext(name))
 		if ct == "" {

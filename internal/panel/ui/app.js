@@ -191,5 +191,12 @@ installShortcuts();
   await boot();
 })();
 
+// The worker makes the panel installable and is where push lands. Only on
+// a secure origin, where browsers allow one; a failure to register is the
+// panel without those two things, never the panel not working.
+if ("serviceWorker" in navigator && window.isSecureContext) {
+  navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch((e) => console.warn("service worker:", e.message));
+}
+
 // Exposed for the console: handy when debugging a live installation.
 window.mw = { api, store, navigate, GOTO };
