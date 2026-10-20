@@ -235,6 +235,12 @@ func (s *Server) Routes() []Route {
 // and what the socket serves.
 func (s *Server) Panel() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The address lists go before everything the panel answers, API
+		// and pages alike: whoever cannot get in is not shown the box.
+		if s.opts.Auth != nil && !s.opts.Auth.PanelAdmits(r) {
+			s.writeError(w, r, Errorf(http.StatusForbidden, "this address may not reach the panel"))
+			return
+		}
 		if r.URL.Path == Prefix || strings.HasPrefix(r.URL.Path, Prefix+"/") {
 			s.ServeHTTP(w, r)
 			return
@@ -271,6 +277,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !public && len(caller.Scopes) > 0 && !auth.Allows(caller.Scopes, pattern, siteIn(pattern, r.URL.Path)) {
 		s.writeError(w, r, Errorf(http.StatusForbidden, "this token's scopes (%s) do not open %s", strings.Join(caller.Scopes, ", "), pattern))
 		return
+	}
+	if caller.Via == auth.ViaCookie && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+		if err := sameSite(r); err != nil {
+			s.writeError(w, r, Errorf(http.StatusForbidden, "%v", err))
+			return
+		}
 	}
 	if caller.Via == auth.ViaCookie && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && r.Header.Get(CSRFHeader) != CSRFValue {
 		s.writeError(w, r, Errorf(http.StatusForbidden, "cookie requests must send %s: %s", CSRFHeader, CSRFValue))
@@ -344,7 +356,13 @@ func statusOf(err error) (int, string) {
 		return http.StatusForbidden, err.Error()
 	case errors.Is(err, sites.ErrBadDomain), errors.Is(err, sites.ErrBadTemplate), errors.Is(err, sites.ErrInvalid), errors.Is(err, sites.ErrUnmanaged), errors.Is(err, sites.ErrTooLarge), errors.Is(err, auth.ErrWeakPassword), errors.Is(err, auth.ErrTokenNameNeeded):
 		return http.StatusBadRequest, err.Error()
-	case errors.Is(err, auth.ErrBadCredentials), errors.Is(err, auth.ErrBadSetupCode):
+	case errors.Is(err, auth.ErrNoPasskey):
+		return http.StatusNotFound, err.Error()
+	case errors.Is(err, auth.ErrLastPasskey):
+		return http.StatusConflict, err.Error()
+	case errors.Is(err, auth.ErrBadPasskeyName):
+		return http.StatusBadRequest, err.Error()
+	case errors.Is(err, auth.ErrBadCredentials), errors.Is(err, auth.ErrBadSetupCode), errors.Is(err, auth.ErrPasskeyFailed):
 		return http.StatusUnauthorized, err.Error()
 	case errors.Is(err, auth.ErrNoOperator):
 		return http.StatusForbidden, err.Error()

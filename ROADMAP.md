@@ -30,10 +30,7 @@ What the tests only fake, to be run for real:
 
 ## 3. The door
 
-- Panel access: passkeys (docs/security.md claims them), passkey-only, a
-  panel IP allow list, emergency open/close from the shell, CSRF across
-  sibling subdomains.
-- A visitor page on panic.
+Nothing left.
 
 ## 4. The engine
 
@@ -96,7 +93,11 @@ cgroup above.
 - **§3 The door**: an unreadable address or CIDR in `access` rejects the
   manifest instead of being skipped; one brake on password guessing for
   the panel and every site door (per domain, zone and address, a /64 for
-  IPv6), and at most two key derivations at once; the `security` block
+  IPv6), and at most two key derivations at once; passkeys (WebAuthn
+  against the standard library, proven with Chromium's virtual
+  authenticator), passkey-only, the panel's address lists, `middleware
+  panel open|close`, same-origin checks against sibling subdomains, and
+  the house's page instead of a reset connection on a panic; the `security` block
   (robot families with exceptions and an hours window, browsers,
   countries, User-Agent fragments, per-site paths, the house's probe
   paths answered 404, the last refusals per site), converted by `migrate`;

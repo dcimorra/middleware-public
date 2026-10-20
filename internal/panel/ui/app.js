@@ -22,6 +22,7 @@ import { tasksScreen } from "./screens/tasks.js";
 import { eventsScreen } from "./screens/events.js";
 import { guardScreen } from "./screens/guard.js";
 import { reposScreen } from "./screens/repos.js";
+import { openBanner } from "./screens/settings-access.js";
 import { settingsScreen } from "./screens/settings.js";
 import { systemScreen } from "./screens/system.js";
 import { houseScreen } from "./screens/house.js";
@@ -155,6 +156,8 @@ async function boot() {
   if (!me || !me.authenticated) { showAuth(needsSetup ? "setup" : "login"); return; }
   authed = true;
   app.dataset.state = "ready";
+  document.querySelectorAll(".open-banner").forEach((b) => b.remove());
+  if (me.open_until) main.before(openBanner(me.open_until));
   topbar.hidden = false;
   sidebar.hidden = false;
   buildSidebar();

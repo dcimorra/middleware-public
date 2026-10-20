@@ -1,10 +1,10 @@
 package api
 
 import (
-	"github.com/dcimorra/middleware-public/internal/manifest"
 	"net/http"
 
 	"github.com/dcimorra/middleware-public/internal/auth"
+	"github.com/dcimorra/middleware-public/internal/manifest"
 )
 
 func (s *Server) registerAuth() {
@@ -18,6 +18,7 @@ func (s *Server) registerAuth() {
 	s.Handle("GET", Prefix+"/auth/tokens", "List API tokens", s.tokensList)
 	s.Handle("POST", Prefix+"/auth/tokens", "Create an API token; the secret is shown once", s.tokensCreate)
 	s.Handle("DELETE", Prefix+"/auth/tokens/{id}", "Revoke an API token", s.tokensDelete)
+	s.registerPasskeys()
 }
 
 func (s *Server) authStore() (*auth.Store, error) {
@@ -56,6 +57,11 @@ func (s *Server) authLogin(w http.ResponseWriter, r *http.Request) (any, error) 
 	if err := ReadJSON(r, &body); err != nil {
 		return nil, err
 	}
+	// Closed means not even compared: no key derivation for a door that
+	// is not there.
+	if st.PasswordClosed(r) {
+		return nil, Errorf(http.StatusForbidden, "%v", auth.ErrPasskeyOnly)
+	}
 	id, err := st.Login(body.Password, auth.ClientIP(r))
 	if err != nil {
 		return nil, err
@@ -88,6 +94,13 @@ func (s *Server) authMe(w http.ResponseWriter, r *http.Request) (any, error) {
 		// Tells a fresh panel whether to show the setup screen or the
 		// login; harmless to anyone else.
 		out["setup_pending"] = !s.opts.Auth.HasOperator()
+		// What the login screen offers: the passkey button when one exists
+		// for this name, no password box when it is closed.
+		out["passkeys"] = s.opts.Auth.HasPasskeys(rpID(r))
+		out["password_closed"] = s.opts.Auth.PasswordClosed(r)
+		if u := s.opts.Auth.OpenUntil(); !u.IsZero() {
+			out["open_until"] = u
+		}
 	}
 	return out, nil
 }

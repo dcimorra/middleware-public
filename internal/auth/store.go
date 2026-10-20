@@ -46,6 +46,15 @@ type Store struct {
 	tokens   []Token
 	loaded   bool
 	limiter  *brake.Brake
+
+	// pkMu guards passkeys.json and the ceremonies in flight.
+	pkMu       sync.Mutex
+	challenges map[string]challenge
+
+	// open caches the emergency door's file for a second (panelaccess.go).
+	openMu    sync.Mutex
+	openUntil time.Time
+	openRead  time.Time
 }
 
 // Session is one cookie session.
@@ -88,7 +97,7 @@ func New(root string, bus *events.Bus) *Store {
 	if bus == nil {
 		bus = events.New("")
 	}
-	return &Store{dir: filepath.Join(root, "data", "auth"), bus: bus, now: time.Now, limiter: brake.New(loginPolicy)}
+	return &Store{dir: filepath.Join(root, "data", "auth"), bus: bus, now: time.Now, limiter: brake.New(loginPolicy), challenges: map[string]challenge{}}
 }
 
 func (s *Store) passwordPath() string  { return filepath.Join(s.dir, "password") }

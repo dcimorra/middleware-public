@@ -151,6 +151,18 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The panel answers its shell on this machine's name, not the API's
+	// placeholder: a hook that stops installing the UI left every API
+	// route working and the console blank, and nothing else here noticed.
+	shell, err := http.Get("http://" + s.Listen + "/sites")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(shell.Body)
+	shell.Body.Close()
+	if !strings.Contains(string(page), `src="/assets/app.js"`) {
+		t.Errorf("the panel's shell is not served:\n%.200s", page)
+	}
 	resp.Body.Close()
 	if resp.StatusCode == 0 || resp.StatusCode >= 500 {
 		t.Fatalf("unknown host through the chain: %d", resp.StatusCode)

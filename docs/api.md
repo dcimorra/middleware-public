@@ -12,6 +12,22 @@ domain.
 - The unix socket `data/api.sock` needs no credentials: whoever can open it
   already owns the files. The CLI uses it.
 
+**Who reaches the panel.** The address lists of `/auth/panel-access` go before
+everything the panel answers (403). This machine (loopback, with no proxy
+header) always gets in, and a list that would shut out the caller saving it
+is refused. With `passkey_only`, the password login answers 403 without
+comparing anything. `middleware panel open [30m]` on the server lifts both
+for a while, without a restart; the panel shows a red strip meanwhile.
+
+**Passkeys** are WebAuthn credentials bound to the name the panel was opened
+by (ES256, Ed25519, RS256; attestation not asked). They work on a secure
+origin with a name, never on a bare IP, and survive a password change.
+
+A cookie request that is not a GET must also come from the panel's own
+origin (`Sec-Fetch-Site: same-origin`, or a matching `Origin`): every
+subdomain of a domain is one site to the browser, so a page on a sibling
+subdomain sends the panel's cookie.
+
 **Service doors.** A token created with `scopes` opens only the routes those
 scopes list, and with `:site` only for that site: `read` (the site list, one
 site, its logs, the events), `restart` (a site's handover and a worker's
@@ -34,10 +50,19 @@ API never answers. Tokens and the socket need no header.
 | POST | `/auth/setup` | `{code, password}` → `{ok}` |
 | POST | `/auth/login` | `{password}` → sets cookie, `{ok}` |
 | POST | `/auth/logout` | → `{ok}` |
-| GET | `/auth/me` | → `{authenticated, via: "cookie"|"token"|"socket"}` |
+| GET | `/auth/me` | → `{authenticated, via: "cookie"|"token"|"socket", setup_pending, passkeys, password_closed, open_until?}` |
 | GET | `/auth/tokens` | → `[{id, name, scopes?, created, last_used}]` |
 | POST | `/auth/tokens` | `{name, scopes?: ["restart:shop.example", "read"]}` → `{id, token}` (shown once); 400 for a scope outside the list |
 | DELETE | `/auth/tokens/{id}` | → `{ok}` |
+| GET | `/auth/passkeys` | → `[{id, name, rp_id, created, last_used}]` |
+| POST | `/auth/passkeys/register/options` | → `{challenge_id, publicKey}` for `navigator.credentials.create()`, bound to the name the panel is opened by |
+| POST | `/auth/passkeys/register` | `{challenge_id, name, client_data_json, attestation_object}` (base64url) → the passkey; 401 when it does not verify |
+| DELETE | `/auth/passkeys/{id}` | → `{ok}`; 409 for the last one while the password is closed |
+| POST | `/auth/passkeys/login/options` | public → `{challenge_id, publicKey}` for `navigator.credentials.get()` |
+| POST | `/auth/passkeys/login` | public, `{challenge_id, id, client_data_json, authenticator_data, signature}` → sets the cookie; 401 when refused, counted by the same brake as passwords |
+| GET | `/auth/panel-access` | → `{rules: {allow, deny, passkey_only}, your_address, from_machine, open_until?}` |
+| PUT | `/auth/panel-access` | `{allow, deny, passkey_only}` → rules; 400 for an unreadable entry, a list that would shut out the caller, or closing the password with no passkey |
+| DELETE | `/auth/panel-open` | → `{ok}`; ends an emergency opening (`middleware panel open` starts one, from the shell only) |
 
 ## Sites
 

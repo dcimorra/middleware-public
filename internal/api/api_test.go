@@ -582,3 +582,90 @@ func TestAScopedTokenOpensItsRoutesForItsSiteAndNothingElse(t *testing.T) {
 		}
 	}
 }
+
+func TestThePanelsListsTheClosedPasswordAndTheFireExit(t *testing.T) {
+	f := newFixture(t)
+	if err := f.store.SetPassword("password-1"); err != nil {
+		t.Fatal(err)
+	}
+	from := func(ip string) string { return "CF-Connecting-IP: " + ip }
+	login := func(headers ...string) int {
+		resp, _ := f.call("POST", "/api/v1/auth/login", map[string]any{"password": "password-1"}, headers...)
+		return resp.StatusCode
+	}
+	if c := login(from("203.0.113.5")); c != 200 {
+		t.Fatalf("no lists, a visitor: %d", c)
+	}
+	f.withToken()
+	// A list that would shut out whoever saves it is refused.
+	if resp, body := f.call("PUT", "/api/v1/auth/panel-access", map[string]any{"allow": []string{"198.51.100.0/24"}}, from("203.0.113.5")); resp.StatusCode != 400 || !strings.Contains(text(body), "shut you out") {
+		t.Fatalf("a list that locks the caller out: %d %v", resp.StatusCode, body)
+	}
+	if resp, body := f.call("PUT", "/api/v1/auth/panel-access", map[string]any{"allow": []string{"10.0/8"}}); resp.StatusCode != 400 {
+		t.Fatalf("an unreadable CIDR: %d %v", resp.StatusCode, body)
+	}
+	if resp, body := f.call("PUT", "/api/v1/auth/panel-access", map[string]any{"allow": []string{"198.51.100.0/24"}}, from("198.51.100.9")); resp.StatusCode != 200 {
+		t.Fatalf("save: %d %v", resp.StatusCode, body)
+	}
+	f.token = ""
+	if resp, _ := f.call("GET", "/api/v1/auth/me", nil, from("203.0.113.5")); resp.StatusCode != 403 {
+		t.Fatalf("an address outside the list reached the panel: %d", resp.StatusCode)
+	}
+	if c := login(from("198.51.100.9")); c != 200 {
+		t.Fatalf("an address on the list: %d", c)
+	}
+	if c := login(); c != 200 {
+		t.Fatalf("this machine: %d", c)
+	}
+	// Closing the password needs a passkey first.
+	f.withToken()
+	if resp, body := f.call("PUT", "/api/v1/auth/panel-access", map[string]any{"allow": []string{"198.51.100.0/24"}, "passkey_only": true}, from("198.51.100.9")); resp.StatusCode != 400 || !strings.Contains(text(body), "passkey") {
+		t.Fatalf("closing the password without a passkey: %d %v", resp.StatusCode, body)
+	}
+	// The fire exit lifts the lists, from the shell, without a restart.
+	f.token = ""
+	if _, err := f.store.OpenPanel(time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if c := login(from("203.0.113.5")); c != 200 {
+		t.Fatalf("opened from the shell, an outside address: %d", c)
+	}
+	_, me := f.call("GET", "/api/v1/auth/me", nil, from("203.0.113.5"))
+	if me["open_until"] == nil {
+		t.Fatalf("/auth/me does not say the panel is open: %v", me)
+	}
+	if err := f.store.ClosePanel(); err != nil {
+		t.Fatal(err)
+	}
+	if resp, _ := f.call("GET", "/api/v1/auth/me", nil, from("203.0.113.5")); resp.StatusCode != 403 {
+		t.Fatalf("closed again, an outside address: %d", resp.StatusCode)
+	}
+}
+
+func TestACookieRequestFromASiblingSubdomainIsRefused(t *testing.T) {
+	f := newFixture(t)
+	f.store.SetPassword("password-1")
+	resp, _ := f.call("POST", "/api/v1/auth/login", map[string]any{"password": "password-1"})
+	var cookie string
+	for _, c := range resp.Cookies() {
+		if c.Name == auth.CookieName {
+			cookie = c.Name + "=" + c.Value
+		}
+	}
+	if cookie == "" {
+		t.Fatal("no session cookie")
+	}
+	post := func(headers ...string) int {
+		r, _ := f.call("POST", "/api/v1/auth/tokens", map[string]any{"name": "x"}, append([]string{"Cookie: " + cookie, "X-Requested-With: middleware"}, headers...)...)
+		return r.StatusCode
+	}
+	if c := post("Sec-Fetch-Site: same-site", "Origin: https://blog.example.com"); c != 403 {
+		t.Fatalf("a sibling subdomain's page: %d", c)
+	}
+	if c := post("Origin: https://blog.example.com"); c != 403 {
+		t.Fatalf("another origin without Sec-Fetch-Site: %d", c)
+	}
+	if c := post("Sec-Fetch-Site: same-origin"); c != 200 {
+		t.Fatalf("the panel itself: %d", c)
+	}
+}

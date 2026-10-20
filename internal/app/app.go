@@ -74,6 +74,7 @@ func (a *App) Run(ctx context.Context) error {
 	for i := len(a.Hooks) - 1; i >= 0; i-- {
 		h = a.Hooks[i].Wrap(h)
 	}
+	h = recoverer(a.Bus, h)
 	a.Handler = h
 	go a.Engine.Run(ctx)
 	for _, hook := range a.Hooks {

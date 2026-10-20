@@ -561,3 +561,7 @@ details.section[open] summary { border-bottom: 1px solid var(--border); margin-b
 
 /* The account's usage windows. */
 .usage-row{margin:.75rem 0}.meter{height:8px;border-radius:4px;background:var(--surface-3);overflow:hidden;margin:.35rem 0}.meter .fill{height:100%;background:var(--accent,#2563eb)}.meter .fill.warn{background:#d97706}.meter .fill.bad{background:#dc2626}
+
+/* The panel opened from the shell: on every screen, impossible to miss. */
+.open-banner { position: sticky; bottom: 0; z-index: 20; display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: var(--bad); color: #fff; grid-column: 1 / -1; }
+.open-banner .btn { background: #fff; color: var(--bad); border-color: #fff; }
