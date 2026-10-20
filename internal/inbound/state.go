@@ -88,6 +88,12 @@ type State struct {
 		// Email is the account contact.
 		Email string `json:"email,omitempty"`
 	} `json:"acme"`
+	// NewSites is the door a site is published on when nobody names one:
+	// what "publish" means on creating a site. Empty is the tunnel.
+	NewSites Door `json:"new_sites,omitempty"`
+	// PublicIP is the address the ports door is reached at, for the A
+	// records. Empty means detect it (see internal/publish).
+	PublicIP string `json:"public_ip,omitempty"`
 	// Domains records the door each domain was moved to. A domain absent
 	// here is on the ports door if it has a certificate and on the tunnel
 	// otherwise, which is what "nobody decided yet" looks like.
@@ -169,6 +175,16 @@ func (s State) Validate() error {
 	if s.Local.Open && s.Ports.Open && samePort(s.Local.HTTP, s.Ports.HTTP) {
 		return fmt.Errorf("inbound: the local and ports doors cannot both listen on port %s", portOf(s.Local.HTTP))
 	}
+	if s.NewSites != "" {
+		if _, err := ParsePublicDoor(string(s.NewSites)); err != nil {
+			return err
+		}
+	}
+	if s.PublicIP != "" {
+		if ip := net.ParseIP(s.PublicIP); ip == nil || ip.To4() == nil {
+			return fmt.Errorf("inbound: public_ip %q is not an IPv4 address", s.PublicIP)
+		}
+	}
 	for d, door := range s.Domains {
 		if !manifest.ValidDomain(d) {
 			return fmt.Errorf("inbound: invalid domain %q", d)
@@ -195,6 +211,14 @@ func samePort(a, b string) bool {
 		return false
 	}
 	return ha == "" || hb == "" || ha == hb || ha == "0.0.0.0" || hb == "0.0.0.0"
+}
+
+// DoorForNew is the door new sites are published on.
+func (s State) DoorForNew() Door {
+	if s.NewSites == "" {
+		return Tunnel
+	}
+	return s.NewSites
 }
 
 // DoorOf returns the recorded door for a domain, or "" when nobody

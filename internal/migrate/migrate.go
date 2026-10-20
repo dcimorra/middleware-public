@@ -144,7 +144,7 @@ func Convert(name string, data []byte) Result {
 		return r
 	}
 	c := converter{r: &r}
-	m := &manifest.Manifest{Version: manifest.Version, Title: in.Title, Disabled: in.Disabled}
+	m := &manifest.Manifest{Version: manifest.Version, Title: in.Title, Disabled: in.Disabled, WWW: in.WWW}
 	c.blockers(&in)
 	c.serve(&in, m, name)
 	c.access(&in, m)
@@ -182,9 +182,6 @@ func present(raw json.RawMessage) bool {
 // blockers lists the V1 settings in use that V2 cannot honour yet, each
 // with the phase of docs/parity.md that brings it.
 func (c converter) blockers(in *v1) {
-	if in.WWW != nil && !*in.WWW {
-		c.block("www: false (V2 always redirects www; parity §2)")
-	}
 	if in.Group != "" {
 		c.block("group %q (panel groups; parity §7)", in.Group)
 	}

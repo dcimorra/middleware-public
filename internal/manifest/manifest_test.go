@@ -3,6 +3,7 @@ package manifest
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -155,5 +156,23 @@ func TestAPathOutsideTheSiteFolderIsRefused(t *testing.T) {
 		if _, err := Load(site); err != nil {
 			t.Errorf("refused %s: %v", m, err)
 		}
+	}
+}
+
+func TestHostsCarryTheAliasesAndTheImplicitWww(t *testing.T) {
+	m, _ := Parse([]byte(`{"version":2,"aliases":["shop.example.org","a.example"]}`))
+	if got := strings.Join(m.Hosts("a.example"), ","); got != "a.example,shop.example.org,www.a.example" {
+		t.Fatalf("apex: %s", got)
+	}
+	if got := strings.Join(m.Hosts("sub.a.example"), ","); got != "sub.a.example,shop.example.org,a.example" {
+		t.Fatalf("subdomain: %s", got)
+	}
+	no := false
+	m.WWW = &no
+	if got := strings.Join(m.Hosts("a.example"), ","); got != "a.example,shop.example.org" {
+		t.Fatalf("www false: %s", got)
+	}
+	if m.Hosts("tools") != nil {
+		t.Fatal("a project has names")
 	}
 }

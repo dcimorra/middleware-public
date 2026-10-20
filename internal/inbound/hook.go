@@ -156,10 +156,10 @@ func (h *Hook) Run(ctx context.Context, a *app.App) error {
 		if h.Sites == nil && a.Engine != nil {
 			eng := a.Engine
 			h.Sites = func() []string {
-				snaps := eng.Sites()
-				out := make([]string, 0, len(snaps))
-				for _, s := range snaps {
-					out = append(out, s.Domain)
+				hosts := eng.Hosts()
+				out := make([]string, 0, len(hosts))
+				for h := range hosts {
+					out = append(out, h)
 				}
 				return out
 			}
@@ -626,12 +626,16 @@ func (h *Hook) Move(ctx context.Context, domains []string, to Door) []Line {
 		return lines
 	}
 	st := h.file.get()
-	if st.Domains == nil {
-		st.Domains = map[string]Door{}
+	// A fresh map: the cached state's map is read by every request, and
+	// writing into it here was a data race with them.
+	marked := make(map[string]Door, len(st.Domains)+len(moved))
+	for d, door := range st.Domains {
+		marked[d] = door
 	}
 	for d, door := range moved {
-		st.Domains[d] = door
+		marked[d] = door
 	}
+	st.Domains = marked
 	if err := h.file.set(st); err != nil {
 		return append(lines, Line{Status: "fail", Text: "state not saved: " + err.Error()})
 	}
@@ -639,6 +643,37 @@ func (h *Hook) Move(ctx context.Context, domains []string, to Door) []Line {
 		h.emit("operator", "inbound.moved", d, "", "", map[string]any{"to": string(door)})
 	}
 	return lines
+}
+
+// Forget drops a domain's recorded door: what unpublishing it leaves.
+func (h *Hook) Forget(domain string) error {
+	st := h.file.get()
+	if _, ok := st.Domains[domain]; !ok {
+		return nil
+	}
+	next := st
+	next.Domains = map[string]Door{}
+	for d, door := range st.Domains {
+		if d != domain {
+			next.Domains[d] = door
+		}
+	}
+	return h.file.set(next)
+}
+
+// SetPublishing writes the door for new sites and the public address
+// override; empty values are kept as they are.
+func (h *Hook) SetPublishing(newSites Door, publicIP string, clearIP bool) error {
+	st := h.file.get()
+	if newSites != "" {
+		st.NewSites = newSites
+	}
+	if clearIP {
+		st.PublicIP = ""
+	} else if publicIP != "" {
+		st.PublicIP = publicIP
+	}
+	return h.file.set(st)
 }
 
 var _ app.Hook = (*Hook)(nil)

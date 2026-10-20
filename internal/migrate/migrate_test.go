@@ -86,7 +86,6 @@ func TestWhatV2CannotDoYetBlocksTheSite(t *testing.T) {
 		`{"kind":"static","attack":{"on":true}}`:                             "attack mode on",
 		`{"kind":"static","cache":{"rules":[{"path":"/","mode":"origen"}]}}`: "cache rules",
 		`{"kind":"static","hold":{"mode":"410"}}`:                            "hold mode",
-		`{"kind":"static","www":false}`:                                      "www",
 		`{"kind":"static","comand":["typo"]}`:                                "does not read",
 		`{"kind":"cgi"}`:                                                     "kind",
 	}
@@ -167,5 +166,15 @@ func TestApplyKeepsTheOriginalAndOnlyTouchesReadySites(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "vpn.example", BackupName)); err == nil {
 		t.Fatal("a blocked site was touched")
+	}
+}
+
+func TestWwwFalseIsCarried(t *testing.T) {
+	r := Convert("a.example", []byte(`{"kind":"static","www":false}`))
+	if !r.Ready() || r.Manifest.WWW == nil || *r.Manifest.WWW {
+		t.Fatalf("%+v", r)
+	}
+	if h := r.Manifest.Hosts("a.example"); len(h) != 1 {
+		t.Fatalf("hosts %v", h)
 	}
 }

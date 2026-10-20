@@ -28,7 +28,10 @@ type Manifest struct {
 	Title   string `json:"title,omitempty"`
 	// Aliases are more names this site answers to, served the same way
 	// and published with it.
-	Aliases  []string           `json:"aliases,omitempty"`
+	Aliases []string `json:"aliases,omitempty"`
+	// WWW false drops the www. name an apex domain carries without writing
+	// it (see Hosts).
+	WWW      *bool              `json:"www,omitempty"`
 	Static   *Static            `json:"static,omitempty"`
 	Run      *Run               `json:"run,omitempty"`
 	Upstream string             `json:"upstream,omitempty"`
@@ -363,6 +366,36 @@ const (
 	// from the folder's name; a manifest cannot ask for it.
 	ModeProject Mode = "project"
 )
+
+// Hosts is every name the site in the folder called name answers to and
+// is published, certified and unpublished under: the folder's name, its
+// aliases, and www. in front of an apex domain unless `www` is false.
+// Everything that touches names asks this, so none of them can forget one:
+// V1 published luma32.com and left www.luma32.com with no record and no
+// certificate because nobody had written it as an alias. A project has no
+// names at all.
+func (m *Manifest) Hosts(name string) []string {
+	if IsProject(name) || !ValidDomain(name) {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(h string) {
+		h = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(h), "."))
+		if h != "" && !seen[h] {
+			seen[h] = true
+			out = append(out, h)
+		}
+	}
+	add(name)
+	for _, a := range m.Aliases {
+		add(a)
+	}
+	if (m.WWW == nil || *m.WWW) && strings.Count(name, ".") == 1 && !strings.HasPrefix(name, "www.") {
+		add("www." + name)
+	}
+	return out
+}
 
 // ModeFor is Mode for the folder called name: a project is a project
 // unless it is disabled.

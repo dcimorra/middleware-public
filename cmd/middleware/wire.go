@@ -22,6 +22,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/modules/cloudflare"
 	"github.com/dcimorra/middleware-public/internal/modules/github"
 	"github.com/dcimorra/middleware-public/internal/modules/vpn"
+	"github.com/dcimorra/middleware-public/internal/publish"
 )
 
 // The order of the hooks is the shape of the process, so it is written
@@ -87,7 +88,8 @@ func registerExtraModules(mgr *modules.Manager, root string, bus *events.Bus, dm
 // other package and does the housekeeping that needs more than one of
 // them. It wraps nothing.
 type wireHook struct {
-	set *moduleSet
+	set       *moduleSet
+	publisher *publish.Publisher
 }
 
 func buildWire(a *app.App) app.Hook {
@@ -118,7 +120,8 @@ func buildWire(a *app.App) app.Hook {
 		go set.Deps.Run(context.Background())
 	}
 	if inboundHook != nil {
-		srv.RegisterInbound(api.InboundOptions{Hook: inboundHook, DNS: cloudflareDNS{set: set}})
+		w.publisher = buildPublisher(a, set)
+		srv.RegisterInbound(api.InboundOptions{Hook: inboundHook, DNS: cloudflareDNS{set: set}, Publisher: w.publisher})
 	}
 	srv.RegisterWAF(api.WAFOptions{WAF: theWAF, Traffic: theTraffic})
 	srv.RegisterAgents(api.AgentsOptions{Registry: providers(), Chat: chatManager})
@@ -156,6 +159,9 @@ func (w *wireHook) Run(ctx context.Context, a *app.App) error {
 		}
 	} else {
 		a.Bus.Emit(events.Event{Type: "ports.not_reserved", Actor: "engine", Level: "warn", Message: "the helper is not reachable on " + hc.Path() + "; the site port range is not reserved from the kernel's ephemeral range"})
+	}
+	if w.publisher != nil {
+		go w.publisher.Run(ctx)
 	}
 	var enabled []string
 	if w.set != nil {
@@ -288,4 +294,50 @@ func (d cloudflareDNS) Publish(ctx context.Context, domain, door, ip string) err
 	return c.Publish(ctx, domain, door, ip)
 }
 
-var _ api.DNSProvider = cloudflareDNS{}
+func (d cloudflareDNS) Unpublish(ctx context.Context, domain, ip string) error {
+	c, err := d.client()
+	if err != nil {
+		return err
+	}
+	return c.Unpublish(ctx, domain, ip)
+}
+
+func (d cloudflareDNS) Covers(ctx context.Context, domain string) (bool, error) {
+	c, err := d.client()
+	if err != nil {
+		return false, err
+	}
+	return c.Covers(ctx, domain)
+}
+
+var (
+	_ api.DNSProvider = cloudflareDNS{}
+	_ publish.DNS     = cloudflareDNS{}
+)
+
+// buildPublisher is the one place names are published. Its DNS is the
+// cloudflare module while it is enabled, and nothing otherwise: names are
+// then recorded as manual, with the reason, rather than silently skipped.
+func buildPublisher(a *app.App, set *moduleSet) *publish.Publisher {
+	if inboundHook == nil {
+		return nil
+	}
+	dns := cloudflareDNS{set: set}
+	p, err := publish.New(publish.Options{
+		Root:  a.Root,
+		Bus:   a.Bus,
+		Doors: inboundHook,
+		DNS: func() publish.DNS {
+			if !dns.Enabled() {
+				return nil
+			}
+			return dns
+		},
+		Hosts: a.Engine.Hosts,
+	})
+	if err != nil {
+		a.Bus.Emit(events.Event{Type: "publish.error", Actor: "engine", Level: "error", Message: "data/publish.json does not read, nothing is published: " + err.Error()})
+		return nil
+	}
+	return p
+}

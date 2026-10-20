@@ -1,0 +1,551 @@
+// Package publish makes a site reachable from outside and takes it back.
+//
+// Publishing and moving a name between doors are the same operation seen
+// from two places, and V1 learned it the hard way: while they were two
+// pieces of code, publishing with the ports door open wrote the A record
+// and *left* the tunnel rule, so the name was published by both doors and
+// served by whichever won. Here there is one Publisher, and the API's move,
+// a site's creation and its deletion all go through it, under one lock,
+// because the tunnel's ingress is one object that every write replaces.
+//
+// It is a reconcile loop like the engine. A site is published by writing
+// the intent (data/publish.json: this site, on this door); every name the
+// site answers to (manifest.Hosts) is then brought to that door and kept
+// there: an alias added later is published on the next pass, one removed is
+// unpublished. A name that fails is retried with backoff and its error is
+// shown, never swallowed. The file also records what the house itself
+// wrote, so unpublishing only ever removes the house's own records.
+//
+// What is never done on a guess: a site folder that disappears without
+// being deleted through the house keeps its records (a folder renamed by
+// hand would otherwise lose its DNS), and an event says so once.
+package publish
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/middleware-public/internal/inbound"
+)
+
+// DNS is the provider of records and tunnel routes: the cloudflare module.
+type DNS interface {
+	// Covers says whether the provider manages the zone a name is in.
+	Covers(ctx context.Context, name string) (bool, error)
+	// Publish points name at this house through door ("tunnel"/"ports").
+	Publish(ctx context.Context, name, door, ip string) error
+	// Unpublish removes the route and the records that point at this
+	// house (the tunnel, or ip).
+	Unpublish(ctx context.Context, name, ip string) error
+}
+
+// Doors is what the inbound hook offers: certificates and recorded doors.
+type Doors interface {
+	Move(ctx context.Context, domains []string, to inbound.Door) []inbound.Line
+	State() inbound.State
+	Forget(domain string) error
+}
+
+// Options configure a Publisher.
+type Options struct {
+	Root  string
+	Bus   *events.Bus
+	Doors Doors
+	// DNS returns the provider, or nil when none is enabled. It is a
+	// function because the module can be enabled while the process runs.
+	DNS func() DNS
+	// Hosts returns every name → the site that owns it.
+	Hosts func() map[string]string
+	// PublicIP detects the address the ports door is reached at; the
+	// inbound state's public_ip, when set, wins over it.
+	PublicIP func(ctx context.Context) (string, error)
+	Tick     time.Duration
+	Now      func() time.Time
+}
+
+// Status of one name.
+const (
+	StatePublished = "published"
+	StatePending   = "pending"
+	StateFailed    = "failed"
+	// StateManual is a name the house cannot point here by itself: no
+	// DNS provider, or a zone the provider does not manage.
+	StateManual = "manual"
+	// StateRetiring is a name being unpublished that has not finished.
+	StateRetiring = "retiring"
+)
+
+// Record is what the house knows about one published name.
+type Record struct {
+	Site     string       `json:"site"`
+	Door     inbound.Door `json:"door"`
+	State    string       `json:"state"`
+	Error    string       `json:"error,omitempty"`
+	Attempts int          `json:"attempts,omitempty"`
+	Next     time.Time    `json:"next,omitempty"`
+	At       time.Time    `json:"at,omitempty"`
+	// IP is the A record's address when published on the ports door, so
+	// unpublishing knows which record is the house's.
+	IP string `json:"ip,omitempty"`
+}
+
+// Intent is a site the operator published.
+type Intent struct {
+	Door  inbound.Door `json:"door"`
+	Since time.Time    `json:"since"`
+}
+
+type file struct {
+	Sites map[string]Intent  `json:"sites"`
+	Names map[string]*Record `json:"names"`
+}
+
+// Publisher is the one place names are published and unpublished.
+type Publisher struct {
+	opts Options
+	// work serializes every operation that writes DNS or tunnel routes:
+	// the ingress is one object that each write replaces. It is held
+	// across network calls (a certificate can take a minute).
+	work sync.Mutex
+	// mu guards f and is only held for moments, so reading the state
+	// never waits for a certificate.
+	mu      sync.Mutex
+	f       file
+	orphans map[string]bool // said once, guarded by work
+
+	ipMu   sync.Mutex
+	ip     string
+	ipTime time.Time
+
+	kick chan struct{}
+}
+
+// New loads data/publish.json.
+func New(opts Options) (*Publisher, error) {
+	if opts.Tick == 0 {
+		opts.Tick = time.Minute
+	}
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
+	if opts.Bus == nil {
+		opts.Bus = events.New("")
+	}
+	if opts.PublicIP == nil {
+		opts.PublicIP = DetectPublicIP
+	}
+	p := &Publisher{opts: opts, orphans: map[string]bool{}, kick: make(chan struct{}, 1)}
+	p.f = file{Sites: map[string]Intent{}, Names: map[string]*Record{}}
+	if err := fsx.ReadJSON(p.path(), &p.f); err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	if p.f.Sites == nil {
+		p.f.Sites = map[string]Intent{}
+	}
+	if p.f.Names == nil {
+		p.f.Names = map[string]*Record{}
+	}
+	return p, nil
+}
+
+func (p *Publisher) path() string { return filepath.Join(p.opts.Root, "data", "publish.json") }
+
+func (p *Publisher) saveLocked() error { return fsx.WriteJSON(p.path(), p.f, 0o644) }
+
+func (p *Publisher) emit(typ, subject, level, msg string, data map[string]any) {
+	p.opts.Bus.Emit(events.Event{Type: typ, Subject: subject, Actor: "engine", Level: level, Message: msg, Data: data})
+}
+
+// Run reconciles until ctx ends.
+func (p *Publisher) Run(ctx context.Context) {
+	t := time.NewTicker(p.opts.Tick)
+	defer t.Stop()
+	for {
+		p.Reconcile(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		case <-p.kick:
+		}
+	}
+}
+
+func (p *Publisher) wake() {
+	select {
+	case p.kick <- struct{}{}:
+	default:
+	}
+}
+
+// Publish records that site is published on door ("" is the door for new
+// sites) and brings its names there now. The lines say what happened to
+// each name; a failure is retried by the loop.
+func (p *Publisher) Publish(ctx context.Context, site string, door inbound.Door) ([]inbound.Line, error) {
+	if door == "" {
+		door = p.opts.Doors.State().DoorForNew()
+	}
+	if _, err := inbound.ParsePublicDoor(string(door)); err != nil {
+		return nil, err
+	}
+	hosts := p.hostsOf(site)
+	if len(hosts) == 0 {
+		return nil, fmt.Errorf("%s answers no name: a project, or not a site of this installation", site)
+	}
+	p.work.Lock()
+	defer p.work.Unlock()
+	p.mu.Lock()
+	p.f.Sites[site] = Intent{Door: door, Since: p.opts.Now()}
+	for _, h := range hosts {
+		r := p.f.Names[h]
+		if r == nil || r.Door != door || r.State == StateRetiring {
+			p.f.Names[h] = &Record{Site: site, Door: door, State: StatePending}
+		} else {
+			r.Next = time.Time{}
+		}
+	}
+	if err := p.saveLocked(); err != nil {
+		p.mu.Unlock()
+		return nil, err
+	}
+	p.mu.Unlock()
+	p.emit("publish.requested", site, "", "on the "+string(door)+" door", map[string]any{"names": hosts})
+	return p.reconcileSiteLocked(ctx, site), nil
+}
+
+// Unpublish takes every name of site off the internet and forgets the
+// intent. A name that cannot be removed now stays as retiring and the
+// loop keeps trying: a deleted site's record must not linger silently.
+func (p *Publisher) Unpublish(ctx context.Context, site string) []inbound.Line {
+	p.work.Lock()
+	defer p.work.Unlock()
+	p.mu.Lock()
+	delete(p.f.Sites, site)
+	for _, r := range p.f.Names {
+		if r.Site == site {
+			r.State, r.Next = StateRetiring, time.Time{}
+		}
+	}
+	_ = p.saveLocked()
+	p.mu.Unlock()
+	p.emit("publish.withdrawn", site, "", "unpublishing every name", nil)
+	return p.reconcileSiteLocked(ctx, site)
+}
+
+// Move puts names on a door: the API's move, which is publishing names
+// one by one. The names' site is published on that door from now on, so
+// the loop keeps them there.
+func (p *Publisher) Move(ctx context.Context, names []string, door inbound.Door) []inbound.Line {
+	if _, err := inbound.ParsePublicDoor(string(door)); err != nil {
+		return []inbound.Line{{Status: "fail", Text: err.Error()}}
+	}
+	owners := p.opts.Hosts()
+	var lines []inbound.Line
+	sites := map[string]bool{}
+	p.work.Lock()
+	defer p.work.Unlock()
+	p.mu.Lock()
+	for _, n := range names {
+		n = strings.ToLower(strings.TrimSpace(n))
+		site, ok := owners[n]
+		if !ok {
+			lines = append(lines, inbound.Line{Status: "fail", Text: n + ": not a name of any site here"})
+			continue
+		}
+		p.f.Names[n] = &Record{Site: site, Door: door, State: StatePending}
+		sites[site] = true
+		// Moving a name is publishing it: a site with no intent yet gets
+		// one on this door, or the next pass would see a name nobody
+		// asked for and take it down again. A site already published
+		// keeps its door for its other names; this one keeps its own.
+		if _, ok := p.f.Sites[site]; !ok {
+			p.f.Sites[site] = Intent{Door: door, Since: p.opts.Now()}
+		}
+	}
+	_ = p.saveLocked()
+	p.mu.Unlock()
+	for site := range sites {
+		lines = append(lines, p.reconcileSiteLocked(ctx, site)...)
+	}
+	return lines
+}
+
+// Records returns what the house published, by name.
+func (p *Publisher) Records() map[string]Record {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make(map[string]Record, len(p.f.Names))
+	for n, r := range p.f.Names {
+		out[n] = *r
+	}
+	return out
+}
+
+// Published reports whether site is published and on which door.
+func (p *Publisher) Published(site string) (inbound.Door, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	in, ok := p.f.Sites[site]
+	return in.Door, ok
+}
+
+// HostsOf is every name site answers to now.
+func (p *Publisher) HostsOf(site string) []string { return p.hostsOf(site) }
+
+func (p *Publisher) hostsOf(site string) []string {
+	var out []string
+	for h, owner := range p.opts.Hosts() {
+		if owner == site {
+			out = append(out, h)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Reconcile is one pass over every published site.
+func (p *Publisher) Reconcile(ctx context.Context) {
+	p.mu.Lock()
+	sites := map[string]bool{}
+	for s := range p.f.Sites {
+		sites[s] = true
+	}
+	for _, r := range p.f.Names {
+		sites[r.Site] = true
+	}
+	p.mu.Unlock()
+	names := make([]string, 0, len(sites))
+	for s := range sites {
+		names = append(names, s)
+	}
+	sort.Strings(names)
+	for _, s := range names {
+		if ctx.Err() != nil {
+			return
+		}
+		p.work.Lock()
+		p.reconcileSiteLocked(ctx, s)
+		p.work.Unlock()
+	}
+}
+
+// reconcileSiteLocked brings one site's names to where its intent says.
+// The caller holds p.work; p.mu is taken only around the file.
+func (p *Publisher) reconcileSiteLocked(ctx context.Context, site string) []inbound.Line {
+	owners := p.opts.Hosts()
+	exists := false
+	current := map[string]bool{}
+	for h, owner := range owners {
+		if owner == site {
+			exists = true
+			current[h] = true
+		}
+	}
+	p.mu.Lock()
+	intent, published := p.f.Sites[site]
+	if published && !exists {
+		p.mu.Unlock()
+		if !p.orphans[site] {
+			p.orphans[site] = true
+			p.emit("publish.orphan", site, "warn", "published, but no site answers to it any more; its records are kept until it is deleted through the house or unpublished", nil)
+		}
+		return nil
+	}
+	delete(p.orphans, site)
+	if published {
+		for h := range current {
+			r := p.f.Names[h]
+			if r == nil {
+				p.f.Names[h] = &Record{Site: site, Door: intent.Door, State: StatePending}
+			} else if r.Site != site {
+				// A name that moved from one site to another (an alias
+				// passed on) is the new owner's from now on.
+				r.Site = site
+			}
+		}
+	}
+	now := p.opts.Now()
+	var todo []string
+	for h, r := range p.f.Names {
+		if r.Site != site {
+			continue
+		}
+		if (!published || !current[h]) && r.State != StateRetiring {
+			r.State, r.Next = StateRetiring, time.Time{}
+		}
+		if r.State == StatePublished || r.State == StateManual || now.Before(r.Next) {
+			continue
+		}
+		todo = append(todo, h)
+	}
+	sort.Strings(todo)
+	work := make(map[string]Record, len(todo))
+	for _, h := range todo {
+		work[h] = *p.f.Names[h]
+	}
+	p.mu.Unlock()
+
+	var lines []inbound.Line
+	for _, h := range todo {
+		rec := work[h]
+		var line inbound.Line
+		retired := false
+		if rec.State == StateRetiring {
+			line, retired = p.retire(ctx, h, &rec)
+		} else {
+			line = p.publish(ctx, h, &rec)
+		}
+		lines = append(lines, line)
+		p.mu.Lock()
+		if retired {
+			delete(p.f.Names, h)
+		} else {
+			p.f.Names[h] = &rec
+		}
+		p.mu.Unlock()
+	}
+	p.mu.Lock()
+	_ = p.saveLocked()
+	p.mu.Unlock()
+	return lines
+}
+
+// publish puts one name on its door: certificate first for the ports
+// door (a name pointed at a door that cannot serve it is an outage), then
+// DNS. The tunnel door needs no certificate of ours.
+func (p *Publisher) publish(ctx context.Context, name string, r *Record) inbound.Line {
+	dns := p.dns()
+	if dns == nil {
+		return p.manual(name, r, "no DNS provider is enabled: point "+name+" at this house by hand, or enable the cloudflare module")
+	}
+	covered, err := dns.Covers(ctx, name)
+	if err != nil {
+		return p.failed(name, r, err)
+	}
+	if !covered {
+		return p.manual(name, r, name+" is in a zone the DNS provider does not manage: point it at this house by hand")
+	}
+	ip := ""
+	if r.Door == inbound.Ports {
+		if ip, err = p.publicIP(ctx); err != nil {
+			return p.failed(name, r, err)
+		}
+	}
+	for _, l := range p.opts.Doors.Move(ctx, []string{name}, r.Door) {
+		if l.Status == "fail" {
+			return p.failed(name, r, errors.New(strings.TrimPrefix(l.Text, name+": ")))
+		}
+	}
+	if err := dns.Publish(ctx, name, string(r.Door), ip); err != nil {
+		return p.failed(name, r, err)
+	}
+	r.State, r.Error, r.Attempts, r.Next, r.At, r.IP = StatePublished, "", 0, time.Time{}, p.opts.Now(), ip
+	p.emit("publish.published", name, "", "on the "+string(r.Door)+" door", map[string]any{"site": r.Site})
+	return inbound.Line{Status: "ok", Text: name + ": published on the " + string(r.Door) + " door"}
+}
+
+func (p *Publisher) retire(ctx context.Context, name string, r *Record) (inbound.Line, bool) {
+	if dns := p.dns(); dns != nil {
+		ip := r.IP
+		if ip == "" && r.Door == inbound.Ports {
+			ip, _ = p.publicIP(ctx)
+		}
+		covered, err := dns.Covers(ctx, name)
+		if err != nil {
+			return p.failed(name, r, err), false
+		}
+		if covered {
+			if err := dns.Unpublish(ctx, name, ip); err != nil {
+				return p.failed(name, r, err), false
+			}
+		}
+	}
+	_ = p.opts.Doors.Forget(name)
+	p.emit("publish.unpublished", name, "", "route and records removed", map[string]any{"site": r.Site})
+	return inbound.Line{Status: "ok", Text: name + ": unpublished"}, true
+}
+
+func (p *Publisher) manual(name string, r *Record, why string) inbound.Line {
+	if r.State != StateManual || r.Error != why {
+		p.emit("publish.manual", name, "warn", why, map[string]any{"site": r.Site})
+	}
+	r.State, r.Error, r.Next = StateManual, why, time.Time{}
+	return inbound.Line{Status: "skip", Text: name + ": " + why}
+}
+
+// failed records an error with backoff: 1, 2, 4… minutes up to an hour.
+func (p *Publisher) failed(name string, r *Record, err error) inbound.Line {
+	r.Attempts++
+	wait := time.Minute
+	for i := 1; i < r.Attempts && wait < time.Hour; i++ {
+		wait *= 2
+	}
+	if wait > time.Hour {
+		wait = time.Hour
+	}
+	if r.State != StateRetiring {
+		r.State = StateFailed
+	}
+	r.Error, r.Next = err.Error(), p.opts.Now().Add(wait)
+	p.emit("publish.failed", name, "error", fmt.Sprintf("%v; retry in %s", err, wait), map[string]any{"site": r.Site, "attempts": r.Attempts})
+	return inbound.Line{Status: "fail", Text: fmt.Sprintf("%s: %v (retry in %s)", name, err, wait)}
+}
+
+func (p *Publisher) dns() DNS {
+	if p.opts.DNS == nil {
+		return nil
+	}
+	return p.opts.DNS()
+}
+
+// Retry clears the backoff of every name that is not published, and of
+// the names in manual state, so the next pass tries them again: what the
+// operator presses after fixing a token or a zone.
+func (p *Publisher) Retry() {
+	p.work.Lock()
+	defer p.work.Unlock()
+	p.mu.Lock()
+	for _, r := range p.f.Names {
+		if r.State != StatePublished {
+			if r.State == StateManual {
+				r.State = StatePending
+			}
+			r.Next = time.Time{}
+		}
+	}
+	_ = p.saveLocked()
+	p.mu.Unlock()
+	p.wake()
+}
+
+// publicIP is the override from the inbound state, or the detected one,
+// kept ten minutes.
+func (p *Publisher) publicIP(ctx context.Context) (string, error) {
+	if ip := p.opts.Doors.State().PublicIP; ip != "" {
+		return ip, nil
+	}
+	p.ipMu.Lock()
+	defer p.ipMu.Unlock()
+	if p.ip != "" && p.opts.Now().Sub(p.ipTime) < 10*time.Minute {
+		return p.ip, nil
+	}
+	ip, err := p.opts.PublicIP(ctx)
+	if err != nil {
+		return "", fmt.Errorf("the public address of this machine is not known (%v): set it with PUT /inbound/publishing", err)
+	}
+	if parsed := net.ParseIP(ip); parsed == nil || parsed.To4() == nil {
+		return "", fmt.Errorf("the detected public address %q is not IPv4: set it with PUT /inbound/publishing", ip)
+	}
+	p.ip, p.ipTime = ip, p.opts.Now()
+	return ip, nil
+}

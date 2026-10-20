@@ -550,3 +550,49 @@ func (c *Client) Publish(ctx context.Context, domain, mode, ip string) error {
 		return fmt.Errorf("cloudflare: mode %q is not tunnel or ports", mode)
 	}
 }
+
+// Unpublish undoes Publish for domain: the tunnel rule goes, and the A or
+// CNAME record goes only when it points at this house (the tunnel's
+// target, or ip). A record pointing anywhere else was written by someone
+// else, and removing it would take down whatever it serves.
+func (c *Client) Unpublish(ctx context.Context, domain, ip string) error {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if c.TunnelID != "" {
+		if err := c.RemoveIngress(ctx, domain); err != nil {
+			return err
+		}
+	}
+	zone, err := c.FindZone(ctx, domain)
+	if err != nil {
+		return err
+	}
+	recs, err := c.DNSRecords(ctx, zone.ID)
+	if err != nil {
+		return err
+	}
+	for _, r := range recs {
+		if !strings.EqualFold(r.Name, domain) {
+			continue
+		}
+		ours := (r.Type == "CNAME" && c.TunnelID != "" && strings.EqualFold(r.Content, c.TunnelTarget())) ||
+			(r.Type == "A" && ip != "" && r.Content == ip)
+		if !ours {
+			continue
+		}
+		if err := c.DeleteRecord(ctx, zone.ID, r.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Covers reports whether domain is in a zone the token sees: a name in a
+// zone elsewhere has to be pointed here by hand.
+func (c *Client) Covers(ctx context.Context, domain string) (bool, error) {
+	zones, err := c.Zones(ctx)
+	if err != nil {
+		return false, err
+	}
+	_, err = MatchZone(zones, domain)
+	return err == nil, nil
+}

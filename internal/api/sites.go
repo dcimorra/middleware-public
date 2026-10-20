@@ -1,12 +1,16 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/middleware-public/internal/inbound"
 	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/sites"
 )
@@ -67,15 +71,44 @@ func (s *Server) sitesCreate(w http.ResponseWriter, r *http.Request) (any, error
 		Domain   string             `json:"domain"`
 		Manifest *manifest.Manifest `json:"manifest"`
 		Template string             `json:"template"`
+		// Publish defaults to true when a DNS provider is enabled: what
+		// "create a site" means is a site people can reach. Door is the
+		// door to publish on; empty is the door for new sites.
+		Publish *bool        `json:"publish"`
+		Door    inbound.Door `json:"door"`
 	}
 	if err := ReadJSON(r, &body); err != nil {
 		return nil, err
 	}
-	site, err := m.Create(strings.ToLower(strings.TrimSpace(body.Domain)), body.Manifest, body.Template)
+	domain := strings.ToLower(strings.TrimSpace(body.Domain))
+	site, err := m.Create(domain, body.Manifest, body.Template)
 	if err != nil {
 		return nil, err
 	}
-	WriteJSON(w, http.StatusCreated, site)
+	out := map[string]any{}
+	raw, _ := json.Marshal(site)
+	_ = json.Unmarshal(raw, &out)
+	want := s.dnsEnabled != nil && s.dnsEnabled()
+	if body.Publish != nil {
+		want = *body.Publish
+	}
+	if want && s.publisher != nil && !manifest.IsProject(domain) {
+		// In the background: the engine has to see the folder first,
+		// and a certificate for the ports door takes the CA's time. The
+		// outcome is in GET /publish and in publish.* events.
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			for i := 0; i < 20 && len(s.publisher.HostsOf(domain)) == 0; i++ {
+				time.Sleep(500 * time.Millisecond)
+			}
+			if _, err := s.publisher.Publish(ctx, domain, body.Door); err != nil {
+				s.opts.Bus.Emit(events.Event{Type: "publish.failed", Subject: domain, Actor: "operator", Level: "error", Message: err.Error()})
+			}
+		}()
+		out["publishing"] = true
+	}
+	WriteJSON(w, http.StatusCreated, out)
 	return Handled, nil
 }
 
@@ -121,11 +154,26 @@ func (s *Server) sitesDelete(w http.ResponseWriter, r *http.Request) (any, error
 		return nil, err
 	}
 	archive := isTrue(r.URL.Query().Get("archive"))
+	// Off the internet first, while the engine still knows its names: a
+	// deleted site whose record and tunnel rule stay behind answers
+	// "nothing here" for as long as nobody notices. A name that cannot
+	// be removed now is retried by the publisher, not forgotten.
+	var unpublished []inbound.Line
+	if s.publisher != nil {
+		if _, ok := s.publisher.Published(domain); ok {
+			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+			unpublished = s.publisher.Unpublish(ctx, domain)
+			cancel()
+		}
+	}
 	dest, err := m.Delete(r.Context(), domain, archive)
 	if err != nil {
 		return nil, err
 	}
 	out := map[string]any{"ok": true, "archived": archive}
+	if unpublished != nil {
+		out["unpublished"] = unpublished
+	}
 	if dest != "" {
 		out["path"] = dest
 	}

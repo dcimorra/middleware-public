@@ -543,6 +543,35 @@ func splitLines(s string) []string {
 	return out
 }
 
+// Hosts maps every name the house answers to (see manifest.Hosts) to the
+// site that owns it: what publishing, certificates and the doors ask. A
+// name refused as an alias conflict is left out, like the router does.
+func (e *Engine) Hosts() map[string]string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	out := map[string]string{}
+	for domain, s := range e.sites {
+		if s.Manifest == nil {
+			continue
+		}
+		for _, h := range s.Manifest.Hosts(domain) {
+			if h != domain {
+				if owner, ok := e.aliases[h]; ok && owner != domain {
+					continue
+				}
+				if _, conflict := e.aliasConflicts[h]; conflict {
+					continue
+				}
+				if _, isSite := e.sites[h]; isSite {
+					continue
+				}
+			}
+			out[h] = domain
+		}
+	}
+	return out
+}
+
 // rebuildAliases maps each alias to its site. A name that is already a
 // site, or that two sites both claim, goes to nobody: serving it from
 // whichever folder sorts first would be a choice nobody made, so it is

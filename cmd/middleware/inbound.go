@@ -55,7 +55,9 @@ func buildInbound(a *app.App) app.Hook {
 		if panel != "" && domain == panel {
 			return true
 		}
-		_, ok := a.Engine.Lookup(domain)
+		// Every name a site answers to, aliases and its www. included,
+		// and nothing for a project, which answers none.
+		_, ok := a.Engine.Hosts()[domain]
 		return ok
 	}
 	inboundHook = inbound.New(a.Root, store, solver)

@@ -21,6 +21,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/engine"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/middleware-public/internal/publish"
 	"github.com/dcimorra/middleware-public/internal/settings"
 	"github.com/dcimorra/middleware-public/internal/sites"
 )
@@ -109,6 +110,12 @@ type Server struct {
 	public map[string]bool
 	// deployer, when set, is asked first by POST /sites/{domain}/deploy.
 	deployer Deployer
+	// publisher, when set, publishes sites on creation and unpublishes
+	// them on deletion (RegisterInbound sets it).
+	publisher *publish.Publisher
+	// dnsEnabled says whether a DNS provider is on, which decides the
+	// default of "publish" on creation.
+	dnsEnabled func() bool
 	// onSettings runs after PUT /settings saved, with what was saved.
 	onSettings []func(settings.Settings)
 }

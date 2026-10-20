@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/inbound"
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/middleware-public/internal/publish"
 )
 
 // DNSInfo is what a DNS provider knows about one name.
@@ -21,24 +21,21 @@ type DNSInfo struct {
 }
 
 // DNSProvider is what the cloudflare module offers the inbound section:
-// the two extra columns of GET /inbound, and publishing a domain on a
-// door. Nil, or Enabled false, leaves the columns empty and the move
-// without a DNS step.
+// the two extra columns of GET /inbound. Writing records is the
+// publisher's job, not this one's.
 type DNSProvider interface {
 	Enabled() bool
 	// Describe fills a row per domain; names it knows nothing about are
 	// left out. One call for all rows, because the provider lists zones
 	// once and the panel asks for forty domains at a time.
 	Describe(ctx context.Context, domains []string) (map[string]DNSInfo, error)
-	// Publish points domain at this machine through door ("tunnel" or
-	// "ports"); ip is the machine's public address, needed for ports.
-	Publish(ctx context.Context, domain, door, ip string) error
 }
 
 // InboundOptions wire the inbound section.
 type InboundOptions struct {
-	Hook *inbound.Hook
-	DNS  DNSProvider
+	Hook      *inbound.Hook
+	DNS       DNSProvider
+	Publisher *publish.Publisher
 }
 
 // InboundRow is one domain of GET /inbound.
@@ -46,12 +43,23 @@ type InboundRow struct {
 	inbound.DomainStatus
 	DNS         string `json:"dns"`
 	TunnelRoute string `json:"tunnel_route"`
+	// Published is the publisher's state for the name ("published",
+	// "failed", "manual"…), and PublishError why, when it is not.
+	Published    string `json:"published,omitempty"`
+	PublishError string `json:"publish_error,omitempty"`
 }
 
 // RegisterInbound adds the /inbound routes.
 func (s *Server) RegisterInbound(o InboundOptions) {
 	h := o.Hook
 	p := Prefix + "/inbound"
+	s.publisher = o.Publisher
+	if o.DNS != nil {
+		s.dnsEnabled = o.DNS.Enabled
+	}
+	if o.Publisher != nil {
+		s.registerPublish(o.Publisher, h)
+	}
 	s.Handle("GET", p, "The doors and every domain's door, certificate and DNS", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		st := h.Status()
 		rows := make([]InboundRow, 0, len(st.Domains))
@@ -81,7 +89,15 @@ func (s *Server) RegisterInbound(o InboundOptions) {
 				}
 			}
 		}
-		out := map[string]any{"doors": st.Doors, "domains": rows}
+		if o.Publisher != nil {
+			recs := o.Publisher.Records()
+			for i := range rows {
+				if r, ok := recs[rows[i].Domain]; ok {
+					rows[i].Published, rows[i].PublishError = r.State, r.Error
+				}
+			}
+		}
+		out := map[string]any{"doors": st.Doors, "domains": rows, "new_sites": h.State().DoorForNew(), "public_ip": h.State().PublicIP}
 		if dnsErr != "" {
 			out["dns_error"] = dnsErr
 		}
@@ -91,7 +107,6 @@ func (s *Server) RegisterInbound(o InboundOptions) {
 		var body struct {
 			Domains []string `json:"domains"`
 			To      string   `json:"to"`
-			IP      string   `json:"ip"`
 		}
 		if err := ReadJSON(r, &body); err != nil {
 			return nil, err
@@ -103,16 +118,17 @@ func (s *Server) RegisterInbound(o InboundOptions) {
 		if len(body.Domains) == 0 {
 			return nil, Errorf(http.StatusBadRequest, "domains: none given")
 		}
-		if body.IP != "" && net.ParseIP(body.IP) == nil {
-			return nil, Errorf(http.StatusBadRequest, "ip: %q is not an address", body.IP)
-		}
 		// Obtaining a certificate takes the CA's time, not the client's:
 		// the move continues if the panel's tab goes away.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		lines := h.Move(ctx, body.Domains, door)
-		if o.DNS != nil && o.DNS.Enabled() {
-			lines = append(lines, publishMoved(ctx, o.DNS, h.State(), body.Domains, door, body.IP)...)
+		var lines []inbound.Line
+		if o.Publisher != nil {
+			// The same path as publishing a site: certificate, door,
+			// DNS, under the one lock that guards the tunnel's rules.
+			lines = o.Publisher.Move(ctx, body.Domains, door)
+		} else {
+			lines = h.Move(ctx, body.Domains, door)
 		}
 		ok := true
 		for _, l := range lines {
@@ -173,26 +189,71 @@ func (s *Server) RegisterInbound(o InboundOptions) {
 	})
 }
 
-// publishMoved writes DNS for the domains the move marked, and only
-// those: a domain whose certificate failed must not be pointed at a door
-// that cannot serve it. What was marked is read back from the state, not
-// parsed out of the lines.
-func publishMoved(ctx context.Context, dns DNSProvider, st inbound.State, domains []string, door inbound.Door, ip string) []inbound.Line {
-	var out []inbound.Line
-	for _, d := range domains {
-		d = strings.ToLower(strings.TrimSpace(d))
-		if !manifest.ValidDomain(d) || st.DoorOf(d) != door {
-			continue
+func (s *Server) registerPublish(pub *publish.Publisher, h *inbound.Hook) {
+	s.Handle("GET", Prefix+"/publish", "What the house published: every name, its door and its state", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		return pub.Records(), nil
+	})
+	s.Handle("POST", Prefix+"/publish/retry", "Retry every name that is not published now, manual ones included", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		pub.Retry()
+		return OK, nil
+	})
+	s.Handle("POST", Prefix+"/sites/{domain}/publish", "Publish every name of the site on a door (body: door; empty is the door for new sites)", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		domain, err := domainOf(r)
+		if err != nil {
+			return nil, err
 		}
-		if door == inbound.Ports && ip == "" {
-			out = append(out, inbound.Line{Status: "skip", Text: d + ": DNS not written, the ports door needs the machine's public ip (send \"ip\" with the move)"})
-			continue
+		var body struct {
+			Door inbound.Door `json:"door"`
 		}
-		if err := dns.Publish(ctx, d, string(door), ip); err != nil {
-			out = append(out, inbound.Line{Status: "fail", Text: d + ": DNS not written: " + err.Error()})
-			continue
+		if r.ContentLength != 0 {
+			if err := ReadJSON(r, &body); err != nil {
+				return nil, err
+			}
 		}
-		out = append(out, inbound.Line{Status: "ok", Text: d + ": DNS points at the " + string(door) + " door"})
-	}
-	return out
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		lines, err := pub.Publish(ctx, domain, body.Door)
+		if err != nil {
+			return nil, Errorf(http.StatusBadRequest, "%v", err)
+		}
+		return map[string]any{"lines": lines}, nil
+	})
+	s.Handle("POST", Prefix+"/sites/{domain}/unpublish", "Remove the site's tunnel rules and the records that point at this house", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		domain, err := domainOf(r)
+		if err != nil {
+			return nil, err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		return map[string]any{"lines": pub.Unpublish(ctx, domain)}, nil
+	})
+	s.Handle("PUT", Prefix+"/inbound/publishing", "Set the door for new sites and the public address of the ports door (empty public_ip detects it)", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		var body struct {
+			NewSites inbound.Door `json:"new_sites"`
+			PublicIP *string      `json:"public_ip"`
+		}
+		if err := ReadJSON(r, &body); err != nil {
+			return nil, err
+		}
+		if body.NewSites != "" {
+			if _, err := inbound.ParsePublicDoor(string(body.NewSites)); err != nil {
+				return nil, Errorf(http.StatusBadRequest, "%v", err)
+			}
+		}
+		ip, clear := "", false
+		if body.PublicIP != nil {
+			ip = strings.TrimSpace(*body.PublicIP)
+			clear = ip == ""
+			if !clear {
+				if parsed := net.ParseIP(ip); parsed == nil || parsed.To4() == nil {
+					return nil, Errorf(http.StatusBadRequest, "public_ip: %q is not an IPv4 address", ip)
+				}
+			}
+		}
+		if err := h.SetPublishing(body.NewSites, ip, clear); err != nil {
+			return nil, err
+		}
+		st := h.State()
+		return map[string]any{"new_sites": st.DoorForNew(), "public_ip": st.PublicIP}, nil
+	})
 }

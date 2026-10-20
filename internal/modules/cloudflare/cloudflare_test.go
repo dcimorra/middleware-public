@@ -269,3 +269,50 @@ func TestWithoutATunnelTheModuleIsDNSOnly(t *testing.T) {
 		t.Fatal("no connector without a tunnel")
 	}
 }
+
+func TestUnpublishRemovesOnlyWhatPointsAtThisHouse(t *testing.T) {
+	f := newFakeAPI()
+	defer f.srv.Close()
+	c := f.client()
+	ctx := context.Background()
+	if err := c.Publish(ctx, "a.example.com", "tunnel", ""); err != nil {
+		t.Fatal(err)
+	}
+	// Someone else's record on another name, and a TXT on ours.
+	f.records["z1"] = append(f.records["z1"],
+		Record{ID: "o1", Type: "A", Name: "b.example.com", Content: "9.9.9.9"},
+		Record{ID: "t1", Type: "TXT", Name: "a.example.com", Content: "keep"})
+	f.writes = nil
+	if err := c.Unpublish(ctx, "a.example.com", "1.2.3.4"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := c.HasIngress(ctx, "a.example.com"); ok {
+		t.Fatal("the tunnel rule is still there")
+	}
+	for _, r := range f.records["z1"] {
+		if r.Name == "a.example.com" && r.Type == "CNAME" {
+			t.Fatal("the CNAME to the tunnel is still there")
+		}
+	}
+	if len(f.records["z1"]) != 2 {
+		t.Fatalf("records that were not ours were touched: %+v", f.records["z1"])
+	}
+	// A record pointing elsewhere is not removed, even on the same name.
+	f.records["z1"] = append(f.records["z1"], Record{ID: "x1", Type: "A", Name: "c.example.com", Content: "5.5.5.5"})
+	if err := c.Unpublish(ctx, "c.example.com", "1.2.3.4"); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range f.records["z1"] {
+		found = found || r.ID == "x1"
+	}
+	if !found {
+		t.Fatal("a record pointing at another machine was deleted")
+	}
+	if ok, _ := c.Covers(ctx, "x.shop.example.com"); !ok {
+		t.Fatal("a name in a known zone is not covered")
+	}
+	if ok, _ := c.Covers(ctx, "elsewhere.org"); ok {
+		t.Fatal("a name in no known zone is covered")
+	}
+}
