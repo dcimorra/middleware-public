@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/pages"
+	"github.com/dcimorra/middleware-public/internal/security"
 )
 
 // FileName is the manifest's name inside a site folder.
@@ -46,6 +47,9 @@ type Manifest struct {
 	Hold     *Hold              `json:"hold,omitempty"`
 	Access   *Access            `json:"access,omitempty"`
 	WAF      *WAF               `json:"waf,omitempty"`
+	// Security decides by what a caller claims to be and where it is
+	// (robots, browsers, countries), and which paths are never served.
+	Security *security.Rules `json:"security,omitempty"`
 	// Needs is what this site needs up to do its job: another site's
 	// domain, or one of a site's workers as "name@domain". A first start
 	// waits for them (a minute at most) and the panel names what is
@@ -493,6 +497,9 @@ func (m *Manifest) Validate() error {
 				return err
 			}
 		}
+	}
+	if _, err := security.Compile(m.Security); err != nil {
+		return fmt.Errorf("security.%w", err)
 	}
 	if m.WAF != nil && m.WAF.Rate != nil {
 		if m.WAF.Rate.Requests <= 0 || m.WAF.Rate.Window <= 0 {

@@ -23,6 +23,7 @@ import (
 
 	"github.com/dcimorra/middleware-public/internal/access"
 	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/middleware-public/internal/security"
 )
 
 // Result is one site's conversion.
@@ -156,6 +157,7 @@ func Convert(name string, data []byte) Result {
 	m.Needs = in.Needs
 	m.Notice = c.notice
 	m.ClaudeAPI = c.claudeAPI
+	m.Security = c.security
 	m.Claude = in.Claude
 	m.Chat = c.chat
 	if len(r.Blockers) > 0 {
@@ -173,6 +175,7 @@ type converter struct {
 	r         *Result
 	notice    *manifest.Notice
 	claudeAPI *manifest.ClaudeAPI
+	security  *security.Rules
 	chat      *manifest.ChatRules
 }
 
@@ -208,7 +211,7 @@ func (c *converter) blockers(in *v1) {
 		c.block("vpn (VPN-only site; ROADMAP §2)")
 	}
 	if present(in.Security) {
-		c.block("security (bots, browsers, probe paths; ROADMAP §3)")
+		c.convertSecurity(in.Security)
 	}
 	if present(in.Attack) {
 		var a v1Attack
@@ -500,4 +503,60 @@ func Summary(results []Result) []string {
 		out[i] = fmt.Sprintf("%-14s %d site(s)", k, count[k])
 	}
 	return out
+}
+
+// v1Security is V1's `security`, which V2 reads with the same lists and
+// two differences: V1 wrote "" for a request without a User-Agent in the
+// browser lists (V2 says "none"), and its robot window was always Madrid
+// time (V2 names the zone).
+type v1Security struct {
+	Countries *security.List `json:"countries"`
+	Browsers  *security.List `json:"browsers"`
+	Bots      *struct {
+		Deny   []string `json:"deny"`
+		Except []string `json:"except"`
+		NoUA   bool     `json:"no_ua"`
+		Window *struct {
+			From string `json:"from"`
+			To   string `json:"to"`
+		} `json:"window"`
+	} `json:"bots"`
+	Agents  *security.List `json:"agents"`
+	Paths   []string       `json:"paths"`
+	Message string         `json:"message"`
+}
+
+func (c *converter) convertSecurity(raw json.RawMessage) {
+	var in v1Security
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		c.block("security: %v", err)
+		return
+	}
+	out := &security.Rules{Countries: in.Countries, Agents: in.Agents, Paths: in.Paths, Message: in.Message}
+	if b := in.Browsers; b != nil {
+		none := func(list []string) []string {
+			var o []string
+			for _, k := range list {
+				if strings.TrimSpace(k) == "" {
+					k = security.BrowserNone
+				}
+				o = append(o, k)
+			}
+			return o
+		}
+		out.Browsers = &security.List{Allow: none(b.Allow), Deny: none(b.Deny)}
+	}
+	if b := in.Bots; b != nil {
+		out.Bots = &security.Bots{Deny: b.Deny, Except: b.Except, NoUA: b.NoUA}
+		if w := b.Window; w != nil && (strings.TrimSpace(w.From) != "" || strings.TrimSpace(w.To) != "") {
+			out.Bots.Window = &security.Window{From: w.From, To: w.To, Zone: "Europe/Madrid"}
+		}
+	}
+	if _, err := security.Compile(out); err != nil {
+		c.block("security.%v", err)
+		return
+	}
+	c.security = out
 }

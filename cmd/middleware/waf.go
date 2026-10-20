@@ -20,27 +20,32 @@ import (
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/guard"
 	"github.com/dcimorra/middleware-public/internal/proxy"
+	"github.com/dcimorra/middleware-public/internal/security"
 	"github.com/dcimorra/middleware-public/internal/settings"
 	"github.com/dcimorra/middleware-public/internal/traffic"
 	"github.com/dcimorra/middleware-public/internal/waf"
 )
 
-// The request chain (wire.go has the order) is inbound → waf → access →
-// traffic → proxy: the WAF refuses the abusive before anything else spends
-// on them, access closes the door the operator closed, and traffic counts
+// The request chain (wire.go has the order) is inbound → waf → security →
+// access → traffic → proxy: the WAF refuses the abusive before anything
+// else spends on them, security cuts probe paths and what the site does
+// not want by what it claims to be, access closes the door the operator
+// closed, and traffic counts
 // whatever came out, error pages included. The guard wraps nothing; it
 // only runs. These are the instances the API routes talk to (block,
 // policy, incidents), set when the app starts.
 var (
-	theWAF     *waf.WAF
-	theAccess  *access.Access
-	theTraffic *traffic.Recorder
-	theGuard   *guard.Guard
+	theWAF      *waf.WAF
+	theAccess   *access.Access
+	theSecurity *security.Door
+	theTraffic  *traffic.Recorder
+	theGuard    *guard.Guard
 )
 
 func init() {
 	hookBuilders = append(hookBuilders,
 		hookBuilder{Name: "waf", Order: orderWAF, Build: buildWAF},
+		hookBuilder{Name: "security", Order: orderSecurity, Build: buildSecurity},
 		hookBuilder{Name: "access", Order: orderAccess, Build: buildAccess},
 		hookBuilder{Name: "traffic", Order: orderTraffic, Build: buildTraffic},
 		hookBuilder{Name: "guard", Order: orderGuard, Build: buildGuard},
@@ -110,6 +115,27 @@ func buildWAF(a *app.App) app.Hook {
 	}
 	theWAF = w
 	return hook{wrap: w.Wrap, run: w.Run}
+}
+
+func buildSecurity(a *app.App) app.Hook {
+	d := security.New(security.Options{
+		Host:     proxy.Host,
+		ClientIP: edge.ClientIP,
+		Country:  edgeCountry,
+		Lookup: func(host string) (security.Site, bool) {
+			sn, ok := a.Engine.Lookup(host)
+			if !ok || sn.Manifest == nil {
+				return security.Site{}, false
+			}
+			site := security.Site{Domain: sn.Domain, Rules: sn.Manifest.Security, Title: sn.Manifest.Title}
+			if sn.Manifest.Notice != nil {
+				site.Theme = sn.Manifest.Notice.Theme
+			}
+			return site, true
+		},
+	})
+	theSecurity = d
+	return hook{wrap: d.Wrap}
 }
 
 func buildAccess(a *app.App) app.Hook {

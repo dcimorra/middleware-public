@@ -64,6 +64,16 @@ never shell strings. Paths are relative to the site folder.
     }
   },
 
+  "security": {
+    "countries": { "deny": ["RU"] },
+    "bots": { "deny": ["ai", "seo"], "except": ["Googlebot"], "no_ua": false,
+              "window": { "from": "00:00", "to": "07:00", "zone": "Europe/Madrid" } },
+    "browsers": { "allow": [] },
+    "agents": { "deny": ["scrapy"] },
+    "paths": ["/wp-login.php", "/xmlrpc.php"],
+    "message": ""
+  },
+
   "waf": {
     "rate": { "requests": 600, "window": "1m", "burst": 100 },
     "max_body": "20m",
@@ -217,6 +227,30 @@ process.
   because a skipped entry can leave an allow list empty, and an empty one
   admits everyone. Passwords are stored hashed; set them from the panel or
   the API, which hash what they are given.
+- `security` decides by what a caller claims to be, and is the softest door
+  on purpose: the country is the edge's and can be believed, the
+  User-Agent is written by the caller and can say anything. It clears out
+  what identifies itself (crawlers, AI crawlers, scripts), not anyone who
+  insists; `access` is for that. Four lists, all of which must pass:
+  `agents` (User-Agent fragments, two characters at least), `bots`
+  (families: `search`, `ai`, `social`, `seo`, `tools`, `monitors`,
+  `other` for anything that says bot, crawler or spider and is in no
+  table; `except` by robot name; `no_ua` closes requests without a
+  User-Agent; `window` lets the closed families in between two times in
+  `zone`, the machine's if empty), `browsers` (`edge`, `opera`, `samsung`,
+  `ie`, `firefox`, `chrome`, `safari`, `other`, `none`) and `countries`
+  (two letters, `XX` unknown, `T1` Tor). In each, deny first, and an allow
+  list with anything in it means only those. An allow list of countries
+  shuts out a request that arrives without one. A refused visitor gets 403
+  with a line that says why but not what the rule holds (`message`
+  replaces it); a robot refused by family with a window is told the hours.
+  Before all of that, every site answers 404 to what no website serves:
+  `.git/`, `.ssh/`, `.env*`, private keys, `/etc/passwd` and the like
+  (`GET /api/v1/security/catalog` lists them), plus the site's own
+  `paths`, matched by whole segments. `/.well-known` is never cut and
+  cannot be listed. An unknown family, browser, country or a malformed
+  time rejects the manifest. The last 50 refusals per site are kept in
+  memory for the panel.
 - `aliases` are served exactly like the site. A name that is already a site,
   or that two sites claim, is served by neither, and an event says so.
 

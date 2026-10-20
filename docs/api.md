@@ -228,6 +228,16 @@ through the house takes names off the internet.
 The routes answer 503 when the WAF did not start (a broken block list); the
 `waf.error` event says what to fix.
 
+## Security
+
+The rules are the manifest's `security` (docs/manifest.md) and are written
+through the manifest; these routes are what the panel reads beside them.
+
+| method | path | result |
+| --- | --- | --- |
+| GET | `/security/catalog` | → `{families: [{key, name, note}], robots: [{name, family}], browsers: [{key, name, note}], builtin_paths: [], your_country}` |
+| GET | `/sites/{domain}/security/blocks` | → `[{at, ip, reason, what, path, agent, country}]`, the last 50 refusals, newest first (kept in memory) |
+
 ## Agents
 
 | method | path | body / result |

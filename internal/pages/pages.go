@@ -271,6 +271,22 @@ var SiteCatalog = map[string]SiteEntry{
 	"hold-500":  {500, Broken, "Error", "Something went wrong on this site.", 0, 0, ""},
 	"forbidden": {403, Locked, "Restricted", "This address is not allowed to see this site.", 0, 0, ""},
 	"password":  {401, Locked, "Private", "This site is private. Enter its password to continue.", 0, 0, "noindex, nofollow"},
+	// The security door's. A probe for /.env is told there is nothing,
+	// the same page a static site gives for a missing file. The refusals
+	// say why in a way the visitor can act on ("not from your country"
+	// means reloading will not help) and never what the rule holds; and
+	// a refused robot must not carry an index away from here.
+	"notfound":        {404, Nothing, "Not found", "There is nothing at this address.", 0, 0, "noindex, nofollow"},
+	"refused-country": {403, Locked, "Closed", "This site cannot be opened from the country you are connecting from.", 0, 0, "noindex, nofollow"},
+	"refused-bot":     {403, Locked, "Closed", "This site is closed to robots. If you are a person, something in your browser says you are not.", 0, 0, "noindex, nofollow"},
+	"refused-browser": {403, Locked, "Closed", "This site cannot be opened with this browser. Please try another one.", 0, 0, "noindex, nofollow"},
+	"refused-agent":   {403, Locked, "Closed", "This site is closed to this program.", 0, 0, "noindex, nofollow"},
+}
+
+// RobotWindow is the line a refused robot reads when its family is let in
+// at certain hours.
+func RobotWindow(from, to, zone string) string {
+	return "Robots are let in between " + from + " and " + to + " (" + zone + " time)."
 }
 
 // ForSite builds a site's page by key. title is the site's name (its

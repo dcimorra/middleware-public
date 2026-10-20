@@ -44,6 +44,13 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 	if err := settings.Save(root, s); err != nil {
 		t.Fatal(err)
 	}
+	// A static site with a security section, asked through the listener
+	// further down: the door is a hook, and only the wired chain proves it
+	// sits where it should.
+	shop := filepath.Join(root, "sites", "shop.example")
+	os.MkdirAll(shop, 0o755)
+	os.WriteFile(filepath.Join(shop, "index.html"), []byte("<p>shop</p>"), 0o644)
+	os.WriteFile(filepath.Join(shop, "site.json"), []byte(`{"version":2,"security":{"bots":{"deny":["ai"]},"paths":["/wp-login.php"]}}`), 0o644)
 	a, err := app.New(root)
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +96,7 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		return resp.StatusCode, string(body)
 	}
-	sections := []string{"/sites", "/events", "/system", "/modules", "/inbound", "/inbound/certificates", "/waf", "/waf/traffic", "/agents", "/agents/capacity", "/chat/middleware", "/tasks", "/guard", "/openapi.json"}
+	sections := []string{"/sites", "/events", "/system", "/modules", "/inbound", "/inbound/certificates", "/waf", "/waf/traffic", "/security/catalog", "/agents", "/agents/capacity", "/chat/middleware", "/tasks", "/guard", "/openapi.json"}
 	for _, path := range sections {
 		code, body := get(path)
 		if code != 200 {
@@ -131,6 +138,42 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode == 0 || resp.StatusCode >= 500 {
 		t.Fatalf("unknown host through the chain: %d", resp.StatusCode)
+	}
+
+	// The security door, through the whole chain.
+	ask := func(path, ua string) int {
+		t.Helper()
+		req, _ := http.NewRequest("GET", "http://"+s.Listen+path, nil)
+		req.Host = "shop.example"
+		req.Header.Set("User-Agent", ua)
+		for wait := time.Now().Add(10 * time.Second); ; {
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			// The engine finds the site within a scan; until then the
+			// host is unknown.
+			if resp.StatusCode != http.StatusNotFound || path != "/" || time.Now().After(wait) {
+				return resp.StatusCode
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	browser := "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+	if code := ask("/", browser); code != 200 {
+		t.Fatalf("a browser on the shop got %d", code)
+	}
+	if code := ask("/", "Mozilla/5.0 (compatible; GPTBot/1.2; +https://openai.com/gptbot)"); code != 403 {
+		t.Errorf("an AI crawler got %d", code)
+	}
+	for _, p := range []string{"/.git/config", "/a/../.env", "/wp-login.php"} {
+		if code := ask(p, browser); code != 404 {
+			t.Errorf("%s got %d", p, code)
+		}
+	}
+	if code, body := get("/sites/shop.example/security/blocks"); code != 200 || !strings.Contains(body, "GPTBot") || !strings.Contains(body, `".git/"`) {
+		t.Errorf("the refusals are not listed: %d %s", code, body)
 	}
 
 	// The ready event carries what was wired.

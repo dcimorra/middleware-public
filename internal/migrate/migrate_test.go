@@ -226,3 +226,17 @@ func TestLoansAreCarried(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+func TestTheSecuritySectionIsCarried(t *testing.T) {
+	r := Convert("a.example", []byte(`{"kind":"static","security":{"countries":{"deny":["RU"]},"bots":{"deny":["ai"],"except":["Googlebot"],"window":{"from":"00:00","to":"07:00"}},"browsers":{"deny":[""]},"agents":{"deny":["scrapy"]},"paths":["/wp-login.php"],"message":"No."}}`))
+	if !r.Ready() {
+		t.Fatalf("%v", r.Blockers)
+	}
+	s := r.Manifest.Security
+	if s == nil || s.Countries.Deny[0] != "RU" || s.Bots.Window.Zone != "Europe/Madrid" || s.Browsers.Deny[0] != "none" || s.Paths[0] != "/wp-login.php" || s.Message != "No." {
+		t.Fatalf("%+v", s)
+	}
+	if r := Convert("a.example", []byte(`{"kind":"static","security":{"bots":{"deny":["ia"]}}}`)); r.Ready() {
+		t.Fatal("a family V1 would not have accepted either converted")
+	}
+}

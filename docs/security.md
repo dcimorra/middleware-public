@@ -81,6 +81,13 @@ attempts get 429 with `Retry-After` and are not checked at all. On top of
 that, at most two key derivations run at once in the whole installation, so
 guesses spread over many addresses queue instead of taking every site's CPU.
 
+**Probe paths.** Every site answers 404, before its process sees the
+request, to what no website serves: `.git/`, `.ssh/`, `.env*`, private keys,
+`/etc/passwd`, `/proc/self/`. A site adds its own prefixes in
+`security.paths`, and can close robot families, browsers and countries there
+too; that part trusts the User-Agent, so it filters what identifies itself
+and guards nothing.
+
 **WAF, in layers.** Layer 7 in the core, always on: rate limits per route
 with burst, body size limits, country and user-agent policies, a password or
 an allow list per route, and an "under attack" mode that challenges or

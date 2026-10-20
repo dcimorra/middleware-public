@@ -213,3 +213,13 @@ func TestAnUnreadableAddressRejectsTheManifest(t *testing.T) {
 		}
 	}
 }
+
+func TestAMisspeltSecurityRuleRejectsTheManifest(t *testing.T) {
+	if _, err := Parse([]byte(`{"version":2,"security":{"bots":{"deny":["ai","seo"]},"paths":["/wp-login.php"]}}`)); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Parse([]byte(`{"version":2,"security":{"bots":{"deny":["ia"]}}}`))
+	if err == nil || !strings.Contains(err.Error(), "security.bots.deny") {
+		t.Fatalf("a family that does not exist: %v", err)
+	}
+}

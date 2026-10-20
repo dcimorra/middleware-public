@@ -38,23 +38,25 @@ import (
 //
 // Request chain, outermost first: inbound (the ACME challenge and the
 // doors, before anything else sees the request), waf (refuse the abusive
-// before anything is spent on them), access (the door the operator
-// closed), traffic (count whatever came out, error pages included), then
+// before anything is spent on them), security (probe paths, robots,
+// browsers and countries: two lists are cheaper than a password), access
+// (the door the operator closed), traffic (count whatever came out, error pages included), then
 // the proxy. Everything after traffic wraps nothing and only runs: the
 // api hangs from the proxy's panel slot, the chat, the tasks and the
 // modules are services, the guard is a watchdog. The wire hook goes last
 // because it reaches into every instance the others created.
 const (
-	orderInbound = 10
-	orderWAF     = 20
-	orderAccess  = 30
-	orderTraffic = 40
-	orderAPI     = 50
-	orderChat    = 60
-	orderTasks   = 70
-	orderModules = 80
-	orderGuard   = 90
-	orderWire    = 100
+	orderInbound  = 10
+	orderWAF      = 20
+	orderSecurity = 25
+	orderAccess   = 30
+	orderTraffic  = 40
+	orderAPI      = 50
+	orderChat     = 60
+	orderTasks    = 70
+	orderModules  = 80
+	orderGuard    = 90
+	orderWire     = 100
 )
 
 func init() {
@@ -142,6 +144,7 @@ func buildWire(a *app.App) app.Hook {
 		srv.RegisterInbound(api.InboundOptions{Hook: inboundHook, DNS: cloudflareDNS{set: set}, Publisher: w.publisher})
 	}
 	srv.RegisterWAF(api.WAFOptions{WAF: theWAF, Traffic: theTraffic})
+	srv.RegisterSecurity(api.SecurityOptions{Door: theSecurity, Country: edgeCountry})
 	w.shots = shots.New(shots.Options{
 		DataDir: dataDir(a),
 		Bus:     a.Bus,

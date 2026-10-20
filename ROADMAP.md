@@ -30,8 +30,6 @@ What the tests only fake, to be run for real:
 
 ## 3. The door
 
-- The `security` block: bot families, browser lists, country allow lists,
-  per-site paths, built-in probe paths (`/.env`, `/.git`…), recent blocks.
 - Attack mode with proof of work, a key that survives restarts, `skip`
   paths, `until`, counters, and panel exemptions.
 - Panel access: passkeys (docs/security.md claims them), passkey-only, a
@@ -106,7 +104,10 @@ cgroup above.
 - **§3 The door**: an unreadable address or CIDR in `access` rejects the
   manifest instead of being skipped; one brake on password guessing for
   the panel and every site door (per domain, zone and address, a /64 for
-  IPv6), and at most two key derivations at once.
+  IPv6), and at most two key derivations at once; the `security` block
+  (robot families with exceptions and an hours window, browsers,
+  countries, User-Agent fragments, per-site paths, the house's probe
+  paths answered 404, the last refusals per site), converted by `migrate`.
 - **§4 Engine**: docker sites behind V1's walls at their own paths
   (proven on a rootless daemon), `middleware exec`, `needs`, task runs
   re-adopted and stoppable, agent turns in a cgroup of their own, rename,
