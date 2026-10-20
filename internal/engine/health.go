@@ -186,7 +186,7 @@ func probeHTTP(ctx context.Context, port int, hc manifest.Health) Check {
 		return c
 	}
 	resp.Body.Close()
-	if resp.StatusCode >= 500 {
+	if !hc.Healthy(resp.StatusCode) {
 		c.Error = fmt.Sprintf("answered %d", resp.StatusCode)
 		return c
 	}

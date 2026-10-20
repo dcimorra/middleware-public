@@ -545,3 +545,6 @@ details.section[open] summary { border-bottom: 1px solid var(--border); margin-b
 
 /* A short vertical list inside a key-value cell (published names). */
 .stack-sm{display:flex;flex-direction:column;gap:4px}
+
+/* A heading row in the sites list when sites have a manifest group. */
+.group-row th{background:var(--surface-2,transparent);font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted,inherit);text-align:left;padding:.5rem .75rem}

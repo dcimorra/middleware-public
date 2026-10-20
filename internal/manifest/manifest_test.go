@@ -176,3 +176,13 @@ func TestHostsCarryTheAliasesAndTheImplicitWww(t *testing.T) {
 		t.Fatal("a project has names")
 	}
 }
+
+func TestAnExpectedStatusIsTheOnlyHealthyOne(t *testing.T) {
+	if !(Health{}).Healthy(404) || (Health{}).Healthy(502) {
+		t.Fatal("default: below 500 is healthy")
+	}
+	h := Health{ExpectStatus: 204}
+	if h.Healthy(200) || !h.Healthy(204) {
+		t.Fatal("expect_status")
+	}
+}

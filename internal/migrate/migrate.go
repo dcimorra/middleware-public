@@ -144,7 +144,7 @@ func Convert(name string, data []byte) Result {
 		return r
 	}
 	c := &converter{r: &r}
-	m := &manifest.Manifest{Version: manifest.Version, Title: in.Title, Disabled: in.Disabled, WWW: in.WWW}
+	m := &manifest.Manifest{Version: manifest.Version, Title: in.Title, Group: in.Group, Disabled: in.Disabled, WWW: in.WWW}
 	c.blockers(&in)
 	c.serve(&in, m, name)
 	c.access(&in, m)
@@ -198,9 +198,6 @@ func present(raw json.RawMessage) bool {
 // blockers lists the V1 settings in use that V2 cannot honour yet, each
 // with the phase of docs/parity.md that brings it.
 func (c *converter) blockers(in *v1) {
-	if in.Group != "" {
-		c.block("group %q (panel groups; parity §7)", in.Group)
-	}
 	if in.App != "" {
 		c.block("app %q (apps; parity §8)", in.App)
 	}
@@ -279,9 +276,6 @@ func (c *converter) blockers(in *v1) {
 			c.claudeAPI = &manifest.ClaudeAPI{Tools: ca.Tools, DailyUSD: ca.DailyUSD, MaxChats: ca.MaxChats, Model: ca.Model, HideChats: ca.HideChats}
 		}
 	}
-	if in.Health.Expect != 0 {
-		c.block("health.expect_status %d (parity §4)", in.Health.Expect)
-	}
 }
 
 // serve converts what answers a request.
@@ -323,7 +317,7 @@ func (c *converter) serve(in *v1, m *manifest.Manifest, name string) {
 			EnvFromFile: in.EnvFromFile,
 			Port:        in.Port,
 		}
-		h := &manifest.Health{Path: in.Health.Path}
+		h := &manifest.Health{Path: in.Health.Path, ExpectStatus: in.Health.Expect}
 		if d, ok := c.duration("health.interval", in.Health.Interval); ok {
 			h.Interval = manifest.Duration(d)
 		}
@@ -333,7 +327,7 @@ func (c *converter) serve(in *v1, m *manifest.Manifest, name string) {
 			// own. Carrying "8s" over would fail every cold start.
 			c.note("health.timeout %s dropped: in V2 it is the start timeout (default 60s)", in.Health.Timeout)
 		}
-		if h.Path != "" || h.Interval != 0 {
+		if h.Path != "" || h.Interval != 0 || h.ExpectStatus != 0 {
 			run.Health = h
 		}
 		if in.Root != "" {

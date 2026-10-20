@@ -552,5 +552,6 @@
   "chat.killAll": "Kill all",
   "chat.killed": "{n} process(es) ended",
   "tasks.stop": "Stop",
-  "tasks.stopped": "{name} stopped"
+  "tasks.stopped": "{name} stopped",
+  "sites.ungrouped": "Other sites"
 }

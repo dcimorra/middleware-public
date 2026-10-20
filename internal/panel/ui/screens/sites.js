@@ -30,7 +30,10 @@ export function sitesScreen({ query }) {
     const all = store.siteList();
     if (!store.get("sitesLoaded")) { clear(container).append(loading()); return; }
     const q = filter.trim().toLowerCase();
-    const list = q ? all.filter((s) => s.domain.toLowerCase().includes(q) || siteMode(s).includes(q)) : all;
+    const groupOf = (s) => (s.manifest && s.manifest.group) || "";
+    const list = (q ? all.filter((s) => s.domain.toLowerCase().includes(q) || siteMode(s).includes(q) || groupOf(s).toLowerCase().includes(q)) : all)
+      // Grouped sites first, by group, then the rest; by domain inside.
+      .slice().sort((a, b) => (groupOf(a) === "") - (groupOf(b) === "") || groupOf(a).localeCompare(groupOf(b)) || a.domain.localeCompare(b.domain));
     clear(container);
     if (all.length === 0) {
       container.append(empty(t("sites.emptyTitle"), t("sites.emptyHint"), h("button", { type: "button", class: "btn primary", onClick: newSite }, icon("plus"), t("sites.new")), "globe"));
@@ -42,7 +45,16 @@ export function sitesScreen({ query }) {
       count.textContent = "";
       return;
     }
-    const rows = list.map((s) => row(s));
+    const rows = [];
+    let current = null;
+    const grouped = list.some((s) => groupOf(s));
+    for (const s of list) {
+      if (grouped && groupOf(s) !== current) {
+        current = groupOf(s);
+        rows.push(h("tr", { class: "group-row" }, h("th", { colspan: "6", scope: "colgroup" }, current || t("sites.ungrouped"))));
+      }
+      rows.push(row(s));
+    }
     container.append(table([
       { label: t("sites.col.domain") },
       { label: t("sites.col.mode") },

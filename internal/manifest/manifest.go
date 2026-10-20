@@ -28,6 +28,9 @@ const Version = 2
 type Manifest struct {
 	Version int    `json:"version"`
 	Title   string `json:"title,omitempty"`
+	// Group puts the site under a heading in the panel's list (a client,
+	// a family of projects). Nothing else reads it.
+	Group string `json:"group,omitempty"`
 	// Aliases are more names this site answers to, served the same way
 	// and published with it.
 	Aliases []string `json:"aliases,omitempty"`
@@ -98,6 +101,18 @@ type Health struct {
 	Timeout Duration `json:"timeout,omitempty"`
 	// Interval is how often a running instance is asked, once it is up.
 	Interval Duration `json:"interval,omitempty"`
+	// ExpectStatus, when set, is the only answer that counts as healthy;
+	// otherwise anything below 500 does (a 404 on / still means the
+	// process answers).
+	ExpectStatus int `json:"expect_status,omitempty"`
+}
+
+// Healthy says whether an HTTP status passes the check.
+func (h Health) Healthy(status int) bool {
+	if h.ExpectStatus != 0 {
+		return status == h.ExpectStatus
+	}
+	return status < 500
 }
 
 // Restart bounds the backoff after a crash.

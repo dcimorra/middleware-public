@@ -87,7 +87,7 @@ func WaitReady(ctx context.Context, inst Instance, health manifest.Health, timeo
 			resp, err := client.Get("http://" + addr + health.Path)
 			if err == nil {
 				resp.Body.Close()
-				if resp.StatusCode < 500 {
+				if health.Healthy(resp.StatusCode) {
 					return nil
 				}
 			}
