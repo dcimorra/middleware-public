@@ -101,6 +101,21 @@ engine hand over without a restart: `next build` with
 pointer the build runs in place and the instance is restarted. A second
 deploy while one runs answers 409.
 
+## Repositories
+
+The git repositories inside the sites (the folder and up to three levels
+below, not in dependencies, not through links). Marked ones are pulled every
+two minutes: fetch, then merge the upstream, never reset or force; a merge
+that collides is undone with `merge --abort` and recorded, and the first
+failure of a streak is a `repo.failed` event. Pulling is not deploying.
+
+| method | path | result |
+| --- | --- | --- |
+| GET | `/repos` | → `[{id, domain, path, branch, remote, upstream, head: {hash, subject, author, at}, ahead, behind, dirty, auto, last?: {at, ok, message, pulled, failures}, error?}]`; ahead and behind as of the last fetch, the remote without credentials |
+| GET | `/repos/{id}/log` | → the last 30 commits |
+| POST | `/repos/{id}/pull` | → the repository after a fetch and merge now |
+| PUT | `/repos/{id}/auto` | `{enabled}` → the repository; marking pulls once at once. Kept in `data/repos.json` |
+
 ## Events
 
 | method | path | result |

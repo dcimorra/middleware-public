@@ -28,6 +28,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/modules/vpn"
 	"github.com/dcimorra/middleware-public/internal/pages"
 	"github.com/dcimorra/middleware-public/internal/publish"
+	"github.com/dcimorra/middleware-public/internal/repos"
 	"github.com/dcimorra/middleware-public/internal/settings"
 	"github.com/dcimorra/middleware-public/internal/shots"
 	"github.com/dcimorra/middleware-public/internal/sitetoken"
@@ -104,6 +105,7 @@ type wireHook struct {
 	set       *moduleSet
 	publisher *publish.Publisher
 	shots     *shots.Shotter
+	repos     *repos.Manager
 }
 
 func buildWire(a *app.App) app.Hook {
@@ -189,6 +191,19 @@ func buildWire(a *app.App) app.Hook {
 		srv.RegisterTasks(api.TasksOptions{Scheduler: taskScheduler, Root: a.Root})
 	}
 	srv.RegisterGuard(api.GuardOptions{Guard: theGuard})
+	// The repositories inside the sites, and the watcher that keeps the
+	// marked ones pulled (internal/repos).
+	rm := repos.New(repos.Options{DataDir: dataDir(a), Bus: a.Bus, Sites: func() []repos.Site {
+		var out []repos.Site
+		for _, sn := range a.Engine.Sites() {
+			if sn.Manifest != nil {
+				out = append(out, repos.Site{Domain: sn.Domain, Dir: sn.Dir})
+			}
+		}
+		return out
+	}})
+	srv.RegisterRepos(rm)
+	w.repos = rm
 	// A block at layer 7 is pushed to the kernel through the helper, so
 	// a flood stops before it reaches Go. Without the helper the firewall
 	// says so once and the block stays at layer 7.
@@ -225,6 +240,9 @@ func (w *wireHook) Run(ctx context.Context, a *app.App) error {
 	}
 	if w.shots != nil {
 		go w.shots.Run(ctx)
+	}
+	if w.repos != nil {
+		go w.repos.Run(ctx)
 	}
 	var enabled []string
 	if w.set != nil {

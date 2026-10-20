@@ -65,7 +65,6 @@ cgroup above.
 ## 7. The panel
 
 - Per site: a cache screen (waits for §2's house cache).
-- A repos list and a pull watcher.
 - A Spanish catalogue beside `en.json`.
 - An installable app (web manifest, service worker for push).
 
@@ -112,7 +111,9 @@ cgroup above.
   it and restorable, run a command, and Security and Access screens;
   bulk delete, typed count and archive by default; service doors as
   scoped tokens (read, restart, deploy, optionally for one site), checked
-  by the API on the route it matched, from the panel and the CLI.
+  by the API on the route it matched, from the panel and the CLI; the
+  repositories inside the sites and a pull watcher that only ever fetches
+  and merges, undoing a merge that collides.
 - **§4 Engine**: docker sites behind V1's walls at their own paths
   (proven on a rootless daemon), `middleware exec`, `needs`, task runs
   re-adopted and stoppable, agent turns in a cgroup of their own, rename,
