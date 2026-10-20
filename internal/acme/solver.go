@@ -23,7 +23,7 @@ const ChallengePath = "/.well-known/acme-challenge/"
 
 // Solver presents a challenge for the CA to find.
 type Solver interface {
-	// Type is "http-01" or "tls-alpn-01".
+	// Type is "http-01", "tls-alpn-01" or "dns-01".
 	Type() string
 	Present(ctx context.Context, domain, token, keyAuth string) error
 	CleanUp(ctx context.Context, domain, token string) error

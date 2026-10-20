@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -347,5 +348,49 @@ func TestARateLimitedCAIsReportedAsSuchAndBackedOff(t *testing.T) {
 	ev := bus.Recent()
 	if len(ev) != 1 || ev[0].Type != "cert.failed" || ev[0].Level != "error" {
 		t.Fatalf("events %+v", ev)
+	}
+}
+
+// A name that does not point here yet (a new site on the ports door, a
+// domain still on the tunnel) gets its certificate through a TXT record.
+func TestDNS01IsPreferredForTheNamesItCoversAndCleansUp(t *testing.T) {
+	ca := acmetest.New(t)
+	var mu sync.Mutex
+	txt := map[string][]string{}
+	ca.TXT = func(fqdn string) []string { mu.Lock(); defer mu.Unlock(); return txt[fqdn] }
+	// HTTP-01 would fail: nothing listens where the CA knocks.
+	ca.ValidateAddr = "127.0.0.1:1"
+	solver := acme.NewHTTP01()
+	iss := &certs.ACMEIssuer{Dir: t.TempDir(), Directory: ca.URL, HTTP01: solver}
+	iss.SetDNS01(&acme.DNS01{
+		Covers: func(d string) bool { return strings.HasSuffix(d, ".covered.test") },
+		Set: func(_ context.Context, fqdn, value string) (func(context.Context) error, error) {
+			mu.Lock()
+			txt[fqdn] = append(txt[fqdn], value)
+			mu.Unlock()
+			return func(context.Context) error { mu.Lock(); delete(txt, fqdn); mu.Unlock(); return nil }, nil
+		},
+		Wait: func(context.Context, string, string) error { return nil },
+	})
+	key, _ := acme.GenerateKey()
+	if _, err := iss.Issue(context.Background(), "a.covered.test", key); err != nil {
+		t.Fatal(err)
+	}
+	if ca.DNSSolved() != 1 {
+		t.Fatalf("dns-01 validations: %d", ca.DNSSolved())
+	}
+	mu.Lock()
+	left := len(txt)
+	mu.Unlock()
+	if left != 0 {
+		t.Fatalf("the TXT record was left behind: %v", txt)
+	}
+	// A name outside the provider's zones falls back to http-01, which
+	// fails here: the point is that dns-01 was not attempted for it.
+	if _, err := iss.Issue(context.Background(), "b.elsewhere.test", key); err == nil {
+		t.Fatal("http-01 to nowhere succeeded")
+	}
+	if ca.DNSSolved() != 1 {
+		t.Fatal("dns-01 was tried for a name the provider does not cover")
 	}
 }

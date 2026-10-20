@@ -18,16 +18,12 @@ func (c *Client) Obtain(ctx context.Context, domains []string, key crypto.Signer
 	if len(solvers) == 0 {
 		return nil, errors.New("acme: no solver")
 	}
-	byType := map[string]Solver{}
-	for _, s := range solvers {
-		byType[s.Type()] = s
-	}
 	order, err := c.NewOrder(ctx, domains)
 	if err != nil {
 		return nil, err
 	}
 	for _, url := range order.Authorizations {
-		if err := c.authorize(ctx, url, byType); err != nil {
+		if err := c.authorize(ctx, url, solvers); err != nil {
 			return nil, err
 		}
 	}
@@ -43,7 +39,15 @@ func (c *Client) Obtain(ctx context.Context, domains []string, key crypto.Signer
 }
 
 // authorize completes one authorization, or returns why it could not.
-func (c *Client) authorize(ctx context.Context, url string, solvers map[string]Solver) error {
+//
+// Solvers are tried in the caller's order, not the CA's: the caller knows
+// which proof works from here (dns-01 before the name points at this
+// machine; http-01 once it does), and the CA's order (http-01 first, for
+// Let's Encrypt) knows nothing about where the name points. A solver that
+// does not handle the domain is passed over. A challenge the CA already
+// marked invalid is not retried: the whole authorization is dead and a
+// new order is the only way forward.
+func (c *Client) authorize(ctx context.Context, url string, solvers []Solver) error {
 	a, err := c.GetAuthorization(ctx, url)
 	if err != nil {
 		return err
@@ -52,28 +56,29 @@ func (c *Client) authorize(ctx context.Context, url string, solvers map[string]S
 		return nil
 	}
 	domain := a.Identifier.Value
-	// Solvers are tried in the order the CA lists the challenges, which
-	// for Let's Encrypt puts http-01 first. A challenge the CA already
-	// marked invalid is not retried: the whole authorization is dead and
-	// a new order is the only way forward.
-	for _, ch := range a.Challenges {
-		s, ok := solvers[ch.Type]
-		if !ok || ch.Status == "invalid" {
+	for _, s := range solvers {
+		if h, ok := s.(Handler); ok && !h.Handles(domain) {
 			continue
 		}
-		keyAuth, err := KeyAuthorization(ch.Token, &c.Key.PublicKey)
-		if err != nil {
+		for _, ch := range a.Challenges {
+			if ch.Type != s.Type() || ch.Status == "invalid" {
+				continue
+			}
+			keyAuth, err := KeyAuthorization(ch.Token, &c.Key.PublicKey)
+			if err != nil {
+				return err
+			}
+			if err := s.Present(ctx, domain, ch.Token, keyAuth); err != nil {
+				_ = s.CleanUp(context.WithoutCancel(ctx), domain, ch.Token)
+				return fmt.Errorf("acme: present %s for %s: %w", ch.Type, domain, err)
+			}
+			err = c.Accept(ctx, ch)
+			if err == nil {
+				_, err = c.WaitAuthorization(ctx, url)
+			}
+			_ = s.CleanUp(context.WithoutCancel(ctx), domain, ch.Token)
 			return err
 		}
-		if err := s.Present(ctx, domain, ch.Token, keyAuth); err != nil {
-			return fmt.Errorf("acme: present %s for %s: %w", ch.Type, domain, err)
-		}
-		err = c.Accept(ctx, ch)
-		if err == nil {
-			_, err = c.WaitAuthorization(ctx, url)
-		}
-		_ = s.CleanUp(context.WithoutCancel(ctx), domain, ch.Token)
-		return err
 	}
 	types := make([]string, 0, len(a.Challenges))
 	for _, ch := range a.Challenges {

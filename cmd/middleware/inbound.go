@@ -19,6 +19,10 @@ import (
 // inboundHook is the doors of the running process, for the API routes.
 var inboundHook *inbound.Hook
 
+// acmeIssuer is kept so the wiring can plug in dns-01 once the DNS
+// module is up.
+var acmeIssuer *certs.ACMEIssuer
+
 func init() {
 	hookBuilders = append(hookBuilders, hookBuilder{Name: "inbound", Order: orderInbound, Build: buildInbound})
 	subcommands["inbound"] = inboundCmd
@@ -40,14 +44,15 @@ func buildInbound(a *app.App) app.Hook {
 		fmt.Fprintln(os.Stderr, "middleware: inbound:", err)
 		st = inbound.DefaultState()
 	}
-	store := certs.New(certDir, &certs.ACMEIssuer{
+	acmeIssuer = &certs.ACMEIssuer{
 		Dir:       certDir,
 		Directory: st.ACME.Directory,
 		Email:     st.ACME.Email,
 		HTTP01:    solver,
 		TLSALPN:   alpn,
 		UserAgent: "middleware/" + Version,
-	})
+	}
+	store := certs.New(certDir, acmeIssuer)
 	store.ALPN = alpn
 	store.Bus = a.Bus
 	panel := a.Settings.PanelDomain

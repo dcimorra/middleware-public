@@ -32,6 +32,11 @@ type ACMEIssuer struct {
 	HTTP01 *acme.HTTP01
 	// TLSALPN answers on 443; optional.
 	TLSALPN *acme.TLSALPN01
+	// dns01 writes TXT records through a DNS provider; optional, and set
+	// once the provider's module is up (SetDNS01). It is tried first for
+	// the names it covers, because it is the one proof that works before
+	// a name points at this machine.
+	dns01 *acme.DNS01
 	// UserAgent is what the CA logs.
 	UserAgent string
 
@@ -51,6 +56,11 @@ func (i *ACMEIssuer) Issue(ctx context.Context, domain string, key crypto.Signer
 		return nil, err
 	}
 	var solvers []acme.Solver
+	i.mu.Lock()
+	if i.dns01 != nil {
+		solvers = append(solvers, i.dns01)
+	}
+	i.mu.Unlock()
 	if i.HTTP01 != nil {
 		solvers = append(solvers, i.HTTP01)
 	}
@@ -61,6 +71,13 @@ func (i *ACMEIssuer) Issue(ctx context.Context, domain string, key crypto.Signer
 		return nil, errors.New("certs: issuer has no solver")
 	}
 	return c.Obtain(ctx, []string{domain}, key, solvers...)
+}
+
+// SetDNS01 plugs in (or, with nil, removes) the dns-01 solver.
+func (i *ACMEIssuer) SetDNS01(s *acme.DNS01) {
+	i.mu.Lock()
+	i.dns01 = s
+	i.mu.Unlock()
 }
 
 func (i *ACMEIssuer) directory() string {

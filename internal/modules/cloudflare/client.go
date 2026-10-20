@@ -596,3 +596,17 @@ func (c *Client) Covers(ctx context.Context, domain string) (bool, error) {
 	_, err = MatchZone(zones, domain)
 	return err == nil, nil
 }
+
+// SetTXT writes a TXT record (an ACME dns-01 challenge) and returns how to
+// remove exactly that record, leaving any other TXT on the name alone.
+func (c *Client) SetTXT(ctx context.Context, name, value string) (func(context.Context) error, error) {
+	zone, err := c.FindZone(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	var out Record
+	if _, err := c.do(ctx, http.MethodPost, "/zones/"+url.PathEscape(zone.ID)+"/dns_records", Record{Type: "TXT", Name: name, Content: value, TTL: 60}, &out); err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context) error { return c.DeleteRecord(ctx, zone.ID, out.ID) }, nil
+}

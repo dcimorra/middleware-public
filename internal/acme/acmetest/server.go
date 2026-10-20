@@ -41,6 +41,10 @@ type Server struct {
 	// the domain as Host header. Empty means every challenge passes
 	// without a request, for tests that are not about the door.
 	ValidateAddr string
+	// TXT, when set, makes the CA offer dns-01 too (after http-01, as
+	// Let's Encrypt lists them) and validate it by looking up the TXT
+	// records of _acme-challenge.<domain> through this function.
+	TXT func(fqdn string) []string
 
 	rootKey *ecdsa.PrivateKey
 	srv     *httptest.Server
@@ -54,6 +58,7 @@ type Server struct {
 	rejectNonce int
 	rateLimited bool
 	issued      int
+	dnsSolved   int
 }
 
 type order struct {
@@ -115,7 +120,7 @@ func New(t testing.TB) *Server {
 	mux.HandleFunc("POST /new-order", s.newOrder)
 	mux.HandleFunc("POST /order/{id}", s.getOrder)
 	mux.HandleFunc("POST /authz/{id}", s.getAuthz)
-	mux.HandleFunc("POST /chall/{id}", s.challenge)
+	mux.HandleFunc("POST /chall/{id}/{type}", s.challenge)
 	mux.HandleFunc("POST /finalize/{id}", s.finalize)
 	mux.HandleFunc("POST /cert/{id}", s.certificate)
 	s.srv = httptest.NewServer(mux)
@@ -405,16 +410,24 @@ func (s *Server) getOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) authzJSON(a *authz) map[string]any {
-	ch := map[string]any{
-		"type": "http-01", "url": s.url("/chall/" + strconv.Itoa(a.id)), "token": a.token, "status": a.status,
+	types := []string{"http-01"}
+	if s.TXT != nil {
+		types = append(types, "dns-01")
 	}
-	if a.problem != nil {
-		ch["error"] = a.problem
+	var chs []any
+	for _, typ := range types {
+		ch := map[string]any{
+			"type": typ, "url": s.url("/chall/" + strconv.Itoa(a.id) + "/" + typ), "token": a.token, "status": a.status,
+		}
+		if a.problem != nil {
+			ch["error"] = a.problem
+		}
+		chs = append(chs, ch)
 	}
 	return map[string]any{
 		"identifier": acme.Identifier{Type: "dns", Value: a.domain},
 		"status":     a.status,
-		"challenges": []any{ch},
+		"challenges": chs,
 	}
 }
 
@@ -467,9 +480,23 @@ func (s *Server) challenge(w http.ResponseWriter, r *http.Request) {
 	want, _ := acme.KeyAuthorization(a.token, pub)
 	s.mu.Lock()
 	addr := s.ValidateAddr
+	txt := s.TXT
 	s.mu.Unlock()
 	var problem *acme.Problem
-	if addr != "" {
+	typ := r.PathValue("type")
+	if typ == "dns-01" {
+		s.mu.Lock()
+		s.dnsSolved++
+		s.mu.Unlock()
+		digest := acme.DNS01Value(want)
+		found := false
+		for _, v := range txt("_acme-challenge." + a.domain) {
+			found = found || v == digest
+		}
+		if !found {
+			problem = &acme.Problem{Type: "urn:ietf:params:acme:error:unauthorized", Detail: "no TXT record with the key authorization digest", Status: 403}
+		}
+	} else if addr != "" {
 		got, err := fetch(addr, a.domain, a.token)
 		if err != nil {
 			problem = &acme.Problem{Type: "urn:ietf:params:acme:error:connection", Detail: err.Error(), Status: 400}
@@ -496,7 +523,21 @@ func (s *Server) challenge(w http.ResponseWriter, r *http.Request) {
 	}
 	out := s.authzJSON(a)
 	s.mu.Unlock()
+	for _, ch := range out["challenges"].([]any) {
+		if ch.(map[string]any)["type"] == typ {
+			s.reply(w, 200, ch)
+			return
+		}
+	}
 	s.reply(w, 200, out["challenges"].([]any)[0])
+}
+
+// DNSSolved counts dns-01 validations, so a test can tell which
+// challenge the client chose.
+func (s *Server) DNSSolved() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dnsSolved
 }
 
 func fetch(addr, domain, token string) (string, error) {

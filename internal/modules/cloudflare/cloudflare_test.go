@@ -316,3 +316,23 @@ func TestUnpublishRemovesOnlyWhatPointsAtThisHouse(t *testing.T) {
 		t.Fatal("a name in no known zone is covered")
 	}
 }
+
+func TestAChallengeRecordIsRemovedAloneLeavingOtherTXT(t *testing.T) {
+	f := newFakeAPI()
+	defer f.srv.Close()
+	f.records["z1"] = []Record{{ID: "keep", Type: "TXT", Name: "_acme-challenge.a.example.com", Content: "someone else's"}}
+	c := f.client()
+	remove, err := c.SetTXT(context.Background(), "_acme-challenge.a.example.com", "digest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.records["z1"]) != 2 {
+		t.Fatalf("records: %+v", f.records["z1"])
+	}
+	if err := remove(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.records["z1"]) != 1 || f.records["z1"][0].ID != "keep" {
+		t.Fatalf("records after removal: %+v", f.records["z1"])
+	}
+}

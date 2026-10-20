@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/acme"
 	"github.com/dcimorra/middleware-public/internal/api"
 	"github.com/dcimorra/middleware-public/internal/app"
 	"github.com/dcimorra/middleware-public/internal/deps"
@@ -118,6 +120,9 @@ func buildWire(a *app.App) app.Hook {
 			chatManager.SetPath(set.Deps.Path)
 		}
 		go set.Deps.Run(context.Background())
+	}
+	if acmeIssuer != nil {
+		acmeIssuer.SetDNS01(dns01For(cloudflareDNS{set: set}))
 	}
 	if inboundHook != nil {
 		w.publisher = buildPublisher(a, set)
@@ -314,6 +319,44 @@ var (
 	_ api.DNSProvider = cloudflareDNS{}
 	_ publish.DNS     = cloudflareDNS{}
 )
+
+// dns01For is the ACME dns-01 solver over the cloudflare module, asked
+// each time whether the module is on and which zones it sees, so enabling
+// it while the process runs is enough. The zone list is cached for a few
+// minutes: Covers is asked once per name per order.
+func dns01For(d cloudflareDNS) *acme.DNS01 {
+	var mu sync.Mutex
+	var zones []cloudflare.Zone
+	var fetched time.Time
+	return &acme.DNS01{
+		Covers: func(domain string) bool {
+			c, err := d.client()
+			if err != nil {
+				return false
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if time.Since(fetched) > 5*time.Minute {
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				z, err := c.Zones(ctx)
+				cancel()
+				if err != nil {
+					return false
+				}
+				zones, fetched = z, time.Now()
+			}
+			_, err = cloudflare.MatchZone(zones, domain)
+			return err == nil
+		},
+		Set: func(ctx context.Context, fqdn, value string) (func(context.Context) error, error) {
+			c, err := d.client()
+			if err != nil {
+				return nil, err
+			}
+			return c.SetTXT(ctx, fqdn, value)
+		},
+	}
+}
 
 // buildPublisher is the one place names are published. Its DNS is the
 // cloudflare module while it is enabled, and nothing otherwise: names are
