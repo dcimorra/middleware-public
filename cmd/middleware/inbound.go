@@ -12,6 +12,8 @@ import (
 	"github.com/dcimorra/middleware-public/internal/acme"
 	"github.com/dcimorra/middleware-public/internal/app"
 	"github.com/dcimorra/middleware-public/internal/certs"
+	"github.com/dcimorra/middleware-public/internal/edge"
+	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/inbound"
 	"github.com/dcimorra/middleware-public/internal/settings"
 )
@@ -34,6 +36,11 @@ func init() {
 // requested for names the engine serves or the panel's own, so the CA's
 // quota is spent on this installation and nobody else.
 func buildInbound(a *app.App) app.Hook {
+	// The edge's ranges come first: the inbound hook is the outermost and
+	// every hook after it asks the edge who the client is.
+	if n, used := edge.Load(filepath.Join(a.Root, "data", "edge", "cloudflare-ips.txt")); used {
+		a.Bus.Emit(events.Event{Type: "edge.ranges", Actor: "engine", Message: fmt.Sprintf("%d edge ranges from data/edge/cloudflare-ips.txt", n)})
+	}
 	certDir := filepath.Join(a.Root, "data", "certs")
 	solver := acme.NewHTTP01()
 	alpn := acme.NewTLSALPN01()

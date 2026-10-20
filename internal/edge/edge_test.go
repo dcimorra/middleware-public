@@ -3,6 +3,7 @@ package edge
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 )
 
@@ -81,5 +82,34 @@ func TestClientIPTrustsHeadersOnlyFromLoopback(t *testing.T) {
 		if got := ClientIP(r).String(); got != tc.want {
 			t.Errorf("%s %v: got %s, want %s", tc.remote, tc.hdr, got, tc.want)
 		}
+	}
+}
+
+func TestTheOrangeCloudIsBelievedAndNobodyElseOnThePortsDoor(t *testing.T) {
+	cf := from("172.64.10.1:443", map[string]string{"CF-Connecting-IP": "198.51.100.4", "CF-IPCountry": "es"})
+	if ip := ClientIP(cf); ip.String() != "198.51.100.4" || Country(cf) != "ES" {
+		t.Fatalf("through Cloudflare: %s %s", ip, Country(cf))
+	}
+	direct := from("8.8.8.8:443", map[string]string{"CF-Connecting-IP": "198.51.100.4"})
+	if ip := ClientIP(direct); ip.String() != "8.8.8.8" {
+		t.Fatalf("a direct client named its address: %s", ip)
+	}
+}
+
+func TestARangesFileReplacesTheListAndABadOneDoesNot(t *testing.T) {
+	defer ranges.Store(ptr(parseRanges(cloudflareRanges)))
+	dir := t.TempDir()
+	bad := dir + "/bad.txt"
+	os.WriteFile(bad, []byte("not a range\n"), 0o644)
+	if _, used := Load(bad); used {
+		t.Fatal("a file with no range replaced the list")
+	}
+	good := dir + "/good.txt"
+	os.WriteFile(good, []byte("# ours\n192.0.2.0/24\n"), 0o644)
+	if n, used := Load(good); !used || n != 1 {
+		t.Fatalf("loaded %d, used %v", n, used)
+	}
+	if !Trusted(from("192.0.2.9:1", nil)) || Trusted(from("172.64.10.1:1", nil)) {
+		t.Fatal("the file's list is not the one in force")
 	}
 }
