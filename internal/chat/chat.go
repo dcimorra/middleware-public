@@ -280,6 +280,7 @@ func (m *Manager) Send(domain, text, model string) (string, error) {
 		SessionID: c.SessionID,
 		System:    Preamble(domain, s.Workdir, s.Jail),
 		Jail:      s.Jail,
+		Env:       map[string]string{"PATH": agentPath()},
 	}
 	run, err := provider.Start(ctx, req)
 	if err != nil {
@@ -387,6 +388,28 @@ func (m *Manager) emit(typ, domain, level, msg string, data map[string]any) {
 	m.opts.Bus.Emit(events.Event{Type: typ, Subject: domain, Actor: "agent", Level: level, Message: msg, Data: data})
 }
 
+// agentPath is the PATH the agent runs with: the supervisor's, plus the
+// folder this binary lives in when it is not there yet, so `middleware
+// site add` works from a conversation whether the binary was installed
+// under /usr/local/bin or is being run from a build folder.
+func agentPath() string {
+	path := os.Getenv("PATH")
+	exe, err := os.Executable()
+	if err != nil {
+		return path
+	}
+	dir := filepath.Dir(exe)
+	for _, p := range filepath.SplitList(path) {
+		if p == dir {
+			return path
+		}
+	}
+	if path == "" {
+		return dir
+	}
+	return path + string(os.PathListSeparator) + dir
+}
+
 func newID() string {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -403,7 +426,10 @@ func Preamble(domain, workdir string, j agent.Jail) string {
 		b.WriteString("You are working on the middleware installation itself, the supervisor that serves every site on this machine. ")
 		b.WriteString("Your working directory is the installation root: " + workdir + ". ")
 		b.WriteString("You may read and edit the installation's own files, its settings and its tasks. ")
-		b.WriteString("You must not touch any site's project folder under sites/: each site has its own conversation for that.\n")
+		b.WriteString("You may create new sites, in either of two ways: make the folder sites/<domain>/ with the project inside and a site.json (the engine picks it up within a few seconds), ")
+		b.WriteString("or run `middleware site add <domain> --template <static|node|go|docker>` or `middleware site add <domain> --manifest -` with the manifest on stdin; the command talks to the supervisor over its unix socket and needs no credentials. ")
+		b.WriteString("Once a site exists, hand detailed work on it to that site's own conversation unless you are asked to continue yourself. ")
+		b.WriteString("You must not edit a site that already existed when this turn began: each of those has its own conversation, and the paths listed below are denied.\n")
 	} else {
 		b.WriteString("You are working on the site " + domain + ", served by the middleware on this machine. ")
 		b.WriteString("Your working directory is the site's folder: " + workdir + ". The whole project lives there, including site.json, its manifest. ")

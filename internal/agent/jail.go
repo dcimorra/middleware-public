@@ -27,8 +27,12 @@ type Jail struct {
 // NewJail builds the jail for workdir inside root. Siblings are listed at
 // call time, so a site added after this installation started is denied
 // the next turn without a restart. For the installation's own conversation
-// (workdir == root) the sites folder is the only thing denied: that
-// conversation edits the house but never a tenant.
+// (workdir == root) every site that exists when the turn starts is denied
+// one by one, never sites/ itself: that conversation may create a site (a
+// new folder with a site.json, which the engine picks up on its next
+// tick) but never edit a tenant that was already there. Its data (the
+// credentials box, the other homes, the conversations) and the modules
+// are denied too; the rest of the root, tasks included, is its own.
 func NewJail(root, workdir, home string) Jail {
 	root = absolute(root)
 	workdir = absolute(workdir)
@@ -36,20 +40,41 @@ func NewJail(root, workdir, home string) Jail {
 		home = absolute(home)
 	}
 	j := Jail{SiteDir: workdir, Home: home}
-	if workdir == root {
-		j.Deny = []string{filepath.Join(root, "sites")}
-		return j
-	}
 	seen := map[string]bool{}
 	deny := func(p string) {
 		p = filepath.Clean(p)
-		if p == workdir || isUnder(p, workdir) || isUnder(workdir, p) || p == home || isUnder(home, p) {
+		if p == workdir || p == home || isUnder(home, p) {
+			return
+		}
+		if workdir != root && (isUnder(p, workdir) || isUnder(workdir, p)) {
 			return
 		}
 		if !seen[p] {
 			seen[p] = true
 			j.Deny = append(j.Deny, p)
 		}
+	}
+	if workdir == root {
+		for _, ent := range readDir(root) {
+			p := filepath.Join(root, ent)
+			switch ent {
+			case "sites", "data":
+				for _, sub := range readDir(p) {
+					q := filepath.Join(p, sub)
+					if ent == "data" && sub == "homes" {
+						for _, h := range readDir(q) {
+							deny(filepath.Join(q, h))
+						}
+						continue
+					}
+					deny(q)
+				}
+			case "modules":
+				deny(p)
+			}
+		}
+		sort.Strings(j.Deny)
+		return j
 	}
 	for _, ent := range readDir(root) {
 		p := filepath.Join(root, ent)

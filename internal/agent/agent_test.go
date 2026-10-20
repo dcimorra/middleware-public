@@ -49,11 +49,33 @@ func TestASiteJailDeniesSiblingsDataAndTheRootButNotItself(t *testing.T) {
 	}
 }
 
-func TestTheMiddlewareJailDeniesOnlyTheSitesFolder(t *testing.T) {
+func TestTheMiddlewareJailDeniesEachExistingSiteButNotTheSitesFolder(t *testing.T) {
 	root := makeRoot(t)
-	j := NewJail(root, root, filepath.Join(root, "data", "homes", "middleware"))
-	if len(j.Deny) != 1 || j.Deny[0] != filepath.Join(root, "sites") {
-		t.Fatalf("deny = %v", j.Deny)
+	home := filepath.Join(root, "data", "homes", "middleware")
+	j := NewJail(root, root, home)
+	denied := strings.Join(j.Deny, "\n")
+	for _, want := range []string{
+		filepath.Join(root, "sites", "a.test"),
+		filepath.Join(root, "sites", "b.test"),
+		filepath.Join(root, "data", "homes", "a.test"),
+		filepath.Join(root, "data", "state"),
+		filepath.Join(root, "data", "settings.json"),
+		filepath.Join(root, "modules"),
+	} {
+		if !strings.Contains(denied, want) {
+			t.Errorf("missing %s in deny list:\n%s", want, denied)
+		}
+	}
+	for _, d := range j.Deny {
+		if d == filepath.Join(root, "sites") || d == filepath.Join(root, "tasks") || d == home || d == root {
+			t.Errorf("the house jail denies what it must not: %s", d)
+		}
+	}
+	// A site created during the turn is not in the list, so the audit lets
+	// it through, while a site that was already there is flagged.
+	v := j.Violations("Write " + filepath.Join(root, "sites", "new.test", "site.json") + "\nRead " + filepath.Join(root, "sites", "a.test", ".env"))
+	if len(v) != 1 || v[0] != filepath.Join(root, "sites", "a.test") {
+		t.Fatalf("violations = %v", v)
 	}
 }
 
