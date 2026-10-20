@@ -108,5 +108,19 @@ func (a *App) listener() (net.Listener, error) {
 			return ln, nil
 		}
 	}
-	return net.Listen("tcp", a.Settings.Listen)
+	return net.Listen("tcp", ListenAddr(a.Settings.Listen))
+}
+
+// ListenAddr is where the loopback listener binds: MIDDLEWARE_LISTEN when
+// set, else the settings. The variable exists for containers: inside one,
+// 127.0.0.1 is the container's own loopback, which a published port never
+// reaches (the host's traffic comes in by eth0 and the kernel resets it),
+// so the image binds 0.0.0.0 there while docker publishes the port on the
+// host's loopback only. The settings file keeps saying 127.0.0.1 so that
+// the same volume moved to a systemd installation stays loopback-only.
+func ListenAddr(fromSettings string) string {
+	if v := os.Getenv("MIDDLEWARE_LISTEN"); v != "" {
+		return v
+	}
+	return fromSettings
 }

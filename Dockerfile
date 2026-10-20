@@ -30,6 +30,11 @@ USER middleware
 WORKDIR /srv/middleware
 VOLUME ["/srv/middleware"]
 ENV MIDDLEWARE_ROOT=/srv/middleware
+# The container's 127.0.0.1 is not the host's: a port published by docker
+# arrives on eth0 and a listener bound to loopback resets it. Bind every
+# interface of the container; docker-compose.yml publishes it on the host's
+# loopback only, so nothing outside the machine reaches it.
+ENV MIDDLEWARE_LISTEN=0.0.0.0:46100
 # 46100 is the loopback API and panel; 8080 and 8443 are where the ports
 # door is expected to listen inside the container (map them to 80 and 443
 # on the host; see docker-compose.yml).

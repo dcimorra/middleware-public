@@ -59,6 +59,13 @@ open http://127.0.0.1:46100
 to loopback only. The 80/443 lines are commented until the ports door is
 enabled; the comments say what to do.
 
+Inside the container the supervisor binds `0.0.0.0:46100` (the image sets
+`MIDDLEWARE_LISTEN`): a published port comes in by the container's `eth0`,
+and a listener on the container's own loopback would reset it. The host
+side of the mapping is `127.0.0.1`, so the panel is still reachable from
+that machine only. `MIDDLEWARE_LISTEN` overrides `listen` in
+`data/settings.json` wherever it is set; leave it unset under systemd.
+
 ## What `middleware install` does
 
 Each step prints one line, `✓` or `✗`, and the command stops at the first

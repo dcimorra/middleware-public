@@ -139,3 +139,18 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 		t.Fatalf("middleware agents: %v", err)
 	}
 }
+
+// TestMiddlewareListenOverridesTheSettings is the docker contract: the
+// image sets MIDDLEWARE_LISTEN to 0.0.0.0 because a published port never
+// reaches the container's own loopback, and the settings file must not
+// have to change for that.
+func TestMiddlewareListenOverridesTheSettings(t *testing.T) {
+	t.Setenv("MIDDLEWARE_LISTEN", "")
+	if got := app.ListenAddr("127.0.0.1:46100"); got != "127.0.0.1:46100" {
+		t.Fatalf("unset variable must keep the settings, got %q", got)
+	}
+	t.Setenv("MIDDLEWARE_LISTEN", "0.0.0.0:46100")
+	if got := app.ListenAddr("127.0.0.1:46100"); got != "0.0.0.0:46100" {
+		t.Fatalf("the variable must win, got %q", got)
+	}
+}
