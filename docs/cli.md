@@ -14,7 +14,7 @@ after the verb. The commands that go through the API also take `--json`.
 Two kinds of command: the ones that talk to the running supervisor over the
 socket (`site`, `events`, `system`, `token`, `setup`), and the ones that
 work on the files under the root and need no running process (`modules`,
-`inbound`, `waf`, `guard`, `tasks`, `chat`, `vpn`); the supervisor notices
+`inbound`, `waf`, `guard`, `tasks`, `chat`, `skill`, `vpn`); the supervisor notices
 what the second kind wrote on its next look. What the CLI does not cover is
 in the API ([api.md](api.md)) and the panel.
 
@@ -67,6 +67,7 @@ in the API ([api.md](api.md)) and the panel.
 | `guard incidents` | what the guard found and has not been dismissed; dismissing is `POST /guard/incidents/{id}/dismiss` |
 | `tasks` (or `tasks list`) / `tasks run <name>` | scheduled work, [manifest.md](manifest.md#tasks-tasksnamejson); `run` waits and prints the log's path. The log itself is `GET /tasks/{name}/log` |
 | `chat [--model m] <domain> <text…>` / `chat middleware <text…>` | a turn with the site's agent; progress is printed from the event stream |
+| `skill install [dir]` | write the skill the conversations run with (embedded in the binary, installed into every conversation's HOME before each turn) to `<root>/.claude/skills/middleware/`, or to `dir`, so Claude Code run by hand on the server loads it too. Needs no running process |
 | `vpn status [--json]` / `vpn peer add <name>` / `vpn peer remove <name>` | the WireGuard door for the panel; `--socket` names the helper's socket. "VPN only" is `POST /modules/vpn/only` in the API |
 | `install` / `uninstall` / `doctor` | above |
 

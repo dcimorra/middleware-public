@@ -273,12 +273,21 @@ func (m *Manager) Send(domain, text, model string) (string, error) {
 	if err := m.save(c); err != nil {
 		return fail(err)
 	}
+	// The skill goes in before every turn, not once at start: the home
+	// may be new, and the binary may have been upgraded since the last one.
+	if err := installSkillFor(s.Jail.Home, s.Provider); err != nil {
+		return fail(fmt.Errorf("skill not installed: %w", err))
+	}
+	system := Preamble(domain, s.Workdir, s.Jail)
+	if s.Provider == "gemini" {
+		system = SkillHint + "\n\n" + system
+	}
 	req := agent.Request{
 		Workdir:   s.Workdir,
 		Prompt:    text,
 		Model:     model,
 		SessionID: c.SessionID,
-		System:    Preamble(domain, s.Workdir, s.Jail),
+		System:    system,
 		Jail:      s.Jail,
 		Env:       map[string]string{"PATH": agentPath()},
 	}

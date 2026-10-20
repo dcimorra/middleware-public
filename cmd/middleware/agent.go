@@ -38,12 +38,39 @@ func init() {
 	)
 	subcommands["tasks"] = tasksCmd
 	subcommands["chat"] = chatCmd
+	subcommands["skill"] = skillCmd
 	extraUsage += `  tasks        list the scheduled tasks with their next run
   tasks run <name>
                run a task now and wait for it
   chat <domain> <text>
                send one message to a site's conversation ("middleware" for the installation's own)
+  skill install [dir]
+               write the embedded middleware skill (default: <root>/.claude/skills/middleware/)
 `
+}
+
+// skillCmd installs the skill the conversations run with where an
+// operator running Claude Code by hand on the server will load it: the
+// root's own .claude/skills, or wherever they say.
+func skillCmd(args []string) error {
+	fs := flag.NewFlagSet("skill", flag.ContinueOnError)
+	root := rootFlag(fs)
+	rest, err := parseInterleaved(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(rest) == 0 || rest[0] != "install" || len(rest) > 2 {
+		return errors.New("usage: middleware skill install [dir]")
+	}
+	dir := filepath.Join(settings.Root(*root), ".claude", "skills", chat.SkillName)
+	if len(rest) == 2 {
+		dir = rest[1]
+	}
+	if err := chat.InstallSkill(dir); err != nil {
+		return err
+	}
+	fmt.Printf("%s\n", filepath.Join(dir, "SKILL.md"))
+	return nil
 }
 
 // providers is the registry every conversation picks from. Credentials
