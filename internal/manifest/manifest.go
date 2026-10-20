@@ -51,6 +51,10 @@ type Manifest struct {
 	// Security decides by what a caller claims to be and where it is
 	// (robots, browsers, countries), and which paths are never served.
 	Security *security.Rules `json:"security,omitempty"`
+	// Autofix false keeps the automatic repair away from this site even
+	// when the installation turns it on: some sites are not touched
+	// without someone looking. The panel cannot override it.
+	Autofix *bool `json:"autofix,omitempty"`
 	// Attack is under-attack mode: a proof of work before anything is
 	// served (internal/attack).
 	Attack *attack.Rules `json:"attack,omitempty"`

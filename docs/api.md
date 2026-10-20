@@ -156,6 +156,19 @@ lines.
 | POST | `/audit/run` | → `{ok}`; every site in the background, `deps.audited` when done |
 | POST | `/sites/{domain}/audit` | → the site's report, now |
 
+## Automatic repair
+
+Off until `autofix.enabled` in the settings (with `attempts`, 2; `wait_minutes`,
+30; `daily_usd`, 2). A run site with five failed starts in a row, or any site
+with three failed health checks in a row, is handed to its own conversation
+with the reason, its command and the last 60 log lines (fenced as evidence);
+the house restarts it when the turn ends and writes the outcome to
+`data/repairs.jsonl`. A manifest's `"autofix": false` keeps it away.
+
+| method | path | result |
+| --- | --- | --- |
+| GET | `/autofix` | → `[{at, domain, reason, attempt, turn_id, outcome, cost_usd, recovered, skipped?}]`, oldest first |
+
 ## Push notifications
 
 Web push (VAPID, aes128gcm) to the operator's devices. What is pushed is a

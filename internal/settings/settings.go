@@ -31,6 +31,34 @@ type Settings struct {
 	Agents Agents `json:"agents"`
 	// Deps is how the external CLIs are kept.
 	Deps Deps `json:"deps"`
+	// Autofix hands a site that went down to its agent (internal/autofix).
+	Autofix Autofix `json:"autofix"`
+}
+
+// Autofix is the automatic repair's switch and brakes. Off by default:
+// it acts while the operator sleeps, so the brakes are the important part.
+type Autofix struct {
+	Enabled bool `json:"enabled,omitempty"`
+	// Attempts per fault, then it stops and leaves it to the operator.
+	Attempts int `json:"attempts,omitempty"`
+	// WaitMinutes between attempts on one site.
+	WaitMinutes int `json:"wait_minutes,omitempty"`
+	// DailyUSD caps what all repairs together may spend in a day.
+	DailyUSD float64 `json:"daily_usd,omitempty"`
+}
+
+// Limits fills the defaults: 2 attempts, 30 minutes, 2 USD a day.
+func (a Autofix) Limits() Autofix {
+	if a.Attempts <= 0 {
+		a.Attempts = 2
+	}
+	if a.WaitMinutes <= 0 {
+		a.WaitMinutes = 30
+	}
+	if a.DailyUSD <= 0 {
+		a.DailyUSD = 2
+	}
+	return a
 }
 
 // Deps is the section about the programs the modules run (the agent

@@ -831,5 +831,14 @@
   "audit.level.critical": "critical",
   "audit.level.high": "high",
   "audit.level.moderate": "moderate",
-  "audit.level.low": "low"
+  "audit.level.low": "low",
+  "autofix.title": "Automatic repair",
+  "autofix.hint": "A site that does not start, or stops answering three checks in a row, is handed to its own agent, which may change its code but not restart it; the house restarts it after. Off until turned on here; a site's manifest can say autofix: false.",
+  "autofix.enabled": "Repair sites that go down",
+  "autofix.attempts": "Attempts per fault",
+  "autofix.wait": "Minutes between attempts",
+  "autofix.daily": "Daily cap (USD)",
+  "autofix.saved": "Automatic repair saved",
+  "autofix.recent": "Recent repairs",
+  "autofix.none": "No repairs yet."
 }

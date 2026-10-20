@@ -17,6 +17,8 @@ import (
 	"github.com/dcimorra/middleware-public/internal/api"
 	"github.com/dcimorra/middleware-public/internal/app"
 	"github.com/dcimorra/middleware-public/internal/audit"
+	"github.com/dcimorra/middleware-public/internal/autofix"
+	"github.com/dcimorra/middleware-public/internal/chat"
 	"github.com/dcimorra/middleware-public/internal/deps"
 	"github.com/dcimorra/middleware-public/internal/engine"
 	"github.com/dcimorra/middleware-public/internal/events"
@@ -111,6 +113,7 @@ type wireHook struct {
 	repos     *repos.Manager
 	notifier  *push.Notifier
 	auditor   *audit.Auditor
+	fixer     *autofix.Fixer
 }
 
 func buildWire(a *app.App) app.Hook {
@@ -243,6 +246,56 @@ func buildWire(a *app.App) app.Hook {
 		p, _ := exec.LookPath("npm")
 		return p
 	}})
+	// Automatic repair of a site that went down (internal/autofix): off
+	// unless Settings turns it on, with its brakes.
+	if chatManager != nil {
+		sm := srv.Sites()
+		w.fixer = autofix.New(autofix.Options{
+			DataDir: dataDir(a),
+			Bus:     a.Bus,
+			Settings: func() settings.Autofix {
+				s, _ := settings.Load(a.Root)
+				return s.Autofix
+			},
+			Targets: func() []autofix.Target {
+				var out []autofix.Target
+				for _, sn := range a.Engine.Sites() {
+					if sn.Manifest == nil {
+						continue
+					}
+					t := autofix.Target{Domain: sn.Domain, Mode: string(sn.Mode), Failures: sn.Failures, Error: sn.Error,
+						OptOut: sn.Manifest.Autofix != nil && !*sn.Manifest.Autofix}
+					for _, c := range sn.Checks {
+						t.Checks = append(t.Checks, c.OK)
+					}
+					if sn.Manifest.Run != nil {
+						t.Command = strings.Join(sn.Manifest.Run.Command, " ")
+					}
+					out = append(out, t)
+				}
+				return out
+			},
+			LogTail: func(domain string, n int) string {
+				if sm == nil {
+					return ""
+				}
+				s, _ := sm.Logs(domain, "", n)
+				return s
+			},
+			Send: func(domain, prompt string) (string, error) {
+				return chatManager.SendWith(domain, prompt, chat.SendOptions{})
+			},
+			Restart: func(domain string) error {
+				if sn, ok := a.Engine.Lookup(domain); ok && sn.Mode != "run" {
+					return nil // a static site has nothing to restart
+				}
+				return a.Engine.Restart(context.Background(), domain)
+			},
+		})
+		srv.Handle("GET", api.Prefix+"/autofix", "The automatic repairs, oldest first (data/repairs.jsonl)", func(_ http.ResponseWriter, _ *http.Request) (any, error) {
+			return w.fixer.Repairs(), nil
+		})
+	}
 	srv.RegisterAudit(w.auditor, func(domain string) (audit.Site, bool) {
 		sn, ok := a.Engine.Lookup(domain)
 		return audit.Site{Domain: sn.Domain, Dir: sn.Dir}, ok && sn.Manifest != nil
@@ -297,6 +350,9 @@ func (w *wireHook) Run(ctx context.Context, a *app.App) error {
 	}
 	if w.auditor != nil {
 		go w.auditor.Run(ctx)
+	}
+	if w.fixer != nil {
+		go w.fixer.Run(ctx)
 	}
 	var enabled []string
 	if w.set != nil {

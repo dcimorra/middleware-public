@@ -831,5 +831,14 @@
   "audit.level.critical": "crítica",
   "audit.level.high": "alta",
   "audit.level.moderate": "moderada",
-  "audit.level.low": "baja"
+  "audit.level.low": "baja",
+  "autofix.title": "Arreglo automático",
+  "autofix.hint": "Un sitio que no arranca, o que deja de contestar a tres comprobaciones seguidas, pasa a su propio agente, que puede cambiar su código pero no reiniciarlo; lo reinicia la casa después. Apagado hasta que lo enciendas aquí; el manifiesto de un sitio puede decir autofix: false.",
+  "autofix.enabled": "Arreglar los sitios que se caen",
+  "autofix.attempts": "Intentos por avería",
+  "autofix.wait": "Minutos entre intentos",
+  "autofix.daily": "Tope diario (USD)",
+  "autofix.saved": "Arreglo automático guardado",
+  "autofix.recent": "Arreglos recientes",
+  "autofix.none": "Sin arreglos todavía."
 }

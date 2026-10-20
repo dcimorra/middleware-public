@@ -155,6 +155,10 @@ func Convert(name string, data []byte) Result {
 	m.ClaudeAPI = c.claudeAPI
 	m.Security = c.security
 	m.Attack = c.attack
+	if c.autofixOff {
+		off := false
+		m.Autofix = &off
+	}
 	m.Claude = in.Claude
 	m.Chat = c.chat
 	if len(r.Blockers) > 0 {
@@ -174,7 +178,9 @@ type converter struct {
 	claudeAPI *manifest.ClaudeAPI
 	security  *security.Rules
 	attack    *attack.Rules
-	chat      *manifest.ChatRules
+	// autofixOff carries V1's "autofix": false.
+	autofixOff bool
+	chat       *manifest.ChatRules
 }
 
 // themeKeys maps V1's design names to V2's: the same seven designs.
@@ -202,8 +208,12 @@ func (c *converter) blockers(in *v1) {
 	if in.App != "" {
 		c.block("app %q (apps; ROADMAP §8)", in.App)
 	}
-	if in.AutoFix != nil && *in.AutoFix {
-		c.block("autofix (repair after failed health checks; ROADMAP §6)")
+	if in.AutoFix != nil {
+		if *in.AutoFix {
+			c.note("autofix: true is the installation's switch in V2 (Settings), not the site's; the site follows it")
+		} else {
+			c.autofixOff = true
+		}
 	}
 	if present(in.VPN) {
 		c.block("vpn (VPN-only site; ROADMAP §2)")

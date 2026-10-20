@@ -269,6 +269,8 @@ process.
   site's `skip`) and to the panel, except requests that carry their own
   credentials (an API token, the site door). The old `waf.under_attack:
   true` is read as `attack.on` with the defaults.
+- `autofix: false` keeps the automatic repair (Settings) away from this
+  site, whatever the installation says; the panel cannot override it.
 - `aliases` are served exactly like the site. A name that is already a site,
   or that two sites claim, is served by neither, and an event says so.
 

@@ -90,6 +90,8 @@ type Snapshot struct {
 	Workers  map[string]WorkerSnapshot
 	Health   Health
 	Checks   []Check
+	// Failures is how many starts in a row have failed.
+	Failures int
 	// Missing is what the site needs (manifest `needs`) that is not
 	// available now, each with why.
 	Missing []string
@@ -193,6 +195,7 @@ func (e *Engine) snapshot(s *Site) Snapshot {
 		Health: s.health.status, Checks: append([]Check(nil), s.health.checks...), Missing: e.missingLocked(s)}
 	if sn.Error == "" {
 		sn.Error = s.lastErr
+		sn.Failures = s.failures
 	}
 	if s.Instance != nil {
 		sn.Port = s.Instance.Port()

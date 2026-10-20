@@ -1,0 +1,126 @@
+package autofix
+
+import (
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/middleware-public/internal/settings"
+)
+
+type world struct {
+	mu       sync.Mutex
+	now      time.Time
+	cfg      settings.Autofix
+	targets  []Target
+	sent     []string
+	restarts []string
+	bus      *events.Bus
+	f        *Fixer
+}
+
+func newWorld(t *testing.T) *world {
+	w := &world{now: time.Date(2026, 10, 20, 3, 0, 0, 0, time.UTC), cfg: settings.Autofix{Enabled: true}, bus: events.New("")}
+	w.f = New(Options{
+		DataDir:  t.TempDir(),
+		Bus:      w.bus,
+		Settings: func() settings.Autofix { return w.cfg },
+		Targets:  func() []Target { w.mu.Lock(); defer w.mu.Unlock(); return append([]Target(nil), w.targets...) },
+		LogTail:  func(string, int) string { return "Error: Cannot find module 'next'" },
+		Send: func(domain, prompt string) (string, error) {
+			w.mu.Lock()
+			defer w.mu.Unlock()
+			w.sent = append(w.sent, prompt)
+			return "turn" + string(rune('0'+len(w.sent))), nil
+		},
+		Restart: func(d string) error { w.mu.Lock(); w.restarts = append(w.restarts, d); w.mu.Unlock(); return nil },
+		Now:     func() time.Time { w.mu.Lock(); defer w.mu.Unlock(); return w.now },
+		Settle:  10 * time.Millisecond,
+	})
+	return w
+}
+
+func (w *world) set(ts ...Target) { w.mu.Lock(); w.targets = ts; w.mu.Unlock() }
+func (w *world) advance(d time.Duration) {
+	w.mu.Lock()
+	w.now = w.now.Add(d)
+	w.mu.Unlock()
+}
+func (w *world) count() int { w.mu.Lock(); defer w.mu.Unlock(); return len(w.sent) }
+
+var broken = Target{Domain: "a.example", Mode: "run", Failures: 7, Error: "exit status 1", Command: "npm start"}
+
+func TestWhatIsDownIsHandedOverTwiceAndThenLeftAlone(t *testing.T) {
+	w := newWorld(t)
+	w.set(broken, Target{Domain: "ok.example", Mode: "run", Checks: []bool{true, false, true}})
+	w.f.Pass()
+	if w.count() != 1 || !strings.Contains(w.sent[0], "7 failed starts") || !strings.Contains(w.sent[0], "<<<LOG\nError: Cannot find module") {
+		t.Fatalf("sent %d: %v", w.count(), w.sent)
+	}
+	// Its turn ends: the house restarts the site and records the line.
+	w.f.finished(events.Event{Type: "agent.done", Subject: "a.example", Data: map[string]any{"turn_id": "turn1", "cost": 0.4, "text": "Looked around.\nDone: added next to the dependencies"}})
+	time.Sleep(50 * time.Millisecond)
+	if len(w.restarts) != 1 {
+		t.Fatalf("restarts %v", w.restarts)
+	}
+	reps := w.f.Repairs()
+	if len(reps) != 1 || reps[0].Outcome != "Done: added next to the dependencies" || reps[0].CostUSD != 0.4 || reps[0].Recovered == nil || *reps[0].Recovered {
+		t.Fatalf("repairs %+v", reps)
+	}
+	// Still down: not again before thirty minutes, once more after, and
+	// never a third time.
+	w.advance(10 * time.Minute)
+	w.f.Pass()
+	if w.count() != 1 {
+		t.Fatal("tried again before the wait")
+	}
+	w.advance(25 * time.Minute)
+	w.f.Pass()
+	w.f.finished(events.Event{Type: "agent.done", Subject: "a.example", Data: map[string]any{"turn_id": "turn2", "text": "Touched nothing: the database is down"}})
+	w.advance(time.Hour)
+	w.f.Pass()
+	if w.count() != 2 {
+		t.Fatalf("%d attempts, want 2", w.count())
+	}
+	// Up again ends the fault; the next one starts afresh.
+	w.set(Target{Domain: "a.example", Mode: "run"})
+	w.f.Pass()
+	w.set(broken)
+	w.f.Pass()
+	if w.count() != 3 {
+		t.Fatalf("a new fault was not handed over: %d", w.count())
+	}
+}
+
+func TestTheBrakes(t *testing.T) {
+	w := newWorld(t)
+	w.cfg.Enabled = false
+	w.set(broken)
+	w.f.Pass()
+	if w.count() != 0 {
+		t.Fatal("acted while off")
+	}
+	w.cfg.Enabled = true
+	opt := broken
+	opt.OptOut = true
+	w.set(opt)
+	w.f.Pass()
+	if w.count() != 0 {
+		t.Fatal("acted on a site whose manifest says autofix: false")
+	}
+	// The daily cap: what was spent today stops the next one.
+	w.set(broken)
+	w.f.Pass()
+	w.f.finished(events.Event{Type: "agent.done", Subject: "a.example", Data: map[string]any{"turn_id": "turn1", "cost": 2.5, "text": "Done: x"}})
+	time.Sleep(50 * time.Millisecond)
+	w.set(Target{Domain: "b.example", Mode: "static", Checks: []bool{false, false, false}})
+	w.f.Pass()
+	if w.count() != 1 {
+		t.Fatal("went past the daily cap")
+	}
+	if reps := w.f.Repairs(); !strings.Contains(reps[len(reps)-1].Skipped, "daily cap") {
+		t.Fatalf("the cap was not written down: %+v", reps)
+	}
+}
