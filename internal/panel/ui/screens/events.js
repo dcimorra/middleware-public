@@ -3,6 +3,7 @@
 // whichever way it arrived. Filters are in memory and the type prefix is
 // also sent to the API so the first page is the right slice.
 
+import { icon } from "../lib/icons.js";
 import { h, clear, fmtClock, fmtTime } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, qs } from "../lib/api.js";
@@ -15,8 +16,8 @@ export function eventsScreen({ query }) {
   const subjectBox = h("input", { type: "text", placeholder: t("events.subjectFilter"), "aria-label": t("events.subjectFilter"), value: query.get("subject") || "", autocomplete: "off", list: "subjects" });
   const level = h("select", { "aria-label": t("events.level") }, h("option", { value: "" }, t("events.allLevels")), h("option", { value: "warn" }, t("level.warn")), h("option", { value: "error" }, t("level.error")));
   const datalist = h("datalist", { id: "subjects" });
-  const pause = h("button", { type: "button", class: "btn sm", "aria-pressed": "false" }, t("events.pause"));
-  const p = page({ title: t("nav.events"), sub: t("events.sub") });
+  const pause = h("button", { type: "button", class: "btn sm", "aria-pressed": "false" }, icon("pause"), t("events.pause"));
+  const p = page({ title: t("nav.events"), sub: t("events.sub"), icon: "activity" });
   const listBox = h("div", { class: "card pad0" });
   const drawer = h("aside", { class: "card drawer", hidden: true });
   const wrap = h("div", { class: "events" }, listBox, drawer);

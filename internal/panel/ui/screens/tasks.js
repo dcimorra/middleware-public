@@ -2,6 +2,7 @@
 // is the same JSON editor the manifest uses because a task file is one
 // object and a form would need updating every time a field is added.
 
+import { icon } from "../lib/icons.js";
 import { h, clear, fmtTime, fmtAgo, fmtDuration } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
@@ -14,15 +15,15 @@ import { toast, toastError } from "../components/toast.js";
 const TEMPLATE = { version: 2, schedule: "0 3 * * *", site: "", command: ["./scripts/backup.sh"], timeout: "1h", overlap: "skip" };
 
 export function tasksScreen() {
-  const newBtn = h("button", { type: "button", class: "btn primary", "data-shortcut": "new" }, t("tasks.new"));
-  const p = page({ title: t("nav.tasks"), sub: t("tasks.sub"), actions: newBtn });
+  const newBtn = h("button", { type: "button", class: "btn primary", "data-shortcut": "new" }, icon("plus"), t("tasks.new"));
+  const p = page({ title: t("nav.tasks"), sub: t("tasks.sub"), icon: "clock", actions: newBtn });
   const body = h("div", { class: "card pad0" });
   p.body.append(body);
   const subs = [];
 
   async function render() {
     const tasks = await api.get("/tasks");
-    if (!tasks || tasks.length === 0) return empty(t("tasks.emptyTitle"), t("tasks.emptyHint"), h("button", { type: "button", class: "btn primary", onClick: () => edit(null) }, t("tasks.new")));
+    if (!tasks || tasks.length === 0) return empty(t("tasks.emptyTitle"), t("tasks.emptyHint"), h("button", { type: "button", class: "btn primary", onClick: () => edit(null) }, icon("plus"), t("tasks.new")), "clock");
     const rows = tasks.map((task) => {
       const last = task.last || {};
       const st = last.status;
@@ -46,7 +47,7 @@ export function tasksScreen() {
   }
 
   function runBtn(task) {
-    const b = h("button", { type: "button", class: "btn sm" }, t("tasks.run"));
+    const b = h("button", { type: "button", class: "btn sm" }, icon("play"), t("tasks.run"));
     b.addEventListener("click", async () => {
       b.classList.add("busy");
       try { await api.post(`/tasks/${enc(task.name)}/run`); toast(t("tasks.started", { name: task.name }), "ok"); }
@@ -71,7 +72,7 @@ export function tasksScreen() {
     return b;
   }
   function delBtn(task) {
-    const b = h("button", { type: "button", class: "btn sm danger ghost" }, t("common.delete"));
+    const b = h("button", { type: "button", class: "btn sm danger ghost" }, icon("trash"), t("common.delete"));
     b.addEventListener("click", async () => {
       if (!(await confirm({ title: t("tasks.deleteQ", { name: task.name }), body: t("tasks.deleteBody"), confirmLabel: t("common.delete"), danger: true }))) return;
       try { await api.del(`/tasks/${enc(task.name)}`); toast(t("tasks.deleted", { name: task.name }), "ok"); load(body, render); } catch (e) { toastError(e); }

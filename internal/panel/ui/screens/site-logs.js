@@ -3,6 +3,7 @@
 // away so a forgotten tab does not keep a reader on the file.
 
 import { h } from "../lib/dom.js";
+import { icon } from "../lib/icons.js";
 import { t } from "../lib/i18n.js";
 import { api, enc, qs } from "../lib/api.js";
 import { store } from "../lib/store.js";
@@ -17,8 +18,8 @@ export function logsTab(domain) {
   const worker = h("select", { "aria-label": t("logs.worker") }, h("option", { value: "" }, t("logs.main")), ...workers.map((w) => h("option", { value: w }, w)));
   const lines = h("select", { "aria-label": t("logs.lines") }, ...[100, 200, 500, 2000].map((n) => h("option", { value: String(n), selected: n === 200 }, t("logs.lastN", { n }))));
   const follow = toggle(t("logs.follow"), {});
-  const reload = h("button", { type: "button", class: "btn sm" }, t("common.reload"));
-  const clearBtn = h("button", { type: "button", class: "btn sm ghost" }, t("logs.clear"));
+  const reload = h("button", { type: "button", class: "btn sm" }, icon("refresh"), t("common.reload"));
+  const clearBtn = h("button", { type: "button", class: "btn sm ghost" }, icon("trash"), t("logs.clear"));
   const status = h("span", { class: "small muted", role: "status" });
   const el = h("div", null,
     h("div", { class: "log-bar" }, workers.length ? worker : null, lines, reload, clearBtn, follow.el, h("span", { class: "grow" }), status),

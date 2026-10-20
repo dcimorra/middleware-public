@@ -2,6 +2,7 @@
 // written in the binary; the panel only shows them. Incidents can be
 // dismissed, which is the only write here.
 
+import { icon } from "../lib/icons.js";
 import { h, clear, fmtTime, fmtAgo } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
@@ -11,7 +12,7 @@ import { levelBadge } from "../components/badge.js";
 import { toast, toastError } from "../components/toast.js";
 
 export function guardScreen() {
-  const p = page({ title: t("nav.guard"), sub: t("guard.sub") });
+  const p = page({ title: t("nav.guard"), sub: t("guard.sub"), icon: "eye" });
   const body = h("div");
   p.body.append(body);
   const subs = [];
@@ -50,7 +51,7 @@ export function guardScreen() {
   }
 
   function dismissBtn(id) {
-    const b = h("button", { type: "button", class: "btn sm" }, t("guard.dismiss"));
+    const b = h("button", { type: "button", class: "btn sm" }, icon("check"), t("guard.dismiss"));
     b.addEventListener("click", async () => {
       b.classList.add("busy");
       try { await api.post(`/guard/incidents/${enc(id)}/dismiss`); toast(t("guard.dismissed"), "ok"); load(body, render); }

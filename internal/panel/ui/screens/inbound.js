@@ -3,6 +3,7 @@
 // verification lines as a checklist as they come, from the
 // response and from inbound.* events for the same domains.
 
+import { icon } from "../lib/icons.js";
 import { h, clear, fmtTime, fmtAgo } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
@@ -13,7 +14,7 @@ import { open, confirm, toggle, field } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 
 export function inboundScreen() {
-  const p = page({ title: t("nav.inbound"), sub: t("inbound.sub") });
+  const p = page({ title: t("nav.inbound"), sub: t("inbound.sub"), icon: "door" });
   const body = h("div");
   p.body.append(body);
   const subs = [];
@@ -110,7 +111,7 @@ export function inboundScreen() {
     return h("span", { class: "badge" }, String(dns));
   }
   function renewBtn(domain) {
-    const b = h("button", { type: "button", class: "btn sm" }, t("inbound.renew"));
+    const b = h("button", { type: "button", class: "btn sm" }, icon("refresh"), t("inbound.renew"));
     b.addEventListener("click", async () => {
       b.classList.add("busy");
       try { await api.post(`/inbound/certificates/${enc(domain)}/renew`); toast(t("inbound.renewStarted", { domain }), "ok"); }

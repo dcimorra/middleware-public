@@ -7,13 +7,15 @@ import { h, clear } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
 import { onEvent } from "../lib/stream.js";
-import { page, load, empty } from "../components/page.js";
+import { page, load, empty, notice } from "../components/page.js";
+import { icon } from "../lib/icons.js";
+
 import { checklist } from "../components/checklist.js";
 import { confirm, field } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 
 export function modulesScreen() {
-  const p = page({ title: t("nav.modules"), sub: t("modules.sub") });
+  const p = page({ title: t("nav.modules"), sub: t("modules.sub"), icon: "blocks" });
   const body = h("div", { class: "grid" });
   p.body.append(body);
   const subs = [];
@@ -80,7 +82,7 @@ export function modulesScreen() {
     return h("div", { class: "card module-card" },
       h("div", { class: "log-bar" }, h("h2", { class: "grow" }, m.name || m.key), state),
       h("p", { class: "dim small" }, m.description || ""),
-      m.installed === false && m.enabled ? h("div", { class: "notice warn" }, t("modules.notInstalled")) : null,
+      m.installed === false && m.enabled ? notice("warn", t("modules.notInstalled")) : null,
       form,
     );
   }

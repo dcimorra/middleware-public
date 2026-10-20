@@ -2,6 +2,7 @@
 // The server part is data/settings.json through GET/PUT; theme and
 // language are this browser's and never leave it.
 
+import { icon } from "../lib/icons.js";
 import { h, clear, copy } from "../lib/dom.js";
 import { t, LANGUAGES, currentLang } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
@@ -14,7 +15,7 @@ import { fmtTime, fmtAgo } from "../lib/dom.js";
 const PAGES = ["unknown", "stopped", "hold", "unavailable"];
 
 export function settingsScreen() {
-  const p = page({ title: t("nav.settings") });
+  const p = page({ title: t("nav.settings"), icon: "sliders" });
   const general = h("div", { class: "card" });
   const pagesCard = h("div", { class: "card" });
   const agentsCard = h("div", { class: "card" });
@@ -165,7 +166,7 @@ export function settingsScreen() {
     });
     if (!r || !r.token) return;
     const code = h("code", null, r.token);
-    const copyBtn = h("button", { type: "button", class: "btn sm" }, t("common.copy"));
+    const copyBtn = h("button", { type: "button", class: "btn sm" }, icon("copy"), t("common.copy"));
     copyBtn.addEventListener("click", async () => { copyBtn.textContent = (await copy(r.token)) ? t("common.copied") : t("common.copyFailed"); });
     await open({
       title: t("settings.tokenCreated"),

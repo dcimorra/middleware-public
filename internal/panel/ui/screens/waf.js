@@ -3,6 +3,7 @@
 // open): a per-second counter does not belong on the event stream, where
 // it would drown everything that matters.
 
+import { icon } from "../lib/icons.js";
 import { h, clear, fmtTime, fmtAgo } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
@@ -13,7 +14,7 @@ import { open, confirm, field, toggle } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 
 export function wafScreen() {
-  const p = page({ title: t("nav.waf"), sub: t("waf.sub") });
+  const p = page({ title: t("nav.waf"), sub: t("waf.sub"), icon: "shield" });
   const trafficCard = h("div", { class: "card" });
   const policyCard = h("div", { class: "card" });
   const blockedCard = h("div", { class: "card pad0" });

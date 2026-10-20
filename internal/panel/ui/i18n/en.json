@@ -1,6 +1,8 @@
 {
   "app.title": "middleware",
 
+  "nav.groupManage": "Manage",
+  "nav.groupObserve": "Observe",
   "nav.sites": "Sites",
   "nav.inbound": "Inbound",
   "nav.waf": "WAF",

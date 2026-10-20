@@ -14,13 +14,16 @@
   <div id="app" class="app" data-state="loading">
     <header class="topbar" id="topbar" hidden>
       <button class="icon-btn menu-btn" id="menu-btn" type="button" aria-label="Menu" aria-controls="sidebar" aria-expanded="false">
-        <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg>
       </button>
-      <a class="brand" href="#/sites">middleware</a>
+      <a class="brand" href="#/sites">
+        <svg class="mark" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect width="24" height="24" rx="6" fill="currentColor"/><path d="M6 17V8l6 6 6-6v9" fill="none" stroke="var(--surface)" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/></svg>
+        <span>middleware</span>
+      </a>
       <div class="topbar-spacer"></div>
       <span class="stream-state" id="stream-state" role="status" aria-live="polite"></span>
       <button class="icon-btn" id="theme-btn" type="button" aria-label="Theme"></button>
-      <button class="icon-btn" id="help-btn" type="button" aria-label="Keyboard shortcuts">?</button>
+      <button class="icon-btn" id="help-btn" type="button" aria-label="Keyboard shortcuts"></button>
     </header>
     <nav class="sidebar" id="sidebar" aria-label="Sections" hidden></nav>
     <div class="backdrop" id="backdrop" hidden></div>

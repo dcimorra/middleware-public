@@ -2,7 +2,7 @@
 // operator exists yet; the one-time code comes from `middleware setup` on
 // the server, so whoever can read that terminal is the operator.
 
-import { h } from "../lib/dom.js";
+import { h, svg } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api } from "../lib/api.js";
 import { field } from "../components/dialog.js";
@@ -18,6 +18,11 @@ export function authScreen({ mode, onDone }) {
     const err = h("div", { class: "error-box", role: "alert", hidden: true });
     const password = h("input", { type: "password", autocomplete: current === "setup" ? "new-password" : "current-password", required: true, minlength: current === "setup" ? "8" : null });
     const form = h("form", { novalidate: true });
+    form.append(h("div", { class: "brand" },
+      svg("svg", { class: "mark", viewBox: "0 0 24 24", width: 24, height: 24, "aria-hidden": "true" },
+        svg("rect", { width: 24, height: 24, rx: 6, fill: "currentColor" }),
+        svg("path", { d: "M6 17V8l6 6 6-6v9", fill: "none", stroke: "var(--surface)", "stroke-width": 2.4, "stroke-linejoin": "round", "stroke-linecap": "round" })),
+      h("span", null, t("app.title"))));
     const submit = h("button", { type: "submit", class: "btn primary" }, current === "setup" ? t("auth.create") : t("auth.signIn"));
     let code = null;
     if (current === "setup") {

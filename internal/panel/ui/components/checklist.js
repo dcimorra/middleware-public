@@ -4,9 +4,10 @@
 
 import { h, clear } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
+import { icon } from "../lib/icons.js";
 
 const WORD = { ok: "check.ok", skip: "check.skip", fail: "check.fail", pending: "check.pending" };
-const MARK = { ok: "✓", skip: "–", fail: "✕", pending: "" };
+const MARK = { ok: "check", skip: "minus", fail: "x", pending: "" };
 
 function stateOf(line) {
   if (typeof line.ok === "boolean") return line.ok ? "ok" : "fail";
@@ -29,7 +30,7 @@ export function checklist(lines) {
     add(line) {
       const s = stateOf(line);
       ul.append(h("li", { class: s },
-        h("span", { class: "mark", "aria-hidden": "true" }, MARK[s]),
+        h("span", { class: "mark", "aria-hidden": "true" }, MARK[s] ? icon(MARK[s]) : null),
         h("span", { class: "word" }, t(WORD[s])),
         h("span", { class: "text" }, line.text || line.message || ""),
       ));

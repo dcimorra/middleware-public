@@ -4,6 +4,7 @@
 // cost, end. The shapes are tolerant on purpose: the adapter decides what
 // it puts in data, and a field the panel does not know is just not shown.
 
+import { icon } from "../lib/icons.js";
 import { h, clear, debounce } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
@@ -18,9 +19,9 @@ export function chatTab(domain) {
   const text = h("textarea", { placeholder: t("chat.placeholder"), "aria-label": t("chat.message") });
   const provider = h("select", { "aria-label": t("chat.provider") });
   const model = h("select", { "aria-label": t("chat.model") });
-  const send = h("button", { type: "submit", class: "btn primary" }, t("chat.send"));
-  const stop = h("button", { type: "button", class: "btn danger", hidden: true }, t("chat.stop"));
-  const reset = h("button", { type: "button", class: "btn ghost sm" }, t("chat.new"));
+  const send = h("button", { type: "submit", class: "btn primary" }, icon("send"), t("chat.send"));
+  const stop = h("button", { type: "button", class: "btn danger", hidden: true }, icon("stop"), t("chat.stop"));
+  const reset = h("button", { type: "button", class: "btn ghost sm" }, icon("sparkles"), t("chat.new"));
   const status = h("span", { class: "small muted", role: "status" });
   const capacity = h("span", { class: "small muted chat-capacity", title: t("chat.capacityTitle") });
   const form = h("form", { class: "chat-form" }, text, h("div", { class: "row" }, provider, model, h("span", { class: "grow" }), status, reset, stop, send));

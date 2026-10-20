@@ -7,7 +7,9 @@ import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
 import { store } from "../lib/store.js";
 import { navigate } from "../lib/router.js";
-import { page, kv, table, cell, empty, loading, errorBox } from "../components/page.js";
+import { page, kv, table, cell, empty, loading, errorBox, notice } from "../components/page.js";
+import { icon } from "../lib/icons.js";
+
 import { modeBadge, aliveStatus, siteMode } from "../components/badge.js";
 import { tabs } from "../components/tabs.js";
 import { open, confirm, field, checkbox } from "../components/dialog.js";
@@ -19,6 +21,7 @@ import { chatTab } from "./site-chat.js";
 import { accessTab } from "./site-access.js";
 
 const TABS = ["overview", "manifest", "logs", "files", "chat", "access"];
+const TAB_ICON = { overview: "gauge", manifest: "code", logs: "list", files: "folder", chat: "chat", access: "lock" };
 
 export function siteScreen({ domain, tab }) {
   const active = TABS.includes(tab) ? tab : "overview";
@@ -29,7 +32,7 @@ export function siteScreen({ domain, tab }) {
     crumbs: [h("a", { href: "#/sites" }, t("nav.sites")), " / ", domain],
     actions: statusLine,
   });
-  p.body.append(tabs(TABS.map((k) => ({ key: k, href: `${base}/${k}`, label: t("site.tab." + k) })), active));
+  p.body.append(tabs(TABS.map((k) => ({ key: k, href: `${base}/${k}`, label: t("site.tab." + k), icon: TAB_ICON[k] })), active));
   const body = h("div");
   p.body.append(body);
   const subs = [];
@@ -40,7 +43,7 @@ export function siteScreen({ domain, tab }) {
     clear(statusLine);
     if (!s) return;
     statusLine.append(modeBadge(s), aliveStatus(s));
-    if (siteMode(s) !== "unmanaged") statusLine.append(h("a", { class: "btn sm", href: `https://${domain}`, target: "_blank", rel: "noopener" }, t("site.open")));
+    if (siteMode(s) !== "unmanaged") statusLine.append(h("a", { class: "btn sm", href: `https://${domain}`, target: "_blank", rel: "noopener" }, icon("external"), t("site.open")));
   }
 
   function mountTab() {
@@ -96,20 +99,20 @@ function overviewTab(domain) {
     // confirm with the domain in the question.
     const actions = h("div", { class: "actions" });
     if (!unmanaged) {
-      if (mode === "run" || mode === "upstream") actions.append(btn(t("site.restart"), () => act("restart", `/sites/${enc(domain)}/restart`, t("site.restarted"))));
-      if (m.disabled) actions.append(btn(t("site.start"), () => act("start", `/sites/${enc(domain)}/start`, t("site.started")), "primary"));
-      else actions.append(btn(t("site.stop"), async () => {
+      if (mode === "run" || mode === "upstream") actions.append(btn(t("site.restart"), "refresh", () => act("restart", `/sites/${enc(domain)}/restart`, t("site.restarted"))));
+      if (m.disabled) actions.append(btn(t("site.start"), "play", () => act("start", `/sites/${enc(domain)}/start`, t("site.started")), "primary"));
+      else actions.append(btn(t("site.stop"), "stop", async () => {
         if (await confirm({ title: t("site.stopQ", { domain }), body: t("site.stopBody"), confirmLabel: t("site.stop"), danger: true })) {
           await act("stop", `/sites/${enc(domain)}/stop`, t("site.stopped"));
         }
       }));
-      if (m.hold && m.hold.enabled) actions.append(btn(t("site.release"), () => hold(false)));
-      else actions.append(btn(t("site.hold"), () => hold(true)));
-      if (m.deploy && m.deploy.github) actions.append(btn(t("site.deploy"), () => act("deploy", `/sites/${enc(domain)}/deploy`, t("site.deployStarted"))));
+      if (m.hold && m.hold.enabled) actions.append(btn(t("site.release"), "unlock", () => hold(false)));
+      else actions.append(btn(t("site.hold"), "pause", () => hold(true)));
+      if (m.deploy && m.deploy.github) actions.append(btn(t("site.deploy"), "upload", () => act("deploy", `/sites/${enc(domain)}/deploy`, t("site.deployStarted"))));
     } else {
-      actions.append(btn(t("site.adopt"), adopt, "primary"));
+      actions.append(btn(t("site.adopt"), "plus", adopt, "primary"));
     }
-    actions.append(btn(t("site.delete"), del, "danger"));
+    actions.append(btn(t("site.delete"), "trash", del, "danger"));
 
     const pairs = [
       [t("site.mode"), modeBadge(s)],
@@ -127,7 +130,7 @@ function overviewTab(domain) {
 
     append(el, [
       h("div", { class: "card" }, h("h2", null, t("site.tab.overview")), kv(pairs), h("hr"), actions),
-      unmanaged ? h("div", { class: "notice warn" }, t("site.unmanagedNotice")) : null,
+      unmanaged ? notice("warn", t("site.unmanagedNotice")) : null,
       workersCard(s),
       unmanaged ? null : h("div", { class: "card" }, h("h2", null, t("site.env")), h("p", { class: "small muted" }, t("site.envHint")), envBox),
     ]);
@@ -167,8 +170,8 @@ function overviewTab(domain) {
     }
   }
 
-  function btn(label, fn, cls) {
-    const b = h("button", { type: "button", class: "btn " + (cls || "") }, label);
+  function btn(label, ico, fn, cls) {
+    const b = h("button", { type: "button", class: "btn " + (cls || "") }, icon(ico), label);
     b.addEventListener("click", async () => {
       b.classList.add("busy");
       try { await fn(); } catch (e) { toastError(e); } finally { b.classList.remove("busy"); }

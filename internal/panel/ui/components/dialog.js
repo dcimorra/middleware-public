@@ -4,6 +4,7 @@
 
 import { h, append } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
+import { icon } from "../lib/icons.js";
 
 // open shows a dialog and resolves with the return value when it closes.
 // body is a Node or array of nodes; buttons is [{label, value, class,
@@ -12,7 +13,8 @@ export function open({ title, body, buttons, wide, onSubmit, initialFocus }) {
   return new Promise((resolve) => {
     const dlg = h("dialog", { class: wide ? "wide" : "" });
     const form = h("form", { class: "dlg", method: "dialog", novalidate: true });
-    const head = h("div", { class: "dlg-head" }, h("h2", null, title));
+    const closeBtn = h("button", { type: "button", class: "icon-btn sm", "aria-label": t("common.close") }, icon("x", { size: 18 }));
+    const head = h("div", { class: "dlg-head" }, h("h2", null, title), closeBtn);
     const bodyEl = h("div", { class: "dlg-body" });
     append(bodyEl, [body]);
     const foot = h("div", { class: "dlg-foot" });
@@ -71,6 +73,7 @@ export function open({ title, body, buttons, wide, onSubmit, initialFocus }) {
         if (submitBtn) submitBtn.classList.remove("busy");
       }
     });
+    closeBtn.addEventListener("click", () => finish(null));
     dlg.addEventListener("close", () => finish(null));
     dlg.addEventListener("click", (e) => { if (e.target === dlg) finish(null); });
     form.append(head, bodyEl, foot);

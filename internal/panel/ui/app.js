@@ -11,6 +11,7 @@ import { route, mount, navigate, currentPath, render as rerender } from "./lib/r
 import { applyTheme, getTheme, setTheme, getLang } from "./lib/theme.js";
 import { installShortcuts, showShortcuts, GOTO } from "./components/shortcuts.js";
 import { toast } from "./components/toast.js";
+import { icon } from "./lib/icons.js";
 import { authScreen } from "./screens/auth.js";
 import { sitesScreen } from "./screens/sites.js";
 import { siteScreen } from "./screens/site.js";
@@ -35,25 +36,33 @@ const streamState = document.getElementById("stream-state");
 
 applyTheme();
 
+// Each entry: key, route, shortcut, icon. Two groups: what the operator
+// runs (sites, doors, protection, modules, tasks) and what they watch
+// (events, guard, settings, the process); the sidebar draws the line.
 const NAV = [
-  ["sites", "/sites", "g s"],
-  ["inbound", "/inbound", "g i"],
-  ["waf", "/waf", "g w"],
-  ["modules", "/modules", "g m"],
-  ["tasks", "/tasks", "g t"],
-  ["events", "/events", "g e"],
-  ["guard", "/guard", "g g"],
-  ["settings", "/settings", "g c"],
-  ["system", "/system", "g y"],
+  ["sites", "/sites", "g s", "globe"],
+  ["inbound", "/inbound", "g i", "door"],
+  ["waf", "/waf", "g w", "shield"],
+  ["modules", "/modules", "g m", "blocks"],
+  ["tasks", "/tasks", "g t", "clock"],
+  ["events", "/events", "g e", "activity"],
+  ["guard", "/guard", "g g", "eye"],
+  ["settings", "/settings", "g c", "sliders"],
+  ["system", "/system", "g y", "cpu"],
 ];
+const NAV_GROUPS = { sites: "nav.groupManage", events: "nav.groupObserve" };
+
+export const NAV_ICON = Object.fromEntries(NAV.map(([k, , , i]) => [k, i]));
 
 function buildSidebar() {
   clear(sidebar);
-  for (const [key, href, k] of NAV) {
-    sidebar.append(h("a", { href: "#" + href, "data-path": href }, t("nav." + key), h("span", { class: "k", "aria-hidden": "true" }, k)));
+  for (const [key, href, k, ico] of NAV) {
+    if (NAV_GROUPS[key]) sidebar.append(h("div", { class: "group" }, t(NAV_GROUPS[key])));
+    sidebar.append(h("a", { href: "#" + href, "data-path": href },
+      icon(ico), h("span", { class: "label" }, t("nav." + key)), h("span", { class: "k", "aria-hidden": "true" }, k)));
   }
   sidebar.append(h("div", { class: "group" }, t("nav.session")));
-  const logout = h("a", { href: "#/logout" }, t("auth.signOut"));
+  const logout = h("a", { href: "#/logout" }, icon("logout"), h("span", { class: "label" }, t("auth.signOut")));
   logout.addEventListener("click", async (e) => {
     e.preventDefault();
     try { await api.post("/auth/logout", {}, { allow401: true }); } catch { /* the cookie is gone either way */ }
@@ -79,7 +88,7 @@ backdrop.addEventListener("click", closeMenu);
 
 function themeLabel() {
   const v = getTheme();
-  themeBtn.textContent = v === "dark" ? "☽" : v === "light" ? "☀" : "A";
+  clear(themeBtn).append(icon(v === "dark" ? "moon" : v === "light" ? "sun" : "monitor"));
   themeBtn.setAttribute("aria-label", t("theme.button", { theme: t("theme." + v) }));
   themeBtn.title = themeBtn.getAttribute("aria-label");
 }
@@ -170,6 +179,7 @@ installShortcuts();
     return;
   }
   themeLabel();
+  clear(helpBtn).append(icon("help"));
   helpBtn.setAttribute("aria-label", t("keys.title"));
   menuBtn.setAttribute("aria-label", t("nav.menu"));
   await boot();

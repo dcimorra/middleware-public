@@ -3,6 +3,7 @@
 // still never builds a path from anything but what the API listed, so a
 // ".." never leaves here in the first place.
 
+import { icon } from "../lib/icons.js";
 import { h, clear, fmtBytes, fmtTime } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, enc, qs } from "../lib/api.js";
@@ -31,13 +32,13 @@ export function filesTab(domain) {
       const ul = h("ul", { class: "file-list" });
       if (path !== "/") {
         const up = path.replace(/\/[^/]+\/?$/, "") || "/";
-        ul.append(h("li", null, h("button", { type: "button", onClick: () => browse(up) }, h("span", { class: "ico" }, "↑"), "..")));
+        ul.append(h("li", null, h("button", { type: "button", onClick: () => browse(up) }, icon("chevronRight", { class: "up", size: 16 }), "..")));
       }
       const sorted = [...(items || [])].sort((a, b) => (b.dir - a.dir) || a.name.localeCompare(b.name));
       for (const it of sorted) {
         const full = (path.endsWith("/") ? path : path + "/") + it.name;
         ul.append(h("li", null, h("button", { type: "button", onClick: () => it.dir ? browse(full) : view(full, it) },
-          h("span", { class: "ico", "aria-hidden": "true" }, it.dir ? "▸" : "·"),
+          icon(it.dir ? "folder" : "file", { size: 16 }),
           h("span", { class: "truncate" }, it.name),
           it.dir ? null : h("span", { class: "size" }, fmtBytes(it.size)),
         )));
@@ -61,7 +62,7 @@ export function filesTab(domain) {
       const text = await api.text(`/sites/${enc(domain)}/file` + qs({ path }));
       const binary = !isText && /[\x00-\x08\x0E-\x1F]/.test(text.slice(0, 4000));
       clear(viewBox);
-      const editBtn = h("button", { type: "button", class: "btn sm", hidden: binary }, t("files.edit"));
+      const editBtn = h("button", { type: "button", class: "btn sm", hidden: binary }, icon("edit"), t("files.edit"));
       const bar = h("div", { class: "log-bar" }, h("span", { class: "path grow" }, path), meta ? h("span", { class: "small muted" }, fmtBytes(meta.size), " · ", fmtTime(meta.mtime)) : null, editBtn);
       const pre = h("pre", { class: "log", tabindex: "0" }, binary ? t("files.binary") : (text || t("files.emptyFile")));
       viewBox.append(bar, pre);

@@ -2,6 +2,7 @@
 // every 10s while open, because load and memory do not emit events and a
 // stale number on this screen is what an operator comes here to check.
 
+import { icon } from "../lib/icons.js";
 import { h, clear, append, fmtBytes, fmtDuration } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
@@ -11,8 +12,8 @@ import { confirm } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 
 export function systemScreen() {
-  const restartBtn = h("button", { type: "button", class: "btn danger" }, t("system.restart"));
-  const p = page({ title: t("nav.system"), actions: restartBtn });
+  const restartBtn = h("button", { type: "button", class: "btn danger" }, icon("power"), t("system.restart"));
+  const p = page({ title: t("nav.system"), icon: "cpu", actions: restartBtn });
   const stats = h("div", { class: "stats" });
   const info = h("div", { class: "card" });
   const procs = h("div", { class: "card pad0" });
@@ -33,12 +34,18 @@ export function systemScreen() {
     const s = await api.get("/system");
     const mem = s.memory || {};
     const disk = s.disk || {};
-    const load_ = Array.isArray(s.load) ? s.load.map((x) => Number(x).toFixed(2)).join(" ") : (s.load ?? "");
+    // load is {"1m","5m","15m"} from the API; older builds sent an array.
+    const l = s.load;
+    const load_ = Array.isArray(l) ? l.map((x) => Number(x).toFixed(2)).join(" ")
+      : l && typeof l === "object" ? ["1m", "5m", "15m"].map((k) => Number(l[k] ?? 0).toFixed(2)).join(" ")
+      : (l ?? "");
+    // uptime arrives already formatted ("31s", "3h12m"); a number is seconds.
+    const uptime = typeof s.uptime === "number" ? fmtDuration(s.uptime) : (s.uptime || (s.started ? fmtDuration((Date.now() - new Date(s.started)) / 1000) : ""));
     const memUsed = mem.used ?? (mem.total && mem.free ? mem.total - mem.free : undefined);
     const diskUsed = disk.used ?? (disk.total && disk.free ? disk.total - disk.free : undefined);
     clear(stats).append(
       stat(t("system.version"), s.version || "", true),
-      stat(t("system.uptime"), fmtDuration(s.uptime)),
+      stat(t("system.uptime"), uptime),
       stat(t("system.load"), load_, true),
       stat(t("system.memory"), memUsed !== undefined ? fmtBytes(memUsed) + " / " + fmtBytes(mem.total) + pct(memUsed, mem.total) : fmtBytes(mem.total)),
       stat(t("system.disk"), diskUsed !== undefined ? fmtBytes(diskUsed) + " / " + fmtBytes(disk.total) + pct(diskUsed, disk.total) : fmtBytes(disk.total)),

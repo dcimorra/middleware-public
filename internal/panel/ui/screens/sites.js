@@ -8,15 +8,17 @@ import { t } from "../lib/i18n.js";
 import { api } from "../lib/api.js";
 import { store } from "../lib/store.js";
 import { navigate } from "../lib/router.js";
-import { page, empty, errorBox, loading, table, cell } from "../components/page.js";
+import { page, empty, errorBox, loading, table, cell, search as searchBox } from "../components/page.js";
+import { icon } from "../lib/icons.js";
+
 import { modeBadge, aliveStatus, siteMode } from "../components/badge.js";
 import { open, field } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 
 export function sitesScreen({ query }) {
   const search = h("input", { type: "search", placeholder: t("sites.search"), "aria-label": t("sites.search"), autocomplete: "off" });
-  const newBtn = h("button", { type: "button", class: "btn primary", "data-shortcut": "new" }, t("sites.new"));
-  const p = page({ title: t("nav.sites"), actions: [h("div", { class: "search" }, search), newBtn] });
+  const newBtn = h("button", { type: "button", class: "btn primary", "data-shortcut": "new" }, icon("plus"), t("sites.new"));
+  const p = page({ title: t("nav.sites"), icon: "globe", actions: [searchBox(search), newBtn] });
   const container = h("div", { class: "card pad0" });
   const count = h("p", { class: "small muted", role: "status" });
   p.body.append(container, count);
@@ -31,12 +33,12 @@ export function sitesScreen({ query }) {
     const list = q ? all.filter((s) => s.domain.toLowerCase().includes(q) || siteMode(s).includes(q)) : all;
     clear(container);
     if (all.length === 0) {
-      container.append(empty(t("sites.emptyTitle"), t("sites.emptyHint"), h("button", { type: "button", class: "btn primary", onClick: newSite }, t("sites.new"))));
+      container.append(empty(t("sites.emptyTitle"), t("sites.emptyHint"), h("button", { type: "button", class: "btn primary", onClick: newSite }, icon("plus"), t("sites.new")), "globe"));
       count.textContent = "";
       return;
     }
     if (list.length === 0) {
-      container.append(empty(t("sites.noMatch"), t("sites.noMatchHint", { q: filter })));
+      container.append(empty(t("sites.noMatch"), t("sites.noMatchHint", { q: filter }), null, "search"));
       count.textContent = "";
       return;
     }

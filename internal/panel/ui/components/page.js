@@ -4,11 +4,12 @@
 
 import { h, clear } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
+import { icon } from "../lib/icons.js";
 
-export function page({ title, sub, actions, crumbs }) {
+export function page({ title, sub, actions, crumbs, icon: ico }) {
   const head = h("div", { class: "page-head" });
   if (crumbs) head.append(h("div", { class: "crumbs" }, crumbs));
-  head.append(h("h1", null, title));
+  head.append(h("h1", null, ico ? icon(ico) : null, h("span", null, title)));
   if (actions) head.append(h("div", { class: "actions" }, actions));
   if (sub) head.append(h("p", { class: "sub" }, sub));
   const body = h("div", { class: "page-body" });
@@ -24,8 +25,20 @@ export function errorBox(e) {
   return h("div", { class: "error-box", role: "alert" }, e && e.message ? e.message : String(e));
 }
 
-export function empty(title, hint, action) {
-  return h("div", { class: "empty" }, h("strong", null, title), hint ? h("div", null, hint) : null, action || null);
+export function empty(title, hint, action, ico = "box") {
+  return h("div", { class: "empty" }, icon(ico), h("strong", null, title), hint ? h("div", null, hint) : null, action || null);
+}
+
+// notice is a boxed line with the icon its kind implies; `kind` is "",
+// "warn", "bad" or "ok".
+export function notice(kind, ...content) {
+  const ico = kind === "warn" ? "alert" : kind === "bad" ? "ban" : kind === "ok" ? "check" : "info";
+  return h("div", { class: "notice " + (kind || "") }, icon(ico, { size: 18 }), h("div", { class: "grow" }, ...content));
+}
+
+// search wraps an input with the magnifier.
+export function search(input) {
+  return h("div", { class: "search" }, icon("search"), input);
 }
 
 // load runs fn and swaps the container between loading, error and the
