@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/fsx"
 	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/middleware-public/internal/settings"
 )
 
 // Middleware is the reserved conversation name. It is not a valid domain,
@@ -55,10 +57,14 @@ type Options struct {
 	Root     string
 	Bus      *events.Bus
 	Registry *agent.Registry
-	// DefaultProvider is used when the site's manifest names none.
+	// DefaultProvider is used when the site's manifest names none. It
+	// overrides Limits.DefaultProvider; empty takes the latter.
 	DefaultProvider string
 	// Ledger defaults to one under Root/data.
 	Ledger *agent.Ledger
+	// Limits is the concurrency section of the settings; a zero value
+	// takes the defaults. SetLimits changes it live.
+	Limits settings.Agents
 }
 
 // Manager runs the conversations.
@@ -66,16 +72,37 @@ type Manager struct {
 	opts    Options
 	mu      sync.Mutex
 	running map[string]*running
+	limits  settings.Agents
 }
 
 type running struct {
-	turnID string
-	run    agent.Run
-	cancel context.CancelFunc
+	turnID   string
+	provider string
+	started  time.Time
+	run      agent.Run
+	cancel   context.CancelFunc
 }
 
 // ErrBusy says a turn is already running for that conversation.
 var ErrBusy = errors.New("a turn is already running")
+
+// ErrCapacity says the house, or one provider, has no free slot. The
+// numbers are what the caller shows: a 429 that says "8 of 8" is one the
+// operator can act on in Settings.
+type ErrCapacity struct {
+	Used, Max int
+	// Provider is set when the provider's own cap was the one hit.
+	Provider                  string
+	ProviderUsed, ProviderMax int
+}
+
+// Error implements error.
+func (e *ErrCapacity) Error() string {
+	if e.Provider != "" {
+		return fmt.Sprintf("no capacity for %s: %d of %d %s turns running; raise agents.per_provider.%s in Settings or wait", e.Provider, e.ProviderUsed, e.ProviderMax, e.Provider, e.Provider)
+	}
+	return fmt.Sprintf("no capacity: %d of %d agent turns running; raise agents.max_concurrent in Settings or wait", e.Used, e.Max)
+}
 
 // New returns a manager. Nothing runs until Send.
 func New(opts Options) *Manager {
@@ -88,15 +115,127 @@ func New(opts Options) *Manager {
 	if opts.Ledger == nil {
 		opts.Ledger = agent.NewLedger(filepath.Join(opts.Root, "data"))
 	}
-	if opts.DefaultProvider == "" {
-		opts.DefaultProvider = "claude"
-	}
 	// A relative root would put relative paths in the jail's deny list and
 	// in the child's HOME, and a deny rule is only as good as its path.
 	if abs, err := filepath.Abs(opts.Root); err == nil {
 		opts.Root = abs
 	}
-	return &Manager{opts: opts, running: map[string]*running{}}
+	m := &Manager{opts: opts, running: map[string]*running{}}
+	m.SetLimits(opts.Limits)
+	return m
+}
+
+// SetLimits replaces the concurrency limits at once. Turns already
+// running are not stopped by a lower cap: they finish, and the next Send
+// sees the new numbers. The default provider follows the settings unless
+// the Options pinned one.
+func (m *Manager) SetLimits(a settings.Agents) {
+	d := settings.DefaultAgents()
+	if a.MaxConcurrent == 0 && a.DefaultProvider == "" && a.PerProvider == nil {
+		a = d
+	}
+	if a.Validate() != nil {
+		if a.MaxConcurrent < 1 || a.MaxConcurrent > settings.MaxAgents {
+			a.MaxConcurrent = d.MaxConcurrent
+		}
+		if a.ReservedForHouse < 0 || a.ReservedForHouse >= a.MaxConcurrent {
+			a.ReservedForHouse = 0
+			if a.MaxConcurrent > 1 {
+				a.ReservedForHouse = d.ReservedForHouse
+			}
+		}
+		if a.DefaultProvider == "" {
+			a.DefaultProvider = d.DefaultProvider
+		}
+	}
+	if m.opts.DefaultProvider != "" {
+		a.DefaultProvider = m.opts.DefaultProvider
+	}
+	per := map[string]int{}
+	for k, v := range a.PerProvider {
+		if v > 0 {
+			per[k] = v
+		}
+	}
+	a.PerProvider = per
+	m.mu.Lock()
+	m.limits = a
+	m.mu.Unlock()
+}
+
+// Capacity is the live picture: slots used and available, per provider,
+// and which conversations hold them.
+type Capacity struct {
+	Used      int                         `json:"used"`
+	Max       int                         `json:"max"`
+	Reserved  int                         `json:"reserved_for_house"`
+	Providers map[string]ProviderCapacity `json:"providers"`
+	Running   []RunningTurn               `json:"running"`
+}
+
+// ProviderCapacity is one provider's share; Max 0 means no cap of its own.
+type ProviderCapacity struct {
+	Used int `json:"used"`
+	Max  int `json:"max"`
+}
+
+// RunningTurn is one conversation with a turn in progress.
+type RunningTurn struct {
+	Domain   string    `json:"domain"`
+	Provider string    `json:"provider"`
+	Started  time.Time `json:"started"`
+	TurnID   string    `json:"turn_id"`
+}
+
+// Capacity returns the live numbers.
+func (m *Manager) Capacity() Capacity {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.capacityLocked()
+}
+
+func (m *Manager) capacityLocked() Capacity {
+	c := Capacity{Used: len(m.running), Max: m.limits.MaxConcurrent, Reserved: m.limits.ReservedForHouse, Providers: map[string]ProviderCapacity{}, Running: []RunningTurn{}}
+	for _, key := range m.opts.Registry.Keys() {
+		c.Providers[key] = ProviderCapacity{Max: m.limits.PerProvider[key]}
+	}
+	for domain, r := range m.running {
+		p := c.Providers[r.provider]
+		p.Used++
+		if p.Max == 0 {
+			p.Max = m.limits.PerProvider[r.provider]
+		}
+		c.Providers[r.provider] = p
+		c.Running = append(c.Running, RunningTurn{Domain: domain, Provider: r.provider, Started: r.started, TurnID: r.turnID})
+	}
+	sort.Slice(c.Running, func(i, j int) bool { return c.Running[i].Started.Before(c.Running[j].Started) })
+	return c
+}
+
+// admit decides, under the lock, whether a turn for domain on provider
+// may start now. The house keeps its reserved slots: a site is refused
+// once used reaches max minus reserved, the house once it reaches max.
+func (m *Manager) admit(domain, provider string) error {
+	used := len(m.running)
+	limit := m.limits.MaxConcurrent
+	if domain != Middleware {
+		limit -= m.limits.ReservedForHouse
+	}
+	if used >= limit {
+		return &ErrCapacity{Used: used, Max: m.limits.MaxConcurrent}
+	}
+	if pmax := m.limits.PerProvider[provider]; pmax > 0 {
+		pused := 0
+		for _, r := range m.running {
+			if r.provider == provider {
+				pused++
+			}
+		}
+		if pused >= pmax {
+			return &ErrCapacity{Used: used, Max: m.limits.MaxConcurrent, Provider: provider, ProviderUsed: pused, ProviderMax: pmax}
+		}
+	}
+	return nil
 }
 
 func (m *Manager) file(domain string) string {
@@ -137,7 +276,9 @@ func (m *Manager) Resolve(domain string) (Settings, error) {
 	if err != nil {
 		return Settings{}, err
 	}
-	s := Settings{Provider: m.opts.DefaultProvider, Workdir: dir}
+	m.mu.Lock()
+	s := Settings{Provider: m.limits.DefaultProvider, Workdir: dir}
+	m.mu.Unlock()
 	if domain != Middleware {
 		site := agent.ReadSiteSettings(dir)
 		if site.Provider != "" {
@@ -255,9 +396,15 @@ func (m *Manager) Send(domain, text, model string) (string, error) {
 		m.mu.Unlock()
 		return "", ErrBusy
 	}
+	if err := m.admit(domain, s.Provider); err != nil {
+		cap := m.capacityLocked()
+		m.mu.Unlock()
+		m.emit("agent.capacity", domain, "warn", err.Error(), map[string]any{"used": cap.Used, "max": cap.Max, "provider": s.Provider, "providers": cap.Providers})
+		return "", err
+	}
 	turnID := newID()
 	ctx, cancel := context.WithCancel(context.Background())
-	m.running[domain] = &running{turnID: turnID, cancel: cancel}
+	m.running[domain] = &running{turnID: turnID, provider: s.Provider, started: time.Now(), cancel: cancel}
 	m.mu.Unlock()
 
 	fail := func(err error) (string, error) {

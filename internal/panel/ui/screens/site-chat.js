@@ -4,7 +4,7 @@
 // cost, end. The shapes are tolerant on purpose: the adapter decides what
 // it puts in data, and a field the panel does not know is just not shown.
 
-import { h, clear } from "../lib/dom.js";
+import { h, clear, debounce } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
 import { store } from "../lib/store.js";
@@ -22,11 +22,38 @@ export function chatTab(domain) {
   const stop = h("button", { type: "button", class: "btn danger", hidden: true }, t("chat.stop"));
   const reset = h("button", { type: "button", class: "btn ghost sm" }, t("chat.new"));
   const status = h("span", { class: "small muted", role: "status" });
+  const capacity = h("span", { class: "small muted chat-capacity", title: t("chat.capacityTitle") });
   const form = h("form", { class: "chat-form" }, text, h("div", { class: "row" }, provider, model, h("span", { class: "grow" }), status, reset, stop, send));
-  const el = h("div", { class: "chat" }, turns, form);
+  const el = h("div", { class: "chat" }, h("div", { class: "chat-head" }, capacity), turns, form);
   let agents = [];
   let running = null; // {turnEl, textEl, textBuf}
   const subs = [];
+
+  // The "3 of 8 running" indicator is house-wide, not this site's: it is
+  // what tells the operator why a send was refused. Events move it at
+  // once and a debounced read of /agents/capacity corrects any drift (a
+  // turn that ended while the stream was reconnecting).
+  const cap = { used: 0, max: 0 };
+  function showCapacity() {
+    capacity.textContent = cap.max ? t("chat.capacity", { used: cap.used, max: cap.max }) : "";
+    capacity.classList.toggle("full", cap.max > 0 && cap.used >= cap.max);
+  }
+  const syncCapacity = debounce(async () => {
+    try {
+      const c = await api.get("/agents/capacity");
+      cap.used = c.used; cap.max = c.max;
+      showCapacity();
+    } catch { /* the indicator keeps what the events said */ }
+  }, 300);
+  subs.push(onEvent("agent.", (ev) => {
+    const d = ev.data || {};
+    if (ev.type === "agent.started") cap.used++;
+    else if (ev.type === "agent.done" || (ev.type === "agent.error" && d.turn_id && ev.level === "error")) cap.used = Math.max(0, cap.used - 1);
+    else if (ev.type === "agent.capacity") { if (d.used !== undefined) cap.used = d.used; if (d.max !== undefined) cap.max = d.max; }
+    else return;
+    showCapacity();
+    syncCapacity();
+  }));
 
   function turnEl(role, body, cost, at) {
     const who = h("div", { class: "who" }, role === "user" ? t("chat.you") : t("chat.agent"), at ? h("span", { class: "muted" }, new Date(at).toLocaleTimeString()) : null, cost ? h("span", { class: "cost" }, fmtCost(cost)) : null);
@@ -41,7 +68,9 @@ export function chatTab(domain) {
 
   async function loadAgents() {
     try {
-      agents = await api.get("/agents");
+      const a = await api.get("/agents");
+      agents = a.providers || [];
+      if (a.capacity) { cap.used = a.capacity.used; cap.max = a.capacity.max; showCapacity(); }
     } catch { agents = []; }
     clear(provider);
     for (const a of agents) provider.append(h("option", { value: a.provider, disabled: !a.available }, a.provider + (a.available ? "" : " " + t("chat.unavailable"))));
@@ -96,7 +125,7 @@ export function chatTab(domain) {
   // Events: agent.text (delta), agent.tool / agent.tool.result, agent.cost,
   // agent.end / agent.error / agent.stopped.
   subs.push(onEvent("agent.", (ev) => {
-    if (ev.subject !== domain) return;
+    if (ev.subject !== domain || ev.type === "agent.capacity") return;
     const d = ev.data || {};
     if (ev.type === "agent.start" || ev.type === "agent.turn.started") { if (!running) begin(); return; }
     if (!running) begin();
@@ -142,7 +171,9 @@ export function chatTab(domain) {
     const msg = text.value.trim();
     if (!msg || running) return;
     turns.querySelector(".empty")?.remove();
-    turns.append(turnEl("user", msg).el);
+    turns.querySelector(".chat-notice")?.remove();
+    const mine = turnEl("user", msg).el;
+    turns.append(mine);
     text.value = "";
     send.classList.add("busy");
     try {
@@ -154,6 +185,17 @@ export function chatTab(domain) {
       await api.post(`/sites/${enc(domain)}/chat`, { text: msg, model: model.value || undefined });
       if (!running) begin();
     } catch (err) {
+      if (err.status === 429) {
+        // The house is full: the message goes back in the box, whole, and
+        // the reason is said where the operator is looking.
+        mine.remove();
+        text.value = msg;
+        turns.append(h("div", { class: "notice warn chat-notice" }, t("chat.capacityFull", { used: cap.used, max: cap.max })));
+        scroll();
+        syncCapacity();
+        end(null);
+        return;
+      }
       toastError(err);
       end(null);
     } finally {

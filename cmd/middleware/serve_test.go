@@ -87,7 +87,7 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		return resp.StatusCode, string(body)
 	}
-	sections := []string{"/sites", "/events", "/system", "/modules", "/inbound", "/inbound/certificates", "/waf", "/waf/traffic", "/agents", "/chat/middleware", "/tasks", "/guard", "/openapi.json"}
+	sections := []string{"/sites", "/events", "/system", "/modules", "/inbound", "/inbound/certificates", "/waf", "/waf/traffic", "/agents", "/agents/capacity", "/chat/middleware", "/tasks", "/guard", "/openapi.json"}
 	for _, path := range sections {
 		code, body := get(path)
 		if code != 200 {
@@ -127,5 +127,15 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 	code, body := get("/events?type=middleware.ready")
 	if code != 200 || !strings.Contains(body, `"middleware.ready"`) {
 		t.Fatalf("middleware.ready was not emitted: %d %s", code, body)
+	}
+
+	// `middleware agents` reads the same answer over the socket, and the
+	// capacity it prints is the settings' default.
+	code, body = get("/agents")
+	if code != 200 || !strings.Contains(body, `"max": 8`) || !strings.Contains(body, `"provider": "claude"`) {
+		t.Fatalf("agents: %d %s", code, body)
+	}
+	if err := agentsCmd([]string{"--root", root}); err != nil {
+		t.Fatalf("middleware agents: %v", err)
 	}
 }
