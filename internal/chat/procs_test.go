@@ -110,3 +110,28 @@ func TestALentFolderIsReadNotWritten(t *testing.T) {
 		}
 	}
 }
+
+// A message sent while a turn runs is kept and sent when it ends.
+func TestAMessageDuringATurnIsSentWhenItEnds(t *testing.T) {
+	hold := make(chan struct{})
+	p := &fakeProvider{key: "fake", script: []agent.Event{{Kind: agent.KindText, Text: "working"}, {Kind: agent.KindResult}}, hold: hold}
+	m, _, bus := newManager(t, p)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+	if _, err := m.Send("a.test", "first", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.SendWith("a.test", "also this", SendOptions{Queue: true}); err != ErrQueued {
+		t.Fatalf("queue: %v", err)
+	}
+	if _, err := m.SendWith("a.test", "and this", SendOptions{Queue: true}); err != ErrQueued {
+		t.Fatalf("queue: %v", err)
+	}
+	close(hold)
+	waitFor(t, ch, "agent.done")
+	waitFor(t, ch, "agent.started")
+	if p.last().Prompt != "also this\n\nand this" {
+		t.Fatalf("next prompt %q", p.last().Prompt)
+	}
+	waitFor(t, ch, "agent.done")
+}

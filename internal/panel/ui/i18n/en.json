@@ -577,5 +577,7 @@
   "chat.fromSite": "From the site's code",
   "chat.siteDoorNote": "This conversation was opened by the site's own code through the site door. It can be read and stopped here, not written into.",
   "nav.house": "House agent",
-  "house.sub": "An agent working on the installation itself: its settings, its tasks, new sites. Existing sites are each their own conversation's."
+  "house.sub": "An agent working on the installation itself: its settings, its tasks, new sites. Existing sites are each their own conversation's.",
+  "chat.queue": "Queue",
+  "chat.queued": "queued for when this turn ends"
 }

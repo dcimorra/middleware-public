@@ -189,7 +189,7 @@ export function chatTab(domain) {
     turns.append(tu.el);
     running = { ...tu, buf: "", tools: new Map() };
     stop.hidden = false;
-    send.disabled = true;
+    send.textContent = t("chat.queue");
     status.textContent = t("chat.working");
     scroll();
   }
@@ -200,7 +200,7 @@ export function chatTab(domain) {
     if (cost !== undefined) running.who.append(h("span", { class: "cost" }, fmtCost(cost)));
     running = null;
     stop.hidden = true;
-    send.disabled = false;
+    send.textContent = t("chat.send");
     status.textContent = "";
   }
 
@@ -260,7 +260,8 @@ export function chatTab(domain) {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const msg = text.value.trim();
-    if (!msg || running) return;
+    if (!msg) return;
+    const whileRunning = Boolean(running);
     turns.querySelector(".empty")?.remove();
     turns.querySelector(".chat-notice")?.remove();
     const mine = turnEl("user", msg).el;
@@ -273,8 +274,12 @@ export function chatTab(domain) {
       if (!house && provider.value && provider.value !== agentCfg.provider) {
         await api.patch(`/sites/${enc(domain)}/manifest`, { agent: { ...agentCfg, provider: provider.value, model: model.value } });
       }
-      await api.post(cur.path, { text: msg, model: model.value || undefined });
-      if (!running) begin();
+      const r = await api.post(cur.path, { text: msg, model: model.value || undefined });
+      if (r && r.queued) {
+        // Kept for when the running turn ends; it goes out with any other
+        // queued message as the next one.
+        mine.querySelector(".who").append(h("span", { class: "muted" }, t("chat.queued")));
+      } else if (!running && !whileRunning) begin();
     } catch (err) {
       if (err.status === 429) {
         // The house is full: the message goes back in the box, whole, and

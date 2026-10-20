@@ -147,7 +147,11 @@ func (s *Server) registerChat(m *chat.Manager, p string, name func(*http.Request
 		if c, err := m.Conversation(domain); err == nil && c.Origin == chat.OriginSite {
 			return nil, Errorf(http.StatusConflict, "this conversation belongs to the site's code; open one of your own to talk about the site")
 		}
-		id, err := m.Send(domain, body.Text, body.Model)
+		id, err := m.SendWith(domain, body.Text, chat.SendOptions{Model: body.Model, Queue: true})
+		if errors.Is(err, chat.ErrQueued) {
+			WriteJSON(w, http.StatusAccepted, map[string]any{"queued": true})
+			return Handled, nil
+		}
 		if err != nil {
 			return nil, chatError(err)
 		}

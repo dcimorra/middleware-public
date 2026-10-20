@@ -121,6 +121,9 @@ type running struct {
 	cancel   context.CancelFunc
 	// done closes when the turn is written and its slot free.
 	done chan struct{}
+	// queued are messages sent while the turn ran, kept for the next.
+	queued      []string
+	queuedModel string
 }
 
 // Name is a conversation's name: the domain for the panel's, and
@@ -470,7 +473,14 @@ func (m *Manager) Send(name, text, model string) (string, error) {
 // SendOptions are a turn's own choices.
 type SendOptions struct {
 	Model string
+	// Queue keeps a message that arrives while a turn runs and sends it
+	// when the turn ends, instead of refusing it: the operator who thinks
+	// of something mid-turn should not have to wait and retype it.
+	Queue bool
 }
+
+// ErrQueued says the message was kept for when the running turn ends.
+var ErrQueued = errors.New("queued: it is sent when the running turn ends")
 
 // SendWith is Send with options.
 func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
@@ -509,7 +519,17 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 		model = s.Model
 	}
 	m.mu.Lock()
-	if _, busy := m.running[name]; busy {
+	if r, busy := m.running[name]; busy {
+		if o.Queue {
+			r.queued = append(r.queued, text)
+			if model != "" {
+				r.queuedModel = model
+			}
+			n := len(r.queued)
+			m.mu.Unlock()
+			m.emit("agent.queued", name, "", "", map[string]any{"queued": n})
+			return "", ErrQueued
+		}
 		m.mu.Unlock()
 		return "", ErrBusy
 	}
@@ -693,12 +713,24 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 	// The turn counts as running until its file is written, and the final
 	// event goes out only after that: whoever reacts to agent.done can
 	// Send again and read the turn from History at once.
+	var queued []string
+	queuedModel := ""
 	m.mu.Lock()
 	if r := m.running[name]; r != nil {
 		close(r.done)
+		queued, queuedModel = r.queued, r.queuedModel
 	}
 	delete(m.running, name)
 	m.mu.Unlock()
+	if len(queued) > 0 {
+		// After this turn's final event, so whoever follows the stream sees
+		// one turn end and the next begin.
+		defer func() {
+			if _, err := m.SendWith(name, strings.Join(queued, "\n\n"), SendOptions{Model: queuedModel}); err != nil {
+				m.emit("agent.error", name, "error", "the queued message was not sent: "+err.Error(), nil)
+			}
+		}()
+	}
 	if errText != "" {
 		m.emit("agent.error", name, "error", errText, map[string]any{"turn_id": turnID, "cost": cost})
 		return
