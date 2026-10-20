@@ -22,7 +22,26 @@ type Jail struct {
 	Home string
 	// Deny is the list of absolute paths the agent must not touch.
 	Deny []string
+	// Commands are command prefixes the agent must not run: what reaches
+	// past the site to the machine (sudo, systemctl, the tunnel, docker,
+	// which on a rootless daemon mounts the supervisor's whole HOME) and
+	// what cannot be undone on a shared remote (a forced push).
+	Commands []string
 }
+
+// machineSecrets are the supervisor's own keys, under its real HOME (not
+// the jail's): denied to every conversation, the house's included. The
+// agent works with permissions skipped, so what is not denied is allowed.
+var machineSecrets = []string{".ssh", ".aws", ".cloudflare", ".claude", ".claude.json", ".config/gcloud", ".docker", ".kube", ".gnupg", ".netrc", ".git-credentials", ".npmrc"}
+
+// deniedCommands for every conversation; the house's may run docker.
+var deniedCommands = []string{"sudo", "su", "systemctl", "service", "shutdown", "reboot", "cloudflared",
+	"git push --force", "git push -f", "git push --delete", "git push --mirror"}
+
+var siteOnlyCommands = []string{"docker", "podman", "nsenter", "unshare"}
+
+// realHome is the supervisor's HOME; a variable so tests use their own.
+var realHome = func() string { h, _ := os.UserHomeDir(); return h }
 
 // NewJail builds the jail for workdir inside root. Siblings are listed at
 // call time, so a site added after this installation started is denied
@@ -39,9 +58,20 @@ func NewJail(root, workdir, home string) Jail {
 	if home != "" {
 		home = absolute(home)
 	}
-	j := Jail{SiteDir: workdir, Home: home}
+	j := Jail{SiteDir: workdir, Home: home, Commands: append([]string(nil), deniedCommands...)}
+	if workdir != root {
+		j.Commands = append(j.Commands, siteOnlyCommands...)
+	}
 	seen := map[string]bool{}
-	deny := func(p string) {
+	add := func(p string) {
+		if !seen[p] {
+			seen[p] = true
+			j.Deny = append(j.Deny, p)
+		}
+	}
+	realWork := resolved(workdir)
+	var deny func(p string)
+	deny = func(p string) {
 		p = filepath.Clean(p)
 		if p == workdir || p == home || isUnder(home, p) {
 			return
@@ -49,9 +79,30 @@ func NewJail(root, workdir, home string) Jail {
 		if workdir != root && (isUnder(p, workdir) || isUnder(workdir, p)) {
 			return
 		}
-		if !seen[p] {
-			seen[p] = true
-			j.Deny = append(j.Deny, p)
+		// A sibling reached through a link is denied by both names: the
+		// agent can open either. When the sibling (by its real name) is an
+		// ancestor of this site's own folder (a project kept inside another
+		// site and linked into sites/), denying it whole would deny the
+		// site its own code, since a deny beats everything; so each level
+		// on the way down is denied entry by entry except the way down.
+		rp := resolved(p)
+		if workdir != root && rp != realWork && isUnder(realWork, rp) {
+			for _, q := range walkAround(rp, realWork) {
+				add(q)
+			}
+			return
+		}
+		if workdir != root && rp == realWork {
+			return
+		}
+		add(p)
+		if rp != p {
+			add(rp)
+		}
+	}
+	if h := realHome(); h != "" {
+		for _, s := range machineSecrets {
+			add(filepath.Join(h, s))
 		}
 	}
 	if workdir == root {
@@ -157,6 +208,35 @@ func (j Jail) Prepare() error {
 		}
 	}
 	return nil
+}
+
+// walkAround lists, at every level from ancestor down to target, the
+// entries that are not on the way down.
+func walkAround(ancestor, target string) []string {
+	rel, err := filepath.Rel(ancestor, target)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	step := ancestor
+	for _, name := range strings.Split(rel, string(filepath.Separator)) {
+		next := filepath.Join(step, name)
+		for _, e := range readDir(step) {
+			if p := filepath.Join(step, e); p != next {
+				out = append(out, p)
+			}
+		}
+		step = next
+	}
+	return out
+}
+
+// resolved is a path by its real name, links followed when they can be.
+func resolved(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return filepath.Clean(p)
 }
 
 // absolute cleans p and makes it absolute; a deny rule with a relative

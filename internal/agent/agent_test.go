@@ -237,3 +237,59 @@ func TestStopEndsACLIRunAndItsProcessGroup(t *testing.T) {
 		}
 	}
 }
+
+// The supervisor's own keys and the commands that reach past the site are
+// denied to every conversation; docker only to sites (on a rootless daemon
+// it mounts the supervisor's whole HOME).
+func TestTheJailDeniesTheMachinesKeysAndCommands(t *testing.T) {
+	defer func(f func() string) { realHome = f }(realHome)
+	h := t.TempDir()
+	realHome = func() string { return h }
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "sites", "a.test"), 0o755)
+	site := NewJail(root, filepath.Join(root, "sites", "a.test"), filepath.Join(root, "data", "homes", "a.test"))
+	house := NewJail(root, root, filepath.Join(root, "data", "homes", "middleware"))
+	for _, j := range []Jail{site, house} {
+		deny := strings.Join(j.Deny, "\n")
+		for _, s := range []string{".ssh", ".claude", ".cloudflare", ".aws"} {
+			if !strings.Contains(deny, filepath.Join(h, s)) {
+				t.Errorf("%s not denied to %s", s, j.SiteDir)
+			}
+		}
+		if !strings.Contains(strings.Join(j.Commands, ","), "sudo") || !strings.Contains(strings.Join(j.Commands, ","), "git push --force") {
+			t.Errorf("commands: %v", j.Commands)
+		}
+	}
+	if !strings.Contains(strings.Join(site.Commands, ","), "docker") || strings.Contains(strings.Join(house.Commands, ","), "docker") {
+		t.Fatalf("docker: site %v, house %v", site.Commands, house.Commands)
+	}
+}
+
+// A project kept inside another site and linked into sites/ (V1's Mask
+// portals): the other site is an ancestor of this one's real folder, so it
+// is denied entry by entry around the way down, never whole, or the
+// conversation could not write its own code.
+func TestASiteInsideAnotherIsNotLockedOutOfItself(t *testing.T) {
+	defer func(f func() string) { realHome = f }(realHome)
+	realHome = func() string { return "" }
+	root := t.TempDir()
+	host := filepath.Join(root, "sites", "host.test")
+	inner := filepath.Join(host, "portals", "p1")
+	os.MkdirAll(inner, 0o755)
+	os.MkdirAll(filepath.Join(host, "portals", "p2"), 0o755)
+	os.WriteFile(filepath.Join(host, ".env"), []byte("SECRET=1"), 0o600)
+	os.Symlink(inner, filepath.Join(root, "sites", "p1.test"))
+	j := NewJail(root, filepath.Join(root, "sites", "p1.test"), filepath.Join(root, "data", "homes", "p1.test"))
+	deny := map[string]bool{}
+	for _, d := range j.Deny {
+		deny[d] = true
+	}
+	if deny[host] || deny[filepath.Join(host, "portals")] || deny[inner] {
+		t.Fatalf("the site's own way down is denied: %v", j.Deny)
+	}
+	for _, want := range []string{filepath.Join(host, ".env"), filepath.Join(host, "portals", "p2")} {
+		if !deny[want] {
+			t.Errorf("%s is not denied: %v", want, j.Deny)
+		}
+	}
+}

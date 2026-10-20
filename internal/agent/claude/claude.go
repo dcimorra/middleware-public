@@ -56,7 +56,11 @@ func New(cfg Config) *Provider {
 		cfg.Models = []string{"sonnet", "opus", "haiku"}
 	}
 	if cfg.PermissionMode == "" {
-		cfg.PermissionMode = "acceptEdits"
+		// A turn has nobody to approve a prompt: under acceptEdits every
+		// Bash call of a headless run is refused, so the agent could not
+		// as much as run npm. Permissions are skipped and the jail's deny
+		// rules (which win in every mode) are the wall, as in V1.
+		cfg.PermissionMode = "bypassPermissions"
 	}
 	return &Provider{cfg: cfg}
 }
@@ -99,18 +103,27 @@ func (p *Provider) Args(req agent.Request, settingsFile string) []string {
 }
 
 // Settings is the settings file the jail becomes: a deny rule per tool per
-// denied path. Deny wins over allow in Claude Code, which is why the jail
-// never lists the root itself (see agent.NewJail). Bash is matched on the
-// command text, so a path spelled differently slips through here and is
-// caught by the audit instead.
+// denied path, and one per denied command. Deny wins over allow and over
+// the permission mode in Claude Code, which is why the jail never lists the
+// root itself (see agent.NewJail).
+//
+// An absolute path is written with two slashes: in Claude Code's rules
+// "/x" is relative to the settings file and only "//x" is the root's /x.
+// V2's first draft wrote one slash, so every path rule matched nothing and
+// only the audit after the turn stood between a site and its neighbours.
+// Bash is matched on the command text, so a path spelled differently
+// slips through here and is caught by the audit instead.
 func Settings(j agent.Jail) map[string]any {
 	var deny []string
 	for _, d := range j.Deny {
 		for _, tool := range []string{"Read", "Edit", "Write", "MultiEdit", "Glob", "Grep", "NotebookEdit"} {
-			deny = append(deny, fmt.Sprintf("%s(%s/**)", tool, d))
-			deny = append(deny, fmt.Sprintf("%s(%s)", tool, d))
+			deny = append(deny, fmt.Sprintf("%s(/%s/**)", tool, d))
+			deny = append(deny, fmt.Sprintf("%s(/%s)", tool, d))
 		}
 		deny = append(deny, fmt.Sprintf("Bash(*%s*)", d))
+	}
+	for _, c := range j.Commands {
+		deny = append(deny, fmt.Sprintf("Bash(%s:*)", c))
 	}
 	return map[string]any{"permissions": map[string]any{"deny": deny}}
 }

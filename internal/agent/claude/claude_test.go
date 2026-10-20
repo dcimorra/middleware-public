@@ -71,7 +71,7 @@ func TestAFakeClaudeTranscriptBecomesEventsWithSessionAndCost(t *testing.T) {
 	}
 
 	args, _ := os.ReadFile(argsFile)
-	for _, want := range []string{"-p\nhello\n", "--output-format\nstream-json\n", "--verbose\n", "--permission-mode\nacceptEdits\n", "--model\nsonnet\n", "--resume\nprev\n", "--add-dir\n" + site + "\n", "--append-system-prompt\nYou are in a jail.\n", "--settings\n", "--extra\n"} {
+	for _, want := range []string{"-p\nhello\n", "--output-format\nstream-json\n", "--verbose\n", "--permission-mode\nbypassPermissions\n", "--model\nsonnet\n", "--resume\nprev\n", "--add-dir\n" + site + "\n", "--append-system-prompt\nYou are in a jail.\n", "--settings\n", "--extra\n"} {
 		if !strings.Contains(string(args), want) {
 			t.Errorf("args missing %q:\n%s", want, args)
 		}
@@ -90,7 +90,7 @@ func TestAFakeClaudeTranscriptBecomesEventsWithSessionAndCost(t *testing.T) {
 	if err := json.Unmarshal(data, &settings); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"Read(/other/**)"`) || !strings.Contains(string(data), `"Bash(*/other*)"`) {
+	if !strings.Contains(string(data), `"Read(//other/**)"`) || !strings.Contains(string(data), `"Bash(*/other*)"`) {
 		t.Fatalf("settings:\n%s", data)
 	}
 }
@@ -139,7 +139,7 @@ func TestTheHouseJailDeniesEachSiteInTheSettingsAndNotTheSitesFolder(t *testing.
 	j := agent.NewJail(root, root, filepath.Join(root, "data", "homes", "middleware"))
 	deny, _ := json.Marshal(Settings(j)["permissions"].(map[string]any)["deny"])
 	rules := string(deny)
-	if !strings.Contains(rules, filepath.Join(root, "sites", "old.test")+"/**") || !strings.Contains(rules, "Bash(*"+filepath.Join(root, "modules")+"*)") {
+	if !strings.Contains(rules, "Read(/"+filepath.Join(root, "sites", "old.test")+"/**)") || !strings.Contains(rules, "Bash(*"+filepath.Join(root, "modules")+"*)") {
 		t.Fatalf("rules do not name the existing site and the modules:\n%s", rules)
 	}
 	if strings.Contains(rules, filepath.Join(root, "sites")+"/**") || strings.Contains(rules, filepath.Join(root, "sites")+")") {

@@ -11,8 +11,8 @@ import { api, enc } from "../lib/api.js";
 import { store } from "../lib/store.js";
 import { onEvent } from "../lib/stream.js";
 import { loading, errorBox } from "../components/page.js";
-import { confirm } from "../components/dialog.js";
-import { toastError } from "../components/toast.js";
+import { confirm, open } from "../components/dialog.js";
+import { toast, toastError } from "../components/toast.js";
 
 export function chatTab(domain) {
   const turns = h("div", { class: "chat-turns", "aria-live": "polite" });
@@ -22,9 +22,13 @@ export function chatTab(domain) {
   const send = h("button", { type: "submit", class: "btn primary" }, icon("send"), t("chat.send"));
   const stop = h("button", { type: "button", class: "btn danger", hidden: true }, icon("stop"), t("chat.stop"));
   const reset = h("button", { type: "button", class: "btn ghost sm" }, icon("sparkles"), t("chat.new"));
+  // What the conversation left running, setsid escapes included: listed
+  // from the environment mark every turn carries, and killed one by one or
+  // all at once. Otherwise they live for days and nobody sees them.
+  const procsBtn = h("button", { type: "button", class: "btn ghost sm" }, icon("list"), t("chat.processes"));
   const status = h("span", { class: "small muted", role: "status" });
   const capacity = h("span", { class: "small muted chat-capacity", title: t("chat.capacityTitle") });
-  const form = h("form", { class: "chat-form" }, text, h("div", { class: "row" }, provider, model, h("span", { class: "grow" }), status, reset, stop, send));
+  const form = h("form", { class: "chat-form" }, text, h("div", { class: "row" }, provider, model, h("span", { class: "grow" }), status, procsBtn, reset, stop, send));
   const el = h("div", { class: "chat" }, h("div", { class: "chat-head" }, capacity), turns, form);
   let agents = [];
   let running = null; // {turnEl, textEl, textBuf}
@@ -253,6 +257,32 @@ export function chatTab(domain) {
   provider.addEventListener("change", fillModels);
   stop.addEventListener("click", async () => {
     try { await api.post(`/sites/${enc(domain)}/chat/stop`); status.textContent = t("chat.stopping"); } catch (err) { toastError(err); }
+  });
+  procsBtn.addEventListener("click", async () => {
+    const list = h("div", { class: "stack-sm" });
+    const fill = async () => {
+      clear(list);
+      const procs = await api.get(`/sites/${enc(domain)}/chat/processes`);
+      if (!procs.length) { list.append(h("p", { class: "muted" }, t("chat.noProcesses"))); return; }
+      for (const pr of procs) {
+        const kill = h("button", { type: "button", class: "btn sm danger" }, t("chat.kill"));
+        kill.addEventListener("click", async () => {
+          try { await api.post(`/sites/${enc(domain)}/chat/processes/${pr.pid}/kill`); await fill(); } catch (err) { toastError(err); }
+        });
+        list.append(h("div", { class: "row" }, h("code", { class: "grow small" }, `${pr.pid}  ${pr.command}`), kill));
+      }
+    };
+    try { await fill(); } catch (err) { toastError(err); return; }
+    await open({
+      title: t("chat.processesTitle"),
+      body: [h("p", { class: "dim" }, t("chat.processesBody")), list],
+      buttons: [{ label: t("common.close"), value: null }, { label: t("chat.killAll"), primary: true, onClick: async () => {
+        const r = await api.post(`/sites/${enc(domain)}/chat/reap`);
+        toast(t("chat.killed", { n: r.killed }), "ok");
+        await fill();
+        return false;
+      } }],
+    });
   });
   reset.addEventListener("click", async () => {
     if (!(await confirm({ title: t("chat.newQ"), body: t("chat.newBody"), confirmLabel: t("chat.new") }))) return;

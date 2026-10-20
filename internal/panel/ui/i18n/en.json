@@ -543,5 +543,12 @@
   "site.holdMode.410": "Gone for good (410)",
   "site.holdMode.500": "Error (500)",
   "site.holdUntil": "Back at",
-  "site.holdUntilHint": "Optional. Shown on the page and sent as Retry-After."
+  "site.holdUntilHint": "Optional. Shown on the page and sent as Retry-After.",
+  "chat.processes": "Processes",
+  "chat.processesTitle": "What this conversation has running",
+  "chat.processesBody": "The turn and whatever it started, also what it left running on purpose with setsid (a build, a server). Nothing here is killed on its own.",
+  "chat.noProcesses": "Nothing running.",
+  "chat.kill": "Kill",
+  "chat.killAll": "Kill all",
+  "chat.killed": "{n} process(es) ended"
 }

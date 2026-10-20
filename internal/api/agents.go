@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/dcimorra/middleware-public/internal/agent"
@@ -116,6 +117,38 @@ func (s *Server) registerChat(m *chat.Manager, p string, name func(*http.Request
 		}
 		if err := m.Reset(domain); err != nil {
 			return nil, chatError(err)
+		}
+		return OK, nil
+	})
+	s.Handle("GET", p+"/processes", "What the conversation has running now, also what escaped its turn with setsid", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		domain, err := name(r)
+		if err != nil {
+			return nil, err
+		}
+		procs := m.Processes(domain)
+		if procs == nil {
+			procs = []chat.Proc{}
+		}
+		return procs, nil
+	})
+	s.Handle("POST", p+"/reap", "Stop the turn and kill everything the conversation left running", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		domain, err := name(r)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]int{"killed": m.Reap(domain)}, nil
+	})
+	s.Handle("POST", p+"/processes/{pid}/kill", "Kill one process the conversation left; any other pid is refused", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		domain, err := name(r)
+		if err != nil {
+			return nil, err
+		}
+		pid, err := strconv.Atoi(r.PathValue("pid"))
+		if err != nil || pid <= 1 {
+			return nil, Errorf(http.StatusBadRequest, "pid: not a process id")
+		}
+		if !m.Kill(domain, pid) {
+			return nil, Errorf(http.StatusNotFound, "%d is not a process of this conversation", pid)
 		}
 		return OK, nil
 	})

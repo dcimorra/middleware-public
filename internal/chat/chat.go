@@ -70,6 +70,8 @@ type Options struct {
 	// Path, when set, is the PATH a turn runs with instead of the
 	// supervisor's: the wiring puts the managed CLIs and their Node first.
 	Path func() string
+	// ProcRoot is /proc; tests point it elsewhere.
+	ProcRoot string
 }
 
 // Manager runs the conversations.
@@ -408,7 +410,7 @@ func (m *Manager) Send(domain, text, model string) (string, error) {
 		return "", err
 	}
 	turnID := newID()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), TurnLimit)
 	m.running[domain] = &running{turnID: turnID, provider: s.Provider, started: time.Now(), cancel: cancel}
 	m.mu.Unlock()
 
@@ -441,7 +443,7 @@ func (m *Manager) Send(domain, text, model string) (string, error) {
 		SessionID: c.SessionID,
 		System:    system,
 		Jail:      s.Jail,
-		Env:       map[string]string{"PATH": m.agentPath()},
+		Env:       map[string]string{"PATH": m.agentPath(), MarkVar: domain},
 	}
 	run, err := provider.Start(ctx, req)
 	if err != nil {
@@ -459,6 +461,12 @@ func (m *Manager) Send(domain, text, model string) (string, error) {
 // follow consumes a run to its end and records the outcome.
 func (m *Manager) follow(domain, turnID string, s Settings, run agent.Run, cancel context.CancelFunc) {
 	defer cancel()
+	started := time.Now()
+	m.mu.Lock()
+	if r := m.running[domain]; r != nil {
+		started = r.started
+	}
+	m.mu.Unlock()
 	var all []agent.Event
 	var text strings.Builder
 	var tools []string
@@ -515,6 +523,10 @@ func (m *Manager) follow(domain, turnID string, s Settings, run agent.Run, cance
 	}
 	if !ended && errText == "" {
 		errText = "the agent ended without a result"
+	}
+	if time.Since(started) >= TurnLimit {
+		errText = fmt.Sprintf("the turn ran for %s and was cut off; what it left running is listed under its processes", TurnLimit)
+		m.emit("agent.turn_limit", domain, "error", errText, map[string]any{"turn_id": turnID})
 	}
 	if cost > 0 {
 		if err := m.opts.Ledger.Add(domain, cost, time.Now()); err != nil {
@@ -626,6 +638,12 @@ func Preamble(domain, workdir string, j agent.Jail) string {
 	b.WriteString("When you need the operator to decide something, ask with a fenced block the panel turns into buttons; two to four short options, the one you would pick as recommended, or an empty options list for a free-text answer:\n")
 	b.WriteString("```question\n{\"question\": \"Which database?\", \"options\": [\"SQLite\", \"Postgres\"], \"recommended\": \"SQLite\"}\n```\n")
 	b.WriteString("Ask one thing at a time, then end your turn; the answer arrives as the next message.\n")
+	if image := dockerImage(workdir); image != "" {
+		b.WriteString("This site runs inside a container (" + image + "). Install its dependencies and run its tools where it runs: `middleware exec " + domain + " -- npm install` (or pip, a build, a script). Run on this machine instead, native modules are built for the wrong system and the site fails at start. Reading and editing files is direct: it is the same folder.\n")
+	}
+	if len(j.Commands) > 0 {
+		b.WriteString("Commands you must not run: " + strings.Join(j.Commands, ", ") + ".\n")
+	}
 	if len(j.Deny) > 0 {
 		b.WriteString("Paths you must not touch:\n")
 		for _, d := range j.Deny {
@@ -633,4 +651,16 @@ func Preamble(domain, workdir string, j agent.Jail) string {
 		}
 	}
 	return b.String()
+}
+
+// dockerImage is the image a site runs in, or "" when it runs as a process.
+func dockerImage(siteDir string) string {
+	m, err := manifest.Load(siteDir)
+	if err != nil || m.Run == nil || m.Run.Runtime != "docker" || m.Run.Docker == nil {
+		return ""
+	}
+	if m.Run.Docker.Image != "" {
+		return m.Run.Docker.Image
+	}
+	return "built from " + m.Run.Docker.Build
 }
