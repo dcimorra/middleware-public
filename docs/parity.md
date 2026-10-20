@@ -41,12 +41,15 @@ every name of a site (aliases and the implicit `www.` included, `www: false`
 to drop it) published and certified; the door for new sites and the public
 address (detected, or written); dns-01 through Cloudflare; Cloudflare's
 ranges as trusted edge hops; `cloudflared` run, re-adopted and watched by the
-supervisor; moves serialized; panel and CLI.
+supervisor; moves serialized; panel and CLI. Proven live on 20 October
+2026 against the real API, with a throwaway tunnel and name: published on
+creation and answered from the internet through the connector the
+supervisor ran (cloudflared 2026.10.2), the connector re-adopted across a
+supervisor restart with the site up, a dns-01 certificate from Let's
+Encrypt staging with its TXT removed, the visitor's real address in the
+access log, and the route and record gone on deletion.
 
 Left:
-- Prove it against the real Cloudflare API and a real connector, from a
-  throwaway zone (the tests use a fake API and a fake connector), including
-  that the `cloudflared` release in use takes `--token-file`.
 - House response cache (`cache` modes in the manifest), behind the door.
 - VPN-only sites and the VPN's own DNS.
 - Cloudflare extras: edge purge and cache rules, DNS record editor, Access

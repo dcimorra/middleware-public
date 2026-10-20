@@ -336,3 +336,19 @@ func TestAChallengeRecordIsRemovedAloneLeavingOtherTXT(t *testing.T) {
 		t.Fatalf("records after removal: %+v", f.records["z1"])
 	}
 }
+
+// Account tokens (cfat_…) answer "Invalid API Token" on the user endpoint;
+// found against the real API, which the fake did not model.
+func TestAnAccountTokenIsVerifiedAgainstItsAccount(t *testing.T) {
+	f := newFakeAPI()
+	defer f.srv.Close()
+	f.accountToken = true
+	c := f.client()
+	if st, err := c.TokenStatus(context.Background()); err != nil || st != "active" {
+		t.Fatalf("account token: %q %v", st, err)
+	}
+	c.AccountID = ""
+	if _, err := c.TokenStatus(context.Background()); err == nil {
+		t.Fatal("an account token verified without its account")
+	}
+}

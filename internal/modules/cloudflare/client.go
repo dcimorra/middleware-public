@@ -209,13 +209,22 @@ func (c *Client) list(ctx context.Context, path string, query url.Values, out an
 	return json.Unmarshal(data, out)
 }
 
-// TokenStatus is what /user/tokens/verify says: "active", "disabled",
-// "expired".
+// TokenStatus is what Cloudflare's verify endpoint says: "active",
+// "disabled", "expired". A token is owned by a user or by an account, and
+// each kind is verified at its own address: an account token (cfat_…)
+// answers "Invalid API Token" on /user/tokens/verify. Found against the
+// real API on 20 October 2026; the fake had only the user endpoint.
 func (c *Client) TokenStatus(ctx context.Context) (string, error) {
 	var r struct {
 		Status string `json:"status"`
 	}
-	if _, err := c.do(ctx, http.MethodGet, "/user/tokens/verify", nil, &r); err != nil {
+	_, err := c.do(ctx, http.MethodGet, "/user/tokens/verify", nil, &r)
+	if err != nil && c.AccountID != "" {
+		if _, aerr := c.do(ctx, http.MethodGet, "/accounts/"+url.PathEscape(c.AccountID)+"/tokens/verify", nil, &r); aerr == nil {
+			return r.Status, nil
+		}
+	}
+	if err != nil {
 		return "", err
 	}
 	return r.Status, nil

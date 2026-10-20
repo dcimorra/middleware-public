@@ -93,6 +93,8 @@ func (m *Module) Verify(ctx context.Context, cfg modules.Config) []modules.Line 
 	var lines []modules.Line
 	status, err := c.TokenStatus(ctx)
 	switch {
+	case err != nil && c.AccountID == "":
+		return append(lines, modules.Fail("token: "+err.Error()+" (an account token, cfat_…, is verified against its account: set account_id)"))
 	case err != nil:
 		return append(lines, modules.Fail("token: "+err.Error()))
 	case status != "active":

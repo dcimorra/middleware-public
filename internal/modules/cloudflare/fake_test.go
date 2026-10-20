@@ -15,17 +15,20 @@ import (
 // that fails. It records every write in order, because the order of the
 // writes is what Publish is about.
 type fakeAPI struct {
-	mu       sync.Mutex
-	token    string
-	denied   map[string]bool // "zones.read", "dns.read", "dns.write", "accounts.read", "tunnel.read", "tunnel.write"
-	zones    []Zone
-	records  map[string][]Record // by zone id
-	accounts []Account
-	tunnels  []Tunnel
-	ingress  []Ingress
-	writes   []string
-	nextID   int
-	srv      *httptest.Server
+	mu    sync.Mutex
+	token string
+	// accountToken makes the token one owned by the account (cfat_…),
+	// which only /accounts/{id}/tokens/verify accepts.
+	accountToken bool
+	denied       map[string]bool // "zones.read", "dns.read", "dns.write", "accounts.read", "tunnel.read", "tunnel.write"
+	zones        []Zone
+	records      map[string][]Record // by zone id
+	accounts     []Account
+	tunnels      []Tunnel
+	ingress      []Ingress
+	writes       []string
+	nextID       int
+	srv          *httptest.Server
 }
 
 func newFakeAPI() *fakeAPI {
@@ -91,6 +94,16 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(p, "/")
 	switch {
 	case p == "user/tokens/verify":
+		if f.accountToken {
+			f.fail(w, http.StatusUnauthorized, 1000, "Invalid API Token")
+			return
+		}
+		f.ok(w, map[string]string{"id": "t", "status": "active"}, 0, 0)
+	case len(parts) == 4 && parts[0] == "accounts" && parts[2] == "tokens" && parts[3] == "verify":
+		if !f.accountToken || parts[1] != "acct1" {
+			f.fail(w, http.StatusUnauthorized, 1000, "Invalid API Token")
+			return
+		}
 		f.ok(w, map[string]string{"id": "t", "status": "active"}, 0, 0)
 	case p == "zones":
 		if f.denied["zones.read"] {
