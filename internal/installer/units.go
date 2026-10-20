@@ -142,6 +142,13 @@ RestartSec=2
 KillMode=process
 TimeoutStopSec=20
 
+# The unit's cgroup is the supervisor's to split: house/ (itself, the sites,
+# the tasks) and agents/ (every agent turn and what it starts), the latter
+# with a low CPU weight and a ceiling. DelegateSubgroup is where systemd
+# puts the supervisor at start. See internal/cgroups.
+Delegate=cpu memory
+DelegateSubgroup=house
+
 # 80/443 without root: the supervisor opens them itself when the ports door
 # is enabled. Nothing else needs a capability; everything else goes through
 # the helper.

@@ -40,6 +40,11 @@ type Parser interface {
 	Flush() []Event
 }
 
+// SpawnAttr, when set, gives the process attributes an agent turn starts
+// with (the wiring sets it to start turns inside the agents' cgroup). It
+// returns a release for whatever it opened, called once Start returns.
+var SpawnAttr func() (*syscall.SysProcAttr, func(), error)
+
 // StartCLI launches bin with args in dir and streams its output through p.
 // The caller's Jail is already translated into args by the adapter.
 func StartCLI(ctx context.Context, p Parser, dir string, env []string, bin string, args ...string) (*CLIRun, error) {
@@ -52,6 +57,13 @@ func StartCLI(ctx context.Context, p Parser, dir string, env []string, bin strin
 	cmd.Env = env
 	cmd.Stdin = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	release := func() {}
+	if SpawnAttr != nil {
+		if attr, rel, err := SpawnAttr(); err == nil && attr != nil {
+			cmd.SysProcAttr, release = attr, rel
+		}
+	}
+	defer release()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err

@@ -19,6 +19,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/agent/gemini"
 	"github.com/dcimorra/middleware-public/internal/api"
 	"github.com/dcimorra/middleware-public/internal/app"
+	"github.com/dcimorra/middleware-public/internal/cgroups"
 	"github.com/dcimorra/middleware-public/internal/chat"
 	"github.com/dcimorra/middleware-public/internal/cli"
 	"github.com/dcimorra/middleware-public/internal/events"
@@ -101,6 +102,14 @@ type chatHook struct{}
 
 func newChatHook(a *app.App) app.Hook {
 	chatManager = chat.New(chat.Options{Root: a.Root, Bus: a.Bus, Registry: providers(), Limits: a.Settings.Agents})
+	// Agent turns start in a cgroup of their own with a low CPU weight and
+	// a ceiling, so a conversation's browsers cannot starve the sites.
+	if tree, err := cgroups.Setup(cgroups.SelfPath(), cgroups.DefaultLimits()); err != nil {
+		a.Bus.Emit(events.Event{Type: "cgroups.off", Actor: "engine", Level: "warn", Message: err.Error()})
+	} else {
+		agent.SpawnAttr = tree.AgentsAttr
+		a.Bus.Emit(events.Event{Type: "cgroups.on", Actor: "engine", Message: "agent turns run in " + tree.Agents()})
+	}
 	return chatHook{}
 }
 
