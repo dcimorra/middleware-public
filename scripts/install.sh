@@ -8,7 +8,24 @@
 set -eu
 
 REPO="dcimorra/middleware-public"
-BASE="https://github.com/$REPO/releases/latest/download"
+
+# MIDDLEWARE_VERSION=v2.0.0 pins a release. Otherwise the newest release
+# is asked from the API, prereleases included: GitHub's "latest" link skips
+# prereleases, and while every release is an alpha it would resolve to
+# nothing at all.
+resolve_tag() {
+  if [ -n "${MIDDLEWARE_VERSION:-}" ]; then
+    printf '%s\n' "$MIDDLEWARE_VERSION"
+    return
+  fi
+  tag="$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=1" 2>/dev/null \
+    | sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+  if [ -n "$tag" ]; then
+    printf '%s\n' "$tag"
+  else
+    printf 'latest\n'
+  fi
+}
 
 say() { printf '%s\n' "$*" >&2; }
 die() { say "install.sh: $*"; exit 1; }
@@ -34,6 +51,12 @@ case "$(uname -m)" in
 esac
 
 NAME="middleware-linux-$ARCH"
+TAG="$(resolve_tag)"
+if [ "$TAG" = "latest" ]; then
+  BASE="https://github.com/$REPO/releases/latest/download"
+else
+  BASE="https://github.com/$REPO/releases/download/$TAG"
+fi
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 

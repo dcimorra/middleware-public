@@ -20,6 +20,13 @@ reach the installer:
 curl -fsSL …/install.sh | sh -s -- --root /opt/middleware --no-helper
 ```
 
+"Latest" means the newest release, prereleases included; `MIDDLEWARE_VERSION`
+pins one:
+
+```sh
+curl -fsSL …/install.sh | MIDDLEWARE_VERSION=v2.0.0-alpha.1 sh
+```
+
 ## From source
 
 Needs Go (version in `go.mod`), nothing else: the core has no dependencies.
