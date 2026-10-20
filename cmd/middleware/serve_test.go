@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -137,6 +139,57 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 	}
 	if err := agentsCmd([]string{"--root", root}); err != nil {
 		t.Fatalf("middleware agents: %v", err)
+	}
+
+	// docs/api.md and the routes of the whole wired process say the same
+	// thing, both ways: a route added without its line breaks this, and so
+	// does a line left for a route that is gone. V1 learned that a
+	// hand-written reference goes stale within months otherwise.
+	_, body = get("/openapi.json")
+	var spec struct {
+		Paths map[string]map[string]any `json:"paths"`
+	}
+	if err := json.Unmarshal([]byte(body), &spec); err != nil {
+		t.Fatal(err)
+	}
+	live := map[string]bool{}
+	for path, methods := range spec.Paths {
+		for m := range methods {
+			switch strings.ToUpper(m) {
+			case "GET", "POST", "PUT", "PATCH", "DELETE":
+				live[strings.ToUpper(m)+" "+strings.TrimPrefix(path, api.Prefix)] = true
+			}
+		}
+	}
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "api.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	documented := map[string]bool{}
+	row := regexp.MustCompile("(?m)^\\| (GET|POST|PUT|PATCH|DELETE) \\| `([^`]+)` \\|")
+	for _, m := range row.FindAllStringSubmatch(string(doc), -1) {
+		documented[m[1]+" "+m[2]] = true
+	}
+	var missing, stale []string
+	for r := range live {
+		if !documented[r] {
+			missing = append(missing, r)
+		}
+	}
+	for r := range documented {
+		// A module's own routes are served through its mount, which the
+		// registry lists as one entry; they are checked by the module.
+		if _, path, _ := strings.Cut(r, " "); strings.HasPrefix(path, "/modules/vpn") || strings.HasPrefix(path, "/modules/{agent}") {
+			continue
+		}
+		if !live[r] {
+			stale = append(stale, r)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(stale)
+	if len(missing) > 0 || len(stale) > 0 {
+		t.Errorf("docs/api.md is out of step with the routes.\nnot documented:\n  %s\ndocumented but gone:\n  %s", strings.Join(missing, "\n  "), strings.Join(stale, "\n  "))
 	}
 }
 

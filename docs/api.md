@@ -68,6 +68,14 @@ A site object:
 | PUT | `/sites/{domain}/file` | `?path=…`, raw body → `{ok}` |
 | POST | `/sites/{domain}/deploy` | → `{ok, build}` (runs `deploy.github.build`, writes the pointer); `{ok, via: "github"}` when the github module is enabled and the manifest has `deploy.github`: the module's runner fetches the repository first and answers at once, progress on `/events/stream` as `deploy.*` |
 | GET | `/sites/{domain}/env` | → `{resolved: {…}}` what the instance was born with (secrets masked) |
+| POST | `/sites/{domain}/rename` | `{to}` → site; the folder, its HOME, logs, conversations and cost move with it; published names are taken down and the new ones published on the same door |
+| GET | `/sites/{domain}/download.zip` | the folder as a streamed zip without what an install or a build gives back (`node_modules`, builds, caches); `?all=1` for everything |
+| GET | `/sites/{domain}/shot.png` | the site's picture, taken through a door that skips its password; 404 until there is one. Asking keeps pictures renewing for an hour |
+| POST | `/sites/{domain}/shot` | take it now, whatever state the site is in; 501 without a headless Chromium |
+| GET | `/archive` | archived sites, newest first → `[{name, domain, at, bytes}]` |
+| POST | `/archive/{name}/restore` | → site; unpacks it back to `sites/<domain>`, 409 when that folder exists |
+| GET | `/archive/{name}/download` | the archive file (`.tar.gz`) |
+| DELETE | `/archive/{name}` | → `{ok}`; for good |
 
 **The build contract.** Every command of `deploy.github.build` runs in the
 site's folder with the site's resolved environment plus `MIDDLEWARE_BUILD`,
@@ -89,6 +97,7 @@ deploy while one runs answers 409.
 
 | method | path | body / result |
 | --- | --- | --- |
+| GET | `/openapi.json` | public; the OpenAPI document of every registered route |
 | GET | `/system` | → `{version, root, uptime, listen, panel_domain, load, memory, disk, go}` |
 | GET | `/settings` | → settings |
 | PUT | `/settings` | settings → settings |
@@ -130,6 +139,7 @@ the field. The new limits apply to the next message, not the next restart.
 | POST | `/modules/{key}/enable` | `{config}` → verifies, installs, enables, saves → `{ok, lines, progress: [text]}`; a failed probe answers 200 with `ok: false` and the lines, a failed install 502 |
 | POST | `/modules/{key}/disable` | → `{ok}` (keeps credentials) |
 | DELETE | `/modules/{key}/credentials` | → `{ok}` (disables and forgets) |
+| POST | `/modules/github/hook` | GitHub's push webhook: public, checked by its signature |
 | GET | `/modules/{key}` | the module's own status when it is enabled and has one (the VPN), otherwise its entry of the list |
 
 `config` names only the module's needs; an empty secret means "keep the one
@@ -228,7 +238,41 @@ The routes answer 503 when the WAF did not start (a broken block list); the
 | POST | `/sites/{domain}/chat` | `{text, model?}` → `{turn_id}`; progress on `/events/stream` as `agent.*`; 409 while a turn runs in this conversation; 429 when the house, or the provider, has no free slot (the message says how many of how many; `agent.capacity` is emitted with the numbers) |
 | POST | `/sites/{domain}/chat/stop` | → `{ok}`; 409 when nothing runs |
 | DELETE | `/sites/{domain}/chat` | → `{ok}` (new conversation) |
-| GET/POST/DELETE | `/chat/middleware`, `POST /chat/middleware/stop` | the conversation about the installation itself, same shapes; it works in the root of the installation and may create new sites, but never edits one that already existed when its turn began |
+| POST | `/sites/{domain}/chat/reap` | → `{killed}`; stops the turn and kills everything the conversation left running (setsid escapes included) |
+| GET | `/sites/{domain}/chat/processes` | → `[{pid, command, started}]` what the conversation has running now |
+| POST | `/sites/{domain}/chat/processes/{pid}/kill` | → `{ok}`; 404 for a pid that is not this conversation's |
+| GET | `/sites/{domain}/chat/files` | → `[{name, bytes}]` attachments that go with the next message |
+| POST | `/sites/{domain}/chat/files` | `?name=file.ext`, raw body (25 MB) → `{name, bytes}` |
+| DELETE | `/sites/{domain}/chat/files/{file}` | → `{ok}` |
+| GET | `/sites/{domain}/chats` | the site's other conversations → `[{name, id, origin: panel|site, title, tools, created, turns, hidden, running}]`; `?all=1` includes those `claude_api.hide_chats` hides |
+| POST | `/sites/{domain}/chats` | `{title?}` → `{name, id}` (201); another conversation of the panel's |
+| GET | `/sites/{domain}/chats/{id}` | as `/sites/{domain}/chat` |
+| POST | `/sites/{domain}/chats/{id}` | as `/sites/{domain}/chat`; 409 for a conversation the site's code opened (read and stop it, do not write into it) |
+| DELETE | `/sites/{domain}/chats/{id}` | → `{ok}` |
+| POST | `/sites/{domain}/chats/{id}/stop` | as above |
+| POST | `/sites/{domain}/chats/{id}/reap` | as above |
+| GET | `/sites/{domain}/chats/{id}/processes` | as above |
+| POST | `/sites/{domain}/chats/{id}/processes/{pid}/kill` | as above |
+| GET | `/sites/{domain}/chats/{id}/files` | as above |
+| POST | `/sites/{domain}/chats/{id}/files` | as above |
+| DELETE | `/sites/{domain}/chats/{id}/files/{file}` | as above |
+| GET | `/chat/middleware` | the conversation about the installation itself, same shapes; it works in the root of the installation and may create new sites, but never edits one that already existed when its turn began |
+| POST | `/chat/middleware` | as above |
+| DELETE | `/chat/middleware` | as above |
+| POST | `/chat/middleware/stop` | as above |
+| POST | `/chat/middleware/reap` | as above |
+| GET | `/chat/middleware/processes` | as above |
+| POST | `/chat/middleware/processes/{pid}/kill` | as above |
+| GET | `/chat/middleware/files` | as above |
+| POST | `/chat/middleware/files` | as above |
+| DELETE | `/chat/middleware/files/{file}` | as above |
+| GET | `/agents/usage` | the Claude account's windows → `{session: {pct, reset}, week, opus?, at}` (as `/usage` shows them), cached a minute; 503 without a signed-in subscription |
+| GET | `/agents/cost` | `?days=30` → `{days, books: [{book, total_usd, turns, days: {date: usd}, models: {model: usd}}]}`; a site door's spending is the book `<domain>#door` |
+
+A message sent while a turn runs is queued (202 `{queued: true}`) and sent,
+with any other queued one, when the turn ends. A turn in flight when the
+supervisor restarts is picked up by the next one. A subagent's words are
+kept in the turn's `threads`, apart from the answer.
 
 The `agent.*` events on the stream, all with the domain (or `middleware`) as
 subject and `turn_id` in `data`: `agent.started` (`provider`, `model`),
@@ -261,6 +305,7 @@ is not valid JSON is left in the text and ignored.
 | GET | `/tasks` | → `[{name, schedule, site, disabled, next, running, error, last: {at, status, duration, exit_code, trigger}}]` (a file that does not parse is a row with `error`) |
 | PUT | `/tasks/{name}` | task JSON ([manifest.md](manifest.md#tasks-tasksnamejson)) → the task's row; 400 with the field when it does not validate |
 | DELETE | `/tasks/{name}` | → `{ok}`; the history and the log stay |
+| POST | `/tasks/{name}/stop` | → `{ok}`; ends a run in progress, recorded as `stopped`; 409 when none runs |
 | POST | `/tasks/{name}/run` | → `{ok, log}` at once; the run is on `/events/stream` as `task.*`, and `task.skipped` when it was already running |
 | GET | `/tasks/{name}/log` | `?lines=500` → `text/plain`, the last lines of `data/logs/tasks/{name}.log` |
 
