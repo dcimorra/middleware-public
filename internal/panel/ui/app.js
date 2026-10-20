@@ -22,6 +22,7 @@ import { tasksScreen } from "./screens/tasks.js";
 import { eventsScreen } from "./screens/events.js";
 import { guardScreen } from "./screens/guard.js";
 import { reposScreen } from "./screens/repos.js";
+import { docsScreen } from "./screens/docs.js";
 import { openBanner } from "./screens/settings-access.js";
 import { settingsScreen } from "./screens/settings.js";
 import { systemScreen } from "./screens/system.js";
@@ -54,6 +55,7 @@ const NAV = [
   ["guard", "/guard", "g g", "eye"],
   ["settings", "/settings", "g c", "sliders"],
   ["system", "/system", "g y", "cpu"],
+  ["docs", "/docs", "g d", "file"],
 ];
 const NAV_GROUPS = { sites: "nav.groupManage", events: "nav.groupObserve" };
 
@@ -119,6 +121,7 @@ route("/tasks", tasksScreen);
 route("/events", eventsScreen);
 route("/guard", guardScreen);
 route("/repos", reposScreen);
+route("/docs/:name?", docsScreen);
 route("/settings", settingsScreen);
 route("/system", systemScreen);
 route("/house", houseScreen);

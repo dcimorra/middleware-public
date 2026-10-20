@@ -39,8 +39,7 @@ cgroup above.
 
 ## 5. The agent conversation
 
-- A human-readable `/docs/api` page in the panel (today: `docs/api.md`,
-  kept in step with the routes by a test, and `/api/v1/openapi.json`).
+Nothing left.
 
 ## 6. The guard
 
@@ -127,4 +126,5 @@ cgroup above.
   the site door, loans, attachments, queued messages, turns that survive a
   supervisor restart, subagent threads, the house's conversation, usage
   windows and cost per project, day and model, Gemini's shell jailed,
-  `docs/api.md` checked against the routes both ways.
+  `docs/api.md` checked against the routes both ways, and every document of
+  docs/ readable in the panel from the binary that runs.

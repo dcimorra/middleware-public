@@ -168,6 +168,8 @@ device is gone (404, 410) gets it forgotten.
 
 | method | path | body / result |
 | --- | --- | --- |
+| GET | `/docs` | → `[{name, title}]`, the documents under docs/ as embedded in this binary |
+| GET | `/docs/{name}` | `text/markdown`, one of them (`api`, `manifest`, `security`…) |
 | GET | `/openapi.json` | public; the OpenAPI document of every registered route |
 | GET | `/system` | → `{version, root, uptime, listen, panel_domain, load, memory, disk, go}` |
 | GET | `/settings` | → settings |

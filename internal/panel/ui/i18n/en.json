@@ -810,5 +810,8 @@
   "push.kind.intrusion": "Intrusions",
   "push.kind.critical": "Criticals",
   "push.kind.repo": "Repositories that stop pulling",
-  "push.kind.turn": "Agent turns that end"
+  "push.kind.turn": "Agent turns that end",
+  "nav.docs": "Documentation",
+  "docs.sub": "The documents of this version, as the binary that runs carries them.",
+  "docs.contents": "Contents"
 }

@@ -810,5 +810,8 @@
   "push.kind.intrusion": "Intrusiones",
   "push.kind.critical": "Problemas críticos",
   "push.kind.repo": "Repositorios que dejan de traer cambios",
-  "push.kind.turn": "Turnos del agente que terminan"
+  "push.kind.turn": "Turnos del agente que terminan",
+  "nav.docs": "Documentación",
+  "docs.sub": "Los documentos de esta versión, tal como los lleva el binario que se ejecuta. Están en inglés.",
+  "docs.contents": "Contenido"
 }
