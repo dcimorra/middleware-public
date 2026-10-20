@@ -96,6 +96,31 @@ deploy while one runs answers 409.
 | GET | `/system/ports` | → `{from, to, in_use: {port: domain}}` |
 | GET | `/system/processes` | → `[{pid, domain, kind, rss, cpu, started}]` |
 
+The settings object (`data/settings.json`):
+
+```json
+{
+  "panel_domain": "panel.example.com",
+  "listen": "127.0.0.1:46100",
+  "ports": { "from": 33000, "to": 47000 },
+  "pages": { "stopped": ["Title", "Message"] },
+  "agents": {
+    "max_concurrent": 8,
+    "reserved_for_house": 1,
+    "per_provider": { "claude": 0, "gemini": 0 },
+    "default_provider": "claude"
+  }
+}
+```
+
+`agents` caps the conversations: `max_concurrent` turns at once across
+every conversation (1..64), of which `reserved_for_house` (fewer than the
+cap) only the `middleware` conversation may take once the rest are busy;
+`per_provider` caps one provider's share, 0 meaning no cap of its own;
+`default_provider` runs a site whose manifest names none. A `PUT` without
+the section keeps the defaults; one that breaks the rules is a 400 naming
+the field. The new limits apply to the next message, not the next restart.
+
 ## Modules
 
 | method | path | body / result |
@@ -156,12 +181,37 @@ The routes answer 503 when the WAF did not start (a broken block list); the
 
 | method | path | body / result |
 | --- | --- | --- |
-| GET | `/agents` | → `[{provider, available, where, models: []}]` (`where` is the binary's path, or why it cannot run) |
-| GET | `/sites/{domain}/chat` | → `{domain, provider, model, session_id, running, turns: [{id, role, text, cost, at}]}` |
-| POST | `/sites/{domain}/chat` | `{text, model?}` → `{turn_id}`; progress on `/events/stream` as `agent.*`; 409 while a turn runs |
+| GET | `/agents` | → `{providers: [{provider, available, where, models: []}], capacity}` (`where` is the binary's path, or why it cannot run) |
+| GET | `/agents/capacity` | → `{used, max, reserved_for_house, providers: {claude: {used, max}}, running: [{domain, provider, started, turn_id}]}`; a provider's `max` of 0 means no cap of its own |
+| GET | `/sites/{domain}/chat` | → `{domain, provider, model, session_id, running, turns: [{id, role, text, cost, at, tools, questions: [{question, options, recommended}]}]}` |
+| POST | `/sites/{domain}/chat` | `{text, model?}` → `{turn_id}`; progress on `/events/stream` as `agent.*`; 409 while a turn runs in this conversation; 429 when the house, or the provider, has no free slot (the message says how many of how many; `agent.capacity` is emitted with the numbers) |
 | POST | `/sites/{domain}/chat/stop` | → `{ok}`; 409 when nothing runs |
 | DELETE | `/sites/{domain}/chat` | → `{ok}` (new conversation) |
-| GET/POST/DELETE | `/chat/middleware`, `POST /chat/middleware/stop` | the conversation about the installation itself, same shapes; it works in the root of the installation |
+| GET/POST/DELETE | `/chat/middleware`, `POST /chat/middleware/stop` | the conversation about the installation itself, same shapes; it works in the root of the installation and may create new sites, but never edits one that already existed when its turn began |
+
+The `agent.*` events on the stream, all with the domain (or `middleware`) as
+subject and `turn_id` in `data`: `agent.started` (`provider`, `model`),
+`agent.text` (`text`, one complete piece as the agent said it), `agent.tool`
+(`tool`, `input`), `agent.done` (`cost`, `session_id`, `text`, `tools`),
+`agent.error` (level `error`; the turn ended badly), `agent.jail_violation`
+(`paths` the agent referred to and must not have), `agent.cost_cap` (the
+site's monthly cap refused the turn), `agent.capacity` (level `warn`; a
+send was refused for lack of a slot: `used`, `max`, `provider`, `providers`)
+and `agent.question` (`question`, `options`, `recommended`: the agent asked
+for a decision).
+
+**Questions.** An agent that needs a decision writes a fenced block in its
+text:
+
+```question
+{"question": "Which database?", "options": ["SQLite", "Postgres"], "recommended": "SQLite"}
+```
+
+The block is parsed as the text arrives, emitted as `agent.question` and
+kept on the turn as `questions`; the panel shows it as buttons (plus
+"Something else…" for a typed answer; an empty `options` list means only
+the text box) and the chosen text is sent as the next message. A block that
+is not valid JSON is left in the text and ignored.
 
 ## Tasks
 

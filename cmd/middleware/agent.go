@@ -17,8 +17,10 @@ import (
 	"github.com/dcimorra/middleware-public/internal/agent"
 	"github.com/dcimorra/middleware-public/internal/agent/claude"
 	"github.com/dcimorra/middleware-public/internal/agent/gemini"
+	"github.com/dcimorra/middleware-public/internal/api"
 	"github.com/dcimorra/middleware-public/internal/app"
 	"github.com/dcimorra/middleware-public/internal/chat"
+	"github.com/dcimorra/middleware-public/internal/cli"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/settings"
 	"github.com/dcimorra/middleware-public/internal/tasks"
@@ -38,12 +40,41 @@ func init() {
 	)
 	subcommands["tasks"] = tasksCmd
 	subcommands["chat"] = chatCmd
-	extraUsage += `  tasks        list the scheduled tasks with their next run
+	subcommands["skill"] = skillCmd
+	subcommands["agents"] = agentsCmd
+	extraUsage += `  agents       the agent providers and how many turns run of how many
+  tasks        list the scheduled tasks with their next run
   tasks run <name>
                run a task now and wait for it
   chat <domain> <text>
                send one message to a site's conversation ("middleware" for the installation's own)
+  skill install [dir]
+               write the embedded middleware skill (default: <root>/.claude/skills/middleware/)
 `
+}
+
+// skillCmd installs the skill the conversations run with where an
+// operator running Claude Code by hand on the server will load it: the
+// root's own .claude/skills, or wherever they say.
+func skillCmd(args []string) error {
+	fs := flag.NewFlagSet("skill", flag.ContinueOnError)
+	root := rootFlag(fs)
+	rest, err := parseInterleaved(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(rest) == 0 || rest[0] != "install" || len(rest) > 2 {
+		return errors.New("usage: middleware skill install [dir]")
+	}
+	dir := filepath.Join(settings.Root(*root), ".claude", "skills", chat.SkillName)
+	if len(rest) == 2 {
+		dir = rest[1]
+	}
+	if err := chat.InstallSkill(dir); err != nil {
+		return err
+	}
+	fmt.Printf("%s\n", filepath.Join(dir, "SKILL.md"))
+	return nil
 }
 
 // providers is the registry every conversation picks from. Credentials
@@ -69,8 +100,63 @@ var (
 type chatHook struct{}
 
 func newChatHook(a *app.App) app.Hook {
-	chatManager = chat.New(chat.Options{Root: a.Root, Bus: a.Bus, Registry: providers()})
+	chatManager = chat.New(chat.Options{Root: a.Root, Bus: a.Bus, Registry: providers(), Limits: a.Settings.Agents})
 	return chatHook{}
+}
+
+// agentsCmd prints the providers and the live capacity, through the
+// running supervisor: the numbers live in its chat manager, not on disk.
+func agentsCmd(args []string) error {
+	fs := flag.NewFlagSet("agents", flag.ContinueOnError)
+	root := rootFlag(fs)
+	asJSON := fs.Bool("json", false, "print the API's answer as JSON")
+	if _, err := parseInterleaved(fs, args); err != nil {
+		return err
+	}
+	cl, err := cli.Connect(settings.Root(*root))
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		var raw []byte
+		if err := cl.Do("GET", api.Prefix+"/agents", nil, &raw); err != nil {
+			return err
+		}
+		fmt.Println(strings.TrimRight(string(raw), "\n"))
+		return nil
+	}
+	var out api.Agents
+	if err := cl.Do("GET", api.Prefix+"/agents", nil, &out); err != nil {
+		return err
+	}
+	rows := [][]string{}
+	for _, p := range out.Providers {
+		state := "not available"
+		if p.Available {
+			state = "available"
+		}
+		used, max := "-", "-"
+		if out.Capacity != nil {
+			if c, ok := out.Capacity.Providers[p.Provider]; ok {
+				used = fmt.Sprint(c.Used)
+				max = "no cap"
+				if c.Max > 0 {
+					max = fmt.Sprint(c.Max)
+				}
+			}
+		}
+		rows = append(rows, []string{p.Provider, state, p.Where, used, max, strings.Join(p.Models, ", ")})
+	}
+	cli.Table(os.Stdout, []string{"PROVIDER", "STATE", "WHERE", "RUNNING", "CAP", "MODELS"}, rows)
+	if out.Capacity == nil {
+		return nil
+	}
+	c := out.Capacity
+	fmt.Printf("\ncapacity: %d of %d running, %d reserved for the house\n", c.Used, c.Max, c.Reserved)
+	for _, r := range c.Running {
+		fmt.Printf("  %-32s %-8s since %s (turn %s)\n", r.Domain, r.Provider, r.Started.Format("15:04:05"), r.TurnID)
+	}
+	return nil
 }
 
 func (chatHook) Wrap(next http.Handler) http.Handler       { return next }
@@ -165,7 +251,8 @@ func chatCmd(args []string) error {
 	domain, text := rest[0], strings.Join(rest[1:], " ")
 	r := settings.Root(*root)
 	bus := events.New(filepath.Join(r, "data", "events"))
-	m := chat.New(chat.Options{Root: r, Bus: bus, Registry: providers()})
+	st, _ := settings.Load(r)
+	m := chat.New(chat.Options{Root: r, Bus: bus, Registry: providers(), Limits: st.Agents})
 	ch, unsub := bus.Subscribe()
 	defer unsub()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

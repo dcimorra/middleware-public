@@ -130,3 +130,19 @@ func TestAMissingBinaryIsReportedAsUnavailable(t *testing.T) {
 		t.Fatal("start succeeded without a binary")
 	}
 }
+
+func TestTheHouseJailDeniesEachSiteInTheSettingsAndNotTheSitesFolder(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"sites/old.test", "data/homes/middleware", "modules"} {
+		os.MkdirAll(filepath.Join(root, d), 0o755)
+	}
+	j := agent.NewJail(root, root, filepath.Join(root, "data", "homes", "middleware"))
+	deny, _ := json.Marshal(Settings(j)["permissions"].(map[string]any)["deny"])
+	rules := string(deny)
+	if !strings.Contains(rules, filepath.Join(root, "sites", "old.test")+"/**") || !strings.Contains(rules, "Bash(*"+filepath.Join(root, "modules")+"*)") {
+		t.Fatalf("rules do not name the existing site and the modules:\n%s", rules)
+	}
+	if strings.Contains(rules, filepath.Join(root, "sites")+"/**") || strings.Contains(rules, filepath.Join(root, "sites")+")") {
+		t.Fatalf("rules deny the sites folder itself, so a new site could not be created:\n%s", rules)
+	}
+}

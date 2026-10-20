@@ -4,6 +4,8 @@
 package settings
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -23,6 +25,53 @@ type Settings struct {
 	} `json:"ports"`
 	// Pages overrides visitor page texts: key → [title, message].
 	Pages map[string][2]string `json:"pages,omitempty"`
+	// Agents caps how many conversations run at once.
+	Agents Agents `json:"agents"`
+}
+
+// Agents is the concurrency section. Every agent turn is a CLI process
+// with a model behind it, and a machine that serves forty sites cannot
+// run forty of them at once; the cap is house-wide, with a few slots kept
+// for the installation's own conversation so the operator can still ask
+// the house what is going on when every site is busy.
+type Agents struct {
+	// MaxConcurrent is the number of turns running at once, all
+	// conversations together. 1..64.
+	MaxConcurrent int `json:"max_concurrent"`
+	// ReservedForHouse is how many of those only the middleware
+	// conversation may take. Less than MaxConcurrent.
+	ReservedForHouse int `json:"reserved_for_house"`
+	// PerProvider caps one provider's share; 0 means no cap of its own.
+	PerProvider map[string]int `json:"per_provider"`
+	// DefaultProvider runs a conversation whose manifest names none.
+	DefaultProvider string `json:"default_provider"`
+}
+
+// MaxAgents is the ceiling of MaxConcurrent.
+const MaxAgents = 64
+
+// DefaultAgents is the section a fresh installation runs with.
+func DefaultAgents() Agents {
+	return Agents{MaxConcurrent: 8, ReservedForHouse: 1, PerProvider: map[string]int{"claude": 0, "gemini": 0}, DefaultProvider: "claude"}
+}
+
+// Validate says what is wrong with the section, if anything.
+func (a Agents) Validate() error {
+	if a.MaxConcurrent < 1 || a.MaxConcurrent > MaxAgents {
+		return fmt.Errorf("agents.max_concurrent: want 1..%d", MaxAgents)
+	}
+	if a.ReservedForHouse < 0 || a.ReservedForHouse >= a.MaxConcurrent {
+		return errors.New("agents.reserved_for_house: want 0 <= reserved < max_concurrent")
+	}
+	for k, v := range a.PerProvider {
+		if v < 0 || v > MaxAgents {
+			return fmt.Errorf("agents.per_provider.%s: want 0..%d", k, MaxAgents)
+		}
+	}
+	if a.DefaultProvider == "" {
+		return errors.New("agents.default_provider: empty")
+	}
+	return nil
 }
 
 // Defaults are what a fresh installation runs with.
@@ -30,6 +79,7 @@ func Defaults() Settings {
 	var s Settings
 	s.Listen = "127.0.0.1:46100"
 	s.Ports.From, s.Ports.To = 33000, 47000
+	s.Agents = DefaultAgents()
 	return s
 }
 
@@ -43,13 +93,31 @@ func Load(root string) (Settings, error) {
 	if err != nil && !os.IsNotExist(err) {
 		return s, err
 	}
+	s.Fill()
+	return s, nil
+}
+
+// Fill puts the defaults where a field was left empty: a file from before
+// a section existed, or a PUT from a panel that does not know it yet,
+// must not turn into "no agents may run".
+func (s *Settings) Fill() {
 	if s.Listen == "" {
 		s.Listen = "127.0.0.1:46100"
 	}
 	if s.Ports.From == 0 || s.Ports.To == 0 {
 		s.Ports.From, s.Ports.To = 33000, 47000
 	}
-	return s, nil
+	d := DefaultAgents()
+	if s.Agents.MaxConcurrent == 0 && s.Agents.DefaultProvider == "" && s.Agents.PerProvider == nil {
+		s.Agents = d
+		return
+	}
+	if s.Agents.DefaultProvider == "" {
+		s.Agents.DefaultProvider = d.DefaultProvider
+	}
+	if s.Agents.PerProvider == nil {
+		s.Agents.PerProvider = d.PerProvider
+	}
 }
 
 // Save writes the file atomically.

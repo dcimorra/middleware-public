@@ -109,6 +109,8 @@ type Server struct {
 	public map[string]bool
 	// deployer, when set, is asked first by POST /sites/{domain}/deploy.
 	deployer Deployer
+	// onSettings runs after PUT /settings saved, with what was saved.
+	onSettings []func(settings.Settings)
 }
 
 // Deployer is an alternative way to deploy a site, set with SetDeployer.
@@ -122,6 +124,15 @@ func (s *Server) SetDeployer(d Deployer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.deployer = d
+}
+
+// OnSettingsSaved registers fn to run after every successful PUT
+// /settings, so a section another package owns is applied live by that
+// package rather than by the one that wrote the file.
+func (s *Server) OnSettingsSaved(fn func(settings.Settings)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onSettings = append(s.onSettings, fn)
 }
 
 // New builds the server with every route of this package registered.

@@ -7,6 +7,7 @@ import (
 
 	"github.com/dcimorra/middleware-public/internal/agent"
 	"github.com/dcimorra/middleware-public/internal/chat"
+	"github.com/dcimorra/middleware-public/internal/settings"
 )
 
 // AgentsOptions wire the agents section.
@@ -23,33 +24,47 @@ type AgentInfo struct {
 	Models    []string `json:"models"`
 }
 
+// Agents is what GET /agents answers: the providers and the live capacity.
+type Agents struct {
+	Providers []AgentInfo    `json:"providers"`
+	Capacity  *chat.Capacity `json:"capacity,omitempty"`
+}
+
 // RegisterAgents adds /agents, the per-site conversations and the
 // installation's own one. The two conversation sets are the same handlers
 // over different names: chat.Middleware is not a valid domain, which is
 // what keeps the routes from colliding.
 func (s *Server) RegisterAgents(o AgentsOptions) {
-	s.Handle("GET", Prefix+"/agents", "The agent providers, whether each can run and its models", func(w http.ResponseWriter, r *http.Request) (any, error) {
-		out := []AgentInfo{}
-		if o.Registry == nil {
-			return out, nil
+	s.Handle("GET", Prefix+"/agents", "The agent providers, whether each can run and its models, with the live capacity", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		out := Agents{Providers: []AgentInfo{}}
+		if o.Registry != nil {
+			for _, key := range o.Registry.Keys() {
+				p, err := o.Registry.Get(key)
+				if err != nil {
+					continue
+				}
+				ok, where := p.Available()
+				models := p.Models()
+				if models == nil {
+					models = []string{}
+				}
+				out.Providers = append(out.Providers, AgentInfo{Provider: key, Available: ok, Where: where, Models: models})
+			}
 		}
-		for _, key := range o.Registry.Keys() {
-			p, err := o.Registry.Get(key)
-			if err != nil {
-				continue
-			}
-			ok, where := p.Available()
-			models := p.Models()
-			if models == nil {
-				models = []string{}
-			}
-			out = append(out, AgentInfo{Provider: key, Available: ok, Where: where, Models: models})
+		if o.Chat != nil {
+			c := o.Chat.Capacity()
+			out.Capacity = &c
 		}
 		return out, nil
 	})
 	if o.Chat == nil {
 		return
 	}
+	s.Handle("GET", Prefix+"/agents/capacity", "How many agent turns run now, of how many, per provider, and which conversations hold them", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		return o.Chat.Capacity(), nil
+	})
+	// A new cap applies to the next turn, not to the next restart.
+	s.OnSettingsSaved(func(st settings.Settings) { o.Chat.SetLimits(st.Agents) })
 	s.registerChat(o.Chat, Prefix+"/sites/{domain}/chat", domainOf)
 	s.registerChat(o.Chat, Prefix+"/chat/middleware", func(*http.Request) (string, error) { return chat.Middleware, nil })
 }
@@ -106,13 +121,17 @@ func (s *Server) registerChat(m *chat.Manager, p string, name func(*http.Request
 	})
 }
 
-// chatError maps the manager's errors: a busy conversation is 409, an
-// unknown site 404, an empty message or an unknown provider 400.
+// chatError maps the manager's errors: a busy conversation is 409, a
+// full house 429, an unknown site 404, an empty message or an unknown
+// provider 400.
 func chatError(err error) error {
 	msg := err.Error()
+	var capacity *chat.ErrCapacity
 	switch {
 	case errors.Is(err, chat.ErrBusy):
 		return Errorf(http.StatusConflict, "%s", msg)
+	case errors.As(err, &capacity):
+		return Errorf(http.StatusTooManyRequests, "%s", msg)
 	case errors.Is(err, agent.ErrUnknownProvider):
 		return Errorf(http.StatusBadRequest, "%s", msg)
 	case strings.HasSuffix(msg, "no such site"), strings.HasSuffix(msg, "is not a domain"):

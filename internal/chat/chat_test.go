@@ -241,7 +241,7 @@ func TestAJailViolationIsReportedAfterTheTurn(t *testing.T) {
 	waitFor(t, ch, "agent.done")
 }
 
-func TestTheMiddlewareConversationRunsInTheRootAndDeniesTheSites(t *testing.T) {
+func TestTheMiddlewareConversationRunsInTheRootAndDeniesTheExistingSites(t *testing.T) {
 	p := &fakeProvider{key: "fake", script: []agent.Event{{Kind: agent.KindResult, Text: "ok"}}}
 	m, root, bus := newManager(t, p)
 	ch, unsub := bus.Subscribe()
@@ -251,15 +251,98 @@ func TestTheMiddlewareConversationRunsInTheRootAndDeniesTheSites(t *testing.T) {
 	}
 	waitFor(t, ch, "agent.done")
 	req := p.last()
-	if req.Workdir != root || len(req.Jail.Deny) != 1 || req.Jail.Deny[0] != filepath.Join(root, "sites") {
+	denied := strings.Join(req.Jail.Deny, "\n")
+	if req.Workdir != root || !strings.Contains(denied, filepath.Join(root, "sites", "a.test")) || !strings.Contains(denied, filepath.Join(root, "sites", "b.test")) {
 		t.Fatalf("request = %+v", req)
 	}
-	if !strings.Contains(req.System, "installation itself") {
+	for _, d := range req.Jail.Deny {
+		if d == filepath.Join(root, "sites") {
+			t.Fatalf("the sites folder itself is denied: %v", req.Jail.Deny)
+		}
+	}
+	if !strings.Contains(req.System, "installation itself") || !strings.Contains(req.System, "middleware site add") {
 		t.Fatalf("preamble:\n%s", req.System)
+	}
+	exe, _ := os.Executable()
+	if !strings.Contains(req.Env["PATH"], filepath.Dir(exe)) {
+		t.Fatalf("PATH does not hold the binary's folder: %q", req.Env["PATH"])
 	}
 	if _, err := os.Stat(filepath.Join(root, "data", "chat", "middleware.json")); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// creator is a provider that writes a site folder while its run is in
+// progress, the way an agent creating a site through Write would, and
+// reports the tool call in its transcript.
+type creator struct {
+	fakeProvider
+	root string
+}
+
+func (c *creator) Start(ctx context.Context, req agent.Request) (agent.Run, error) {
+	dir := filepath.Join(c.root, "sites", "new.test")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "site.json"), []byte(`{"version":2,"static":{"root":"."}}`), 0o644); err != nil {
+		return nil, err
+	}
+	c.script = []agent.Event{
+		{Kind: agent.KindTool, Tool: "Write", Input: map[string]any{"file_path": filepath.Join(dir, "site.json")}},
+		{Kind: agent.KindResult, Text: "created"},
+	}
+	return c.fakeProvider.Start(ctx, req)
+}
+
+func TestTheHouseConversationMayCreateASiteButNotTouchAnExistingOne(t *testing.T) {
+	m, root, bus := newManager(t, &fakeProvider{key: "fake"})
+	os.Rename(filepath.Join(root, "sites", "b.test"), filepath.Join(root, "sites", "old.test"))
+	c := &creator{fakeProvider: fakeProvider{key: "fake"}, root: root}
+	m.opts.Registry.Register(c)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+	if _, err := m.Send(Middleware, "create new.test", ""); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(10 * time.Second)
+wait:
+	for {
+		select {
+		case ev := <-ch:
+			if ev.Type == "agent.jail_violation" {
+				t.Fatalf("creating a site was flagged: %v", ev.Data["paths"])
+			}
+			if ev.Type == "agent.done" {
+				break wait
+			}
+		case <-deadline:
+			t.Fatal("the turn did not end")
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "sites", "new.test", "site.json")); err != nil {
+		t.Fatal(err)
+	}
+	// The next turn sees new.test as an existing site, and touching
+	// old.test was never allowed.
+	p := &fakeProvider{key: "fake", script: []agent.Event{
+		{Kind: agent.KindTool, Tool: "Edit", Input: map[string]any{"file_path": filepath.Join(root, "sites", "old.test", "index.html")}},
+		{Kind: agent.KindResult, Text: "edited"},
+	}}
+	m.opts.Registry.Register(p)
+	if _, err := m.Send(Middleware, "edit old.test", ""); err != nil {
+		t.Fatal(err)
+	}
+	ev := waitFor(t, ch, "agent.jail_violation")
+	paths, _ := ev.Data["paths"].([]string)
+	if len(paths) != 1 || paths[0] != filepath.Join(root, "sites", "old.test") {
+		t.Fatalf("violation = %+v", ev)
+	}
+	denied := strings.Join(p.last().Jail.Deny, "\n")
+	if !strings.Contains(denied, filepath.Join(root, "sites", "new.test")) {
+		t.Fatalf("the site created last turn is not denied this turn:\n%s", denied)
+	}
+	waitFor(t, ch, "agent.done")
 }
 
 func TestResetForgetsTheSessionAndUnknownDomainsAreRefused(t *testing.T) {

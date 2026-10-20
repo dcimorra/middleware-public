@@ -63,8 +63,21 @@ func (s *Server) settingsPut(w http.ResponseWriter, r *http.Request) (any, error
 	if st.PanelDomain != "" && strings.ContainsAny(st.PanelDomain, "/ :") {
 		return nil, Errorf(http.StatusBadRequest, "panel_domain: not a host name")
 	}
+	// A body without the agents section (an older client) keeps the
+	// defaults; one with it is held to the rules before anything is saved.
+	st.Fill()
+	if err := st.Agents.Validate(); err != nil {
+		return nil, Errorf(http.StatusBadRequest, "%s", err.Error())
+	}
 	if err := s.opts.SaveSettings(st); err != nil {
 		return nil, err
+	}
+	s.mu.Lock()
+	fns := make([]func(settings.Settings), len(s.onSettings))
+	copy(fns, s.onSettings)
+	s.mu.Unlock()
+	for _, fn := range fns {
+		fn(st)
 	}
 	s.opts.Bus.Emit(events.Event{Type: "settings.updated", Actor: "operator", Message: "settings replaced"})
 	return s.opts.Settings(), nil

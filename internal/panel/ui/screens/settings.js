@@ -17,9 +17,64 @@ export function settingsScreen() {
   const p = page({ title: t("nav.settings") });
   const general = h("div", { class: "card" });
   const pagesCard = h("div", { class: "card" });
+  const agentsCard = h("div", { class: "card" });
   const tokensCard = h("div", { class: "card pad0" });
   const localCard = h("div", { class: "card" });
-  p.body.append(general, pagesCard, tokensCard, localCard);
+  p.body.append(general, pagesCard, agentsCard, tokensCard, localCard);
+
+  // The agents card saves on its own: the general form keeps whatever the
+  // agents section holds and this one keeps whatever the general one holds,
+  // each re-reading the file before it writes so neither overwrites the
+  // other's last save with stale fields.
+  async function renderAgents() {
+    const [s, agents] = await Promise.all([api.get("/settings"), api.get("/agents").catch(() => ({ providers: [] }))]);
+    const a = s.agents || {};
+    const providers = (agents.providers || []).map((x) => x.provider);
+    for (const k of Object.keys(a.per_provider || {})) if (!providers.includes(k)) providers.push(k);
+    if (a.default_provider && !providers.includes(a.default_provider)) providers.push(a.default_provider);
+    const max = h("input", { type: "number", min: "1", max: "64", value: a.max_concurrent || 8 });
+    const reserved = h("input", { type: "number", min: "0", max: "63", value: a.reserved_for_house ?? 1 });
+    const def = h("select", null, ...providers.map((k) => h("option", { value: k, selected: k === a.default_provider }, k)));
+    const per = {};
+    const perFields = providers.map((k) => {
+      per[k] = h("input", { type: "number", min: "0", max: "64", value: (a.per_provider && a.per_provider[k]) || 0 });
+      return field(t("settings.perProviderCap", { provider: k }), per[k], t("settings.perProviderHint"));
+    });
+    const save = h("button", { type: "submit", class: "btn primary" }, t("common.save"));
+    const err = h("div", { class: "error-box", hidden: true });
+    const form = h("form", { novalidate: true },
+      h("div", { class: "form-row" },
+        field(t("settings.maxConcurrent"), max, t("settings.maxConcurrentHint")),
+        field(t("settings.reservedForHouse"), reserved, t("settings.reservedForHouseHint")),
+        field(t("settings.defaultProvider"), def, t("settings.defaultProviderHint")),
+      ),
+      h("div", { class: "form-row" }, ...perFields),
+      err,
+      h("div", { class: "form-actions" }, save),
+    );
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      err.hidden = true;
+      const m = Number(max.value), r = Number(reserved.value);
+      const perOut = {};
+      let bad = !(Number.isInteger(m) && m >= 1 && m <= 64 && Number.isInteger(r) && r >= 0 && r < m);
+      for (const k of providers) {
+        const v = Number(per[k].value);
+        if (!(Number.isInteger(v) && v >= 0 && v <= 64)) bad = true;
+        perOut[k] = v;
+      }
+      if (bad) { err.textContent = t("settings.agentsBad"); err.hidden = false; return; }
+      save.classList.add("busy");
+      try {
+        const cur = await api.get("/settings");
+        await api.put("/settings", { ...cur, agents: { max_concurrent: m, reserved_for_house: r, per_provider: perOut, default_provider: def.value } });
+        toast(t("settings.agentsSaved"), "ok");
+      } catch (ex) { err.textContent = ex.message; err.hidden = false; }
+      finally { save.classList.remove("busy"); }
+    });
+    clear(agentsCard).append(h("h2", null, t("settings.agents")), h("p", { class: "small muted" }, t("settings.agentsHint")), form);
+    return null;
+  }
 
   async function renderServer() {
     const s = await api.get("/settings");
@@ -53,7 +108,8 @@ export function settingsScreen() {
       err.hidden = true;
       const f = Number(from.value), tt = Number(to.value);
       if (!(f > 0 && tt > f)) { err.textContent = t("settings.portsBad"); err.hidden = false; return; }
-      const out = { ...s, panel_domain: panelDomain.value.trim(), listen: listen.value.trim(), ports: { from: f, to: tt }, pages: {} };
+      const cur = await api.get("/settings").catch(() => s);
+      const out = { ...cur, panel_domain: panelDomain.value.trim(), listen: listen.value.trim(), ports: { from: f, to: tt }, pages: {} };
       for (const key of PAGES) {
         const [ti, me] = pages[key];
         if (ti.value || me.value) out.pages[key] = [ti.value, me.value];
@@ -127,6 +183,7 @@ export function settingsScreen() {
   localCard.append(h("h2", null, t("settings.thisBrowser")), h("div", { class: "form-row" }, field(t("settings.theme"), theme, t("settings.themeHint")), field(t("settings.language"), lang, t("settings.languageHint"))));
 
   load(general, renderServer);
+  load(agentsCard, renderAgents);
   load(tokensCard, renderTokens);
   return { el: p.el, destroy() {} };
 }
