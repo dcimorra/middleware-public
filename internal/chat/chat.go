@@ -127,6 +127,7 @@ type running struct {
 	origin   string
 	model    string
 	started  time.Time
+	deadline time.Time
 	run      agent.Run
 	cancel   context.CancelFunc
 	// done closes when the turn is written and its slot free.
@@ -550,8 +551,14 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 		return "", err
 	}
 	turnID := newID()
-	ctx, cancel := context.WithTimeout(context.Background(), TurnLimit)
-	m.running[name] = &running{turnID: turnID, provider: s.Provider, origin: c.Origin, model: model, started: time.Now(), cancel: cancel, done: make(chan struct{})}
+	// One instant for both: the deadline the turn is cut at and the one
+	// the end of the turn is judged by. Two time.Now() calls a moment
+	// apart made a turn cut at its limit look, now and then, like one that
+	// ended on its own without a result.
+	started := time.Now()
+	deadline := started.Add(TurnLimit)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	m.running[name] = &running{turnID: turnID, provider: s.Provider, origin: c.Origin, model: model, started: started, deadline: deadline, cancel: cancel, done: make(chan struct{})}
 	m.mu.Unlock()
 
 	fail := func(err error) (string, error) {
@@ -629,9 +636,10 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 	defer cancel()
 	domain, _ := split(name)
 	started, origin, model := time.Now(), "", s.Model
+	deadline := started.Add(TurnLimit)
 	m.mu.Lock()
 	if r := m.running[name]; r != nil {
-		started, origin, model = r.started, r.origin, r.model
+		started, origin, model, deadline = r.started, r.origin, r.model, r.deadline
 	}
 	m.mu.Unlock()
 	var all []agent.Event
@@ -715,7 +723,7 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 	if !ended && errText == "" {
 		errText = "the agent ended without a result"
 	}
-	if time.Since(started) >= TurnLimit {
+	if !time.Now().Before(deadline) {
 		errText = fmt.Sprintf("the turn ran for %s and was cut off; what it left running is listed under its processes", TurnLimit)
 		m.emit("agent.turn_limit", name, "error", errText, map[string]any{"turn_id": turnID})
 	}
@@ -949,7 +957,7 @@ func (m *Manager) Recover(ctx context.Context) {
 		cctx, cancel := context.WithDeadline(context.Background(), rf.Started.Add(TurnLimit))
 		run := adopter.Adopt(cctx, rf.PID, rf.Stream)
 		m.mu.Lock()
-		m.running[rf.Name] = &running{turnID: rf.TurnID, provider: rf.Provider, origin: rf.Origin, model: rf.Model, started: rf.Started, cancel: cancel, done: make(chan struct{}), run: run}
+		m.running[rf.Name] = &running{turnID: rf.TurnID, provider: rf.Provider, origin: rf.Origin, model: rf.Model, started: rf.Started, deadline: rf.Started.Add(TurnLimit), cancel: cancel, done: make(chan struct{}), run: run}
 		m.mu.Unlock()
 		m.emit("agent.adopted", rf.Name, "", "a turn from before the restart, picked up", map[string]any{"turn_id": rf.TurnID, "pid": rf.PID})
 		go m.follow(rf.Name, rf.TurnID, s, run, cancel)

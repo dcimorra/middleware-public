@@ -45,15 +45,23 @@ const maxUDP = 512
 // expect) and serves until ctx ends. It returns once both sockets are
 // open, so a caller can read Addr right after.
 func (s *Server) Listen(ctx context.Context, addr string) error {
-	udp, err := net.ListenPacket("udp", addr)
-	if err != nil {
-		return err
-	}
-	// TCP on the exact port UDP got, which matters when addr ends in :0.
-	tcp, err := net.Listen("tcp", udp.LocalAddr().String())
-	if err != nil {
+	var udp net.PacketConn
+	var tcp net.Listener
+	// TCP on the exact port UDP got, which matters when addr ends in :0:
+	// the kernel picks a UDP port that may be taken for TCP, so with :0
+	// another pick is tried rather than failing on a coincidence.
+	for attempt := 0; ; attempt++ {
+		var err error
+		if udp, err = net.ListenPacket("udp", addr); err != nil {
+			return err
+		}
+		if tcp, err = net.Listen("tcp", udp.LocalAddr().String()); err == nil {
+			break
+		}
 		udp.Close()
-		return err
+		if !strings.HasSuffix(addr, ":0") || attempt == 9 {
+			return err
+		}
 	}
 	s.mu.Lock()
 	s.udp, s.tcp, s.done = udp, tcp, make(chan struct{})

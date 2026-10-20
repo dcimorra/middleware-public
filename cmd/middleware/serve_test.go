@@ -116,9 +116,17 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 
 	// The request chain: a host nobody serves gets the proxy's answer
 	// through inbound → waf → access → traffic, not a crash in one of them.
-	resp, err := http.Get("http://" + s.Listen + "/")
-	if err != nil {
-		t.Fatal(err)
+	// The API socket opens before the loopback listener, so the listener
+	// is given a moment rather than assumed.
+	var resp *http.Response
+	for wait := time.Now().Add(10 * time.Second); ; {
+		var err error
+		if resp, err = http.Get("http://" + s.Listen + "/"); err == nil {
+			break
+		} else if time.Now().After(wait) {
+			t.Fatal(err)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	resp.Body.Close()
 	if resp.StatusCode == 0 || resp.StatusCode >= 500 {

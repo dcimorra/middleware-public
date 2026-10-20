@@ -188,10 +188,16 @@ func TestTokenEventsAndSystemCommands(t *testing.T) {
 	if err != nil || !strings.Contains(out, "version  test") || !strings.Contains(out, "via      socket") {
 		t.Fatalf("system:\n%s%v", out, err)
 	}
-	time.Sleep(200 * time.Millisecond)
-	out, err = run(t, cl, "events", "--type", "test.")
-	if err != nil || !strings.Contains(out, "test.tick  a.test") {
-		t.Fatalf("events:\n%s%v", out, err)
+	// The tick is emitted in the background a moment after the server
+	// starts; on a loaded machine it can come after these commands.
+	for wait := time.Now().Add(5 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		out, err = run(t, cl, "events", "--type", "test.")
+		if err == nil && strings.Contains(out, "test.tick  a.test") {
+			break
+		}
+		if time.Now().After(wait) {
+			t.Fatalf("events:\n%s%v", out, err)
+		}
 	}
 	out, err = run(t, cl, "events", "--since", "1h", "--json")
 	if err != nil || !strings.Contains(out, `"test.tick"`) {
