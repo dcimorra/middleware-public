@@ -285,16 +285,27 @@ func TestArchivingStopsTheInstanceFirstAndKeepsTheManifestAsItWas(t *testing.T) 
 	if !strings.HasPrefix(dest, f.m.ArchiveDir()) {
 		t.Fatalf("archived to %s", dest)
 	}
-	mf, err := manifest.Load(dest)
-	if err != nil || mf.Disabled {
-		t.Fatalf("archived manifest: %+v %v", mf, err)
+	// One file; restoring it gives the site back as it was, not stopped.
+	archives := f.m.Archives()
+	if len(archives) != 1 || archives[0].Domain != "a.test" || filepath.Join(f.m.ArchiveDir(), archives[0].Name) != dest {
+		t.Fatalf("archives: %+v", archives)
 	}
+	if _, err := f.m.Restore(context.Background(), archives[0].Name); err != nil {
+		t.Fatal(err)
+	}
+	mf, err := manifest.Load(f.m.Dir("a.test"))
+	if err != nil || mf.Disabled {
+		t.Fatalf("restored manifest: %+v %v", mf, err)
+	}
+	if _, err := f.m.Restore(context.Background(), archives[0].Name); err != ErrExists {
+		t.Fatalf("restored over a live site: %v", err)
+	}
+	waitSite(t, f.m, "a.test", func(s Site) bool { return s.Alive })
+	f.m.Delete(context.Background(), "a.test", false)
 	if _, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", first.Port), time.Second); err == nil {
 		t.Fatal("the instance is still listening after the archive")
 	}
-	if _, err := f.m.Get("a.test"); err != ErrNotFound {
-		t.Fatalf("after archive: %v", err)
-	}
+
 	if !f.sawEvent("site.archived") {
 		t.Fatal("no site.archived event")
 	}
@@ -505,4 +516,29 @@ func TestASitePasswordIsHashedBeforeItReachesDisk(t *testing.T) {
 	if mf.Access.Password != before {
 		t.Fatal("a stored hash was re-hashed")
 	}
+}
+
+// A renamed site is the same site: its conversation and HOME come along,
+// and it comes back up under the new name.
+func TestARenamedSiteKeepsItsThingsAndRunsAgain(t *testing.T) {
+	f := newFixture(t, true)
+	f.m.Create("old.test", runManifest(), "")
+	waitSite(t, f.m, "old.test", func(s Site) bool { return s.Alive })
+	os.MkdirAll(filepath.Join(f.m.Root, "data", "homes", "old.test"), 0o700)
+	os.WriteFile(filepath.Join(f.m.Root, "data", "homes", "old.test", "mark"), []byte("1"), 0o600)
+	os.MkdirAll(filepath.Join(f.m.Root, "data", "chat"), 0o700)
+	os.WriteFile(filepath.Join(f.m.Root, "data", "chat", "old.test.json"), []byte(`{"turns":[]}`), 0o600)
+	if _, err := f.m.Rename(context.Background(), "old.test", "new.test"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"data/homes/new.test/mark", "data/chat/new.test.json", "sites/new.test/site.json"} {
+		if _, err := os.Stat(filepath.Join(f.m.Root, p)); err != nil {
+			t.Errorf("%s did not move: %v", p, err)
+		}
+	}
+	waitSite(t, f.m, "new.test", func(s Site) bool { return s.Alive })
+	if _, err := f.m.Rename(context.Background(), "new.test", "tools"); err != ErrBadDomain {
+		t.Fatalf("a site renamed to a project: %v", err)
+	}
+	f.m.Delete(context.Background(), "new.test", false)
 }

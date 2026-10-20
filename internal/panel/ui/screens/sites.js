@@ -18,7 +18,8 @@ import { toast, toastError } from "../components/toast.js";
 export function sitesScreen({ query }) {
   const search = h("input", { type: "search", placeholder: t("sites.search"), "aria-label": t("sites.search"), autocomplete: "off" });
   const newBtn = h("button", { type: "button", class: "btn primary", "data-shortcut": "new" }, icon("plus"), t("sites.new"));
-  const p = page({ title: t("nav.sites"), icon: "globe", actions: [searchBox(search), newBtn] });
+  const archivedBtn = h("button", { type: "button", class: "btn" }, icon("download"), t("sites.archived"));
+  const p = page({ title: t("nav.sites"), icon: "globe", actions: [searchBox(search), archivedBtn, newBtn] });
   const container = h("div", { class: "card pad0" });
   const count = h("p", { class: "small muted", role: "status" });
   p.body.append(container, count);
@@ -126,6 +127,35 @@ export function sitesScreen({ query }) {
   }
 
   newBtn.addEventListener("click", newSite);
+  // Archived sites: one file each under data/archive, faithful (data and
+  // dependencies included), restored to sites/ as they were.
+  archivedBtn.addEventListener("click", async () => {
+    const list = h("div", { class: "stack-sm" });
+    const fill = async () => {
+      clear(list);
+      const items = await api.get("/archive");
+      if (!items.length) { list.append(h("p", { class: "muted" }, t("sites.noArchived"))); return; }
+      for (const a of items) {
+        const restore = h("button", { type: "button", class: "btn sm" }, t("sites.restore"));
+        restore.addEventListener("click", async () => {
+          restore.classList.add("busy");
+          try { const s = await api.post(`/archive/${encodeURIComponent(a.name)}/restore`); store.putSite(s); toast(t("sites.restored", { domain: a.domain }), "ok"); await fill(); }
+          catch (e) { toastError(e); } finally { restore.classList.remove("busy"); }
+        });
+        const remove = h("button", { type: "button", class: "btn sm danger" }, t("common.delete"));
+        remove.addEventListener("click", async () => {
+          try { await api.del(`/archive/${encodeURIComponent(a.name)}`); await fill(); } catch (e) { toastError(e); }
+        });
+        const mb = (a.bytes / 1048576).toFixed(1);
+        list.append(h("div", { class: "row" },
+          h("span", { class: "grow" }, h("strong", null, a.domain), " ", h("span", { class: "small muted" }, `${new Date(a.at).toLocaleString()} · ${mb} MB`)),
+          h("a", { class: "btn sm", href: `/api/v1/archive/${encodeURIComponent(a.name)}/download`, download: a.name }, icon("download")),
+          restore, remove));
+      }
+    };
+    try { await fill(); } catch (e) { toastError(e); return; }
+    await open({ title: t("sites.archivedTitle"), body: [h("p", { class: "dim" }, t("sites.archivedBody")), list], buttons: [{ label: t("common.close"), value: null }] });
+  });
   search.addEventListener("input", () => { filter = search.value; render(); });
 
   // A handover emits several events in a second; one render after the

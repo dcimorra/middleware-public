@@ -553,5 +553,18 @@
   "chat.killed": "{n} process(es) ended",
   "tasks.stop": "Stop",
   "tasks.stopped": "{name} stopped",
-  "sites.ungrouped": "Other sites"
+  "sites.ungrouped": "Other sites",
+  "site.download": "Download",
+  "site.downloadHint": "The folder as a zip, without node_modules, builds and caches (they come back with an install or a build)",
+  "site.rename": "Rename",
+  "site.renameQ": "Rename {domain}",
+  "site.renameBody": "The folder, its HOME, logs, conversations and cost move to the new name. The site stops for a moment; published names are taken down and the new ones published on the same door.",
+  "site.renameTo": "New name",
+  "site.renamed": "Now {domain}",
+  "sites.archived": "Archived",
+  "sites.archivedTitle": "Archived sites",
+  "sites.archivedBody": "Each is one file with everything the folder had, data and dependencies included. Restoring puts it back in sites/ as it was.",
+  "sites.noArchived": "Nothing archived.",
+  "sites.restore": "Restore",
+  "sites.restored": "{domain} restored"
 }

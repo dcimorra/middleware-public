@@ -128,6 +128,12 @@ function overviewTab(domain) {
       actions.append(btn(t("site.publish"), "upload", publish));
       if (published.length) actions.append(btn(t("site.unpublish"), "door", unpublish));
     }
+    if (!unmanaged) {
+      // A plain link: the browser downloads with the session cookie, and a
+      // site of gigabytes streams instead of passing through memory.
+      actions.append(h("a", { class: "btn", href: `/api/v1/sites/${enc(domain)}/download.zip`, download: `${domain}.zip`, title: t("site.downloadHint") }, icon("download"), t("site.download")));
+      actions.append(btn(t("site.rename"), "edit", rename));
+    }
     actions.append(btn(t("site.delete"), "trash", del, "danger"));
 
     const pairs = [
@@ -254,6 +260,25 @@ function overviewTab(domain) {
       toast(t("site.unpublishedNow"), "ok");
     } catch (e) { toastError(e); }
     loadPublished();
+  }
+
+  async function rename() {
+    const to = h("input", { type: "text", value: domain, autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
+    const made = await open({
+      title: t("site.renameQ", { domain }),
+      body: [h("p", { class: "dim" }, t("site.renameBody")), field(t("site.renameTo"), to)],
+      buttons: [{ label: t("common.cancel"), value: null }, { label: t("site.rename"), submit: true, primary: true }],
+      onSubmit: async () => {
+        const r = await api.post(`/sites/${enc(domain)}/rename`, { to: to.value.trim().toLowerCase() });
+        store.dropSite(domain);
+        if (r && r.domain) store.putSite(r);
+        return r.domain;
+      },
+    });
+    if (made) {
+      toast(t("site.renamed", { domain: made }), "ok");
+      navigate(`/sites/${encodeURIComponent(made)}`);
+    }
   }
 
   async function del() {

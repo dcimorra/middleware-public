@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/access"
+	"github.com/dcimorra/middleware-public/internal/archive"
 	"github.com/dcimorra/middleware-public/internal/engine"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/fsx"
@@ -402,7 +403,7 @@ func (m *Manager) ArchiveDir() string { return filepath.Join(m.Root, "data", "ar
 // process would work on Linux, but a worker on a written port would keep
 // that port until the engine noticed the folder was gone, and a site
 // created again with the same name would then fail to bind.
-func (m *Manager) Delete(ctx context.Context, domain string, archive bool) (archived string, err error) {
+func (m *Manager) Delete(ctx context.Context, domain string, keep bool) (archived string, err error) {
 	if !manifest.ValidName(domain) {
 		return "", ErrNotFound
 	}
@@ -414,7 +415,7 @@ func (m *Manager) Delete(ctx context.Context, domain string, archive bool) (arch
 	if err := m.stopAndWait(ctx, domain, dir, original); err != nil {
 		return "", err
 	}
-	if !archive {
+	if !keep {
 		if err := os.RemoveAll(dir); err != nil {
 			return "", err
 		}
@@ -425,17 +426,139 @@ func (m *Manager) Delete(ctx context.Context, domain string, archive bool) (arch
 	if err := os.MkdirAll(m.ArchiveDir(), 0o755); err != nil {
 		return "", err
 	}
-	dest := filepath.Join(m.ArchiveDir(), domain+"-"+time.Now().UTC().Format("20060102T150405Z"))
-	if err := os.Rename(dir, dest); err != nil {
-		return "", fmt.Errorf("archive: %w (sites/ and data/ must be on the same filesystem)", err)
+	if original != nil {
+		// The archive keeps the manifest the operator had, not the stop
+		// written to get there.
+		_ = fsx.WriteAtomic(filepath.Join(dir, manifest.FileName), original, 0o644)
+	}
+	dest := filepath.Join(m.ArchiveDir(), domain+"-"+time.Now().UTC().Format("20060102T150405Z")+".tar.gz")
+	rep, err := archive.Pack(ctx, dir, dest)
+	if err != nil {
+		// Nothing was deleted: the folder is still there, stopped.
+		return "", fmt.Errorf("archive: %w", err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return dest, err
+	}
+	_ = os.RemoveAll(m.logsDir(domain))
+	m.emit("site.archived", domain, "", "packed to "+dest, map[string]any{"path": dest, "files": rep.Files, "bytes": rep.Bytes, "skipped": rep.Skipped})
+	return dest, nil
+}
+
+// Archived is one archived site.
+type Archived struct {
+	Name   string    `json:"name"`
+	Domain string    `json:"domain"`
+	At     time.Time `json:"at"`
+	Bytes  int64     `json:"bytes"`
+}
+
+// Archives lists data/archive, newest first.
+func (m *Manager) Archives() []Archived {
+	ents, _ := os.ReadDir(m.ArchiveDir())
+	var out []Archived
+	for _, e := range ents {
+		name := e.Name()
+		base, ok := strings.CutSuffix(name, ".tar.gz")
+		if !ok || len(base) < 17 {
+			continue
+		}
+		at, err := time.Parse("20060102T150405Z", base[len(base)-16:])
+		if err != nil {
+			continue
+		}
+		info, _ := e.Info()
+		a := Archived{Name: name, Domain: strings.TrimSuffix(base[:len(base)-16], "-"), At: at}
+		if info != nil {
+			a.Bytes = info.Size()
+		}
+		out = append(out, a)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
+	return out
+}
+
+// ArchivePath is the file of an archive by name, refusing anything that
+// is not one of data/archive's entries.
+func (m *Manager) ArchivePath(name string) (string, Archived, error) {
+	for _, a := range m.Archives() {
+		if a.Name == name {
+			return filepath.Join(m.ArchiveDir(), name), a, nil
+		}
+	}
+	return "", Archived{}, ErrNotFound
+}
+
+// Restore unpacks an archive back to sites/<domain>, which must be free.
+// The engine picks it up on its next tick, as it was when archived.
+func (m *Manager) Restore(ctx context.Context, name string) (Site, error) {
+	path, a, err := m.ArchivePath(name)
+	if err != nil {
+		return Site{}, err
+	}
+	if fsx.Exists(m.Dir(a.Domain)) {
+		return Site{}, ErrExists
+	}
+	rep, err := archive.Unpack(ctx, path, m.Dir(a.Domain))
+	if err != nil {
+		return Site{}, err
+	}
+	m.emit("site.restored", a.Domain, "", "restored from "+name, map[string]any{"files": rep.Files, "bytes": rep.Bytes})
+	return m.describe(a.Domain), nil
+}
+
+// DeleteArchive removes an archive for good.
+func (m *Manager) DeleteArchive(name string) error {
+	path, a, err := m.ArchivePath(name)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	m.emit("archive.deleted", a.Domain, "", name+" deleted", nil)
+	return nil
+}
+
+// Rename moves a site to a new name: its folder, its HOME, its logs, its
+// conversations and its cost record, so the site under its new name is
+// the same site and not a stranger with the old one's files. It is
+// stopped first and comes back as it was.
+func (m *Manager) Rename(ctx context.Context, from, to string) (Site, error) {
+	if !manifest.ValidName(to) || manifest.IsProject(from) != manifest.IsProject(to) {
+		return Site{}, ErrBadDomain
+	}
+	dir, err := m.managedDir(from)
+	if err != nil {
+		return Site{}, err
+	}
+	if fsx.Exists(m.Dir(to)) {
+		return Site{}, ErrExists
+	}
+	original, _ := os.ReadFile(filepath.Join(dir, manifest.FileName))
+	if err := m.stopAndWait(ctx, from, dir, original); err != nil {
+		return Site{}, err
+	}
+	if err := os.Rename(dir, m.Dir(to)); err != nil {
+		return Site{}, err
+	}
+	data := filepath.Join(m.Root, "data")
+	for _, pair := range [][2]string{
+		{filepath.Join(data, "homes", from), filepath.Join(data, "homes", to)},
+		{m.logsDir(from), m.logsDir(to)},
+		{filepath.Join(data, "chat", from+".json"), filepath.Join(data, "chat", to+".json")},
+		{filepath.Join(data, "chat", from), filepath.Join(data, "chat", to)},
+		{filepath.Join(data, "agents", "cost", from+".json"), filepath.Join(data, "agents", "cost", to+".json")},
+	} {
+		if fsx.Exists(pair[0]) && !fsx.Exists(pair[1]) {
+			_ = os.Rename(pair[0], pair[1])
+		}
 	}
 	if original != nil {
-		// Put the manifest back the way it was: the archive is a copy of
-		// what the operator had, not of the stop we did to get there.
-		_ = fsx.WriteAtomic(filepath.Join(dest, manifest.FileName), original, 0o644)
+		_ = fsx.WriteAtomic(filepath.Join(m.Dir(to), manifest.FileName), original, 0o644)
 	}
-	m.emit("site.archived", domain, "", "folder moved to "+dest, map[string]any{"path": dest})
-	return dest, nil
+	m.emit("site.renamed", to, "", from+" is now "+to, map[string]any{"from": from})
+	return m.describe(to), nil
 }
 
 // stopAndWait writes disabled into the manifest and waits for the engine

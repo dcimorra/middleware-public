@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/archive"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/inbound"
 	"github.com/dcimorra/middleware-public/internal/manifest"
@@ -33,6 +35,49 @@ func (s *Server) registerSites() {
 	s.Handle("PUT", p+"/{domain}/file", "Write a file inside the site (raw body)", s.sitesWriteFile)
 	s.Handle("POST", p+"/{domain}/deploy", "Run deploy.github.build and write the pointer", s.sitesDeploy)
 	s.Handle("GET", p+"/{domain}/env", "The environment the instance is born with, secrets masked", s.sitesEnv)
+	s.Handle("POST", p+"/{domain}/rename", "Rename a site (body: to): folder, HOME, logs, conversations and cost move with it; published names follow", s.sitesRename)
+	s.Handle("GET", p+"/{domain}/download.zip", "The site folder as a zip, without what an install or a build gives back (?all=1 for everything)", s.sitesDownload)
+	s.Handle("GET", Prefix+"/archive", "Archived sites, newest first", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		m, err := s.sitesManager()
+		if err != nil {
+			return nil, err
+		}
+		list := m.Archives()
+		if list == nil {
+			list = []sites.Archived{}
+		}
+		return list, nil
+	})
+	s.Handle("POST", Prefix+"/archive/{name}/restore", "Put an archived site back in sites/", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		m, err := s.sitesManager()
+		if err != nil {
+			return nil, err
+		}
+		return m.Restore(context.Background(), r.PathValue("name"))
+	})
+	s.Handle("DELETE", Prefix+"/archive/{name}", "Delete an archive for good", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		m, err := s.sitesManager()
+		if err != nil {
+			return nil, err
+		}
+		if err := m.DeleteArchive(r.PathValue("name")); err != nil {
+			return nil, err
+		}
+		return OK, nil
+	})
+	s.Handle("GET", Prefix+"/archive/{name}/download", "Download an archive (.tar.gz)", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		m, err := s.sitesManager()
+		if err != nil {
+			return nil, err
+		}
+		path, _, err := m.ArchivePath(r.PathValue("name"))
+		if err != nil {
+			return nil, err
+		}
+		w.Header().Set("Content-Disposition", `attachment; filename="`+r.PathValue("name")+`"`)
+		http.ServeFile(w, r, path)
+		return Handled, nil
+	})
 }
 
 func (s *Server) sitesManager() (*sites.Manager, error) {
@@ -153,7 +198,7 @@ func (s *Server) sitesDelete(w http.ResponseWriter, r *http.Request) (any, error
 	if err != nil {
 		return nil, err
 	}
-	archive := isTrue(r.URL.Query().Get("archive"))
+	keep := isTrue(r.URL.Query().Get("archive"))
 	// Off the internet first, while the engine still knows its names: a
 	// deleted site whose record and tunnel rule stay behind answers
 	// "nothing here" for as long as nobody notices. A name that cannot
@@ -166,11 +211,13 @@ func (s *Server) sitesDelete(w http.ResponseWriter, r *http.Request) (any, error
 			cancel()
 		}
 	}
-	dest, err := m.Delete(r.Context(), domain, archive)
+	// Packing a large site takes minutes: it must not stop halfway because
+	// the browser tab went away.
+	dest, err := m.Delete(context.Background(), domain, keep)
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]any{"ok": true, "archived": archive}
+	out := map[string]any{"ok": true, "archived": keep}
 	if unpublished != nil {
 		out["unpublished"] = unpublished
 	}
@@ -381,4 +428,73 @@ func isTrue(v string) bool {
 		return true
 	}
 	return false
+}
+
+func (s *Server) sitesRename(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := s.sitesManager()
+	if err != nil {
+		return nil, err
+	}
+	from, err := domainOf(r)
+	if err != nil {
+		return nil, err
+	}
+	var body struct {
+		To string `json:"to"`
+	}
+	if err := ReadJSON(r, &body); err != nil {
+		return nil, err
+	}
+	to := strings.ToLower(strings.TrimSpace(body.To))
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	// The old names leave the internet with the old site, and the new
+	// ones are published on the same door: a rename that left DNS on the
+	// old name would be half a rename.
+	var door inbound.Door
+	published := false
+	if s.publisher != nil {
+		if door, published = s.publisher.Published(from); published {
+			s.publisher.Unpublish(ctx, from)
+		}
+	}
+	site, err := m.Rename(ctx, from, to)
+	if err != nil {
+		return nil, err
+	}
+	if published {
+		go func() {
+			pctx, pcancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer pcancel()
+			for i := 0; i < 20 && len(s.publisher.HostsOf(to)) == 0; i++ {
+				time.Sleep(500 * time.Millisecond)
+			}
+			_, _ = s.publisher.Publish(pctx, to, door)
+		}()
+	}
+	return site, nil
+}
+
+func (s *Server) sitesDownload(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := s.sitesManager()
+	if err != nil {
+		return nil, err
+	}
+	domain, err := domainOf(r)
+	if err != nil {
+		return nil, err
+	}
+	dir := m.Dir(domain)
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		return nil, Errorf(http.StatusNotFound, "%s: no such site", domain)
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+domain+`.zip"`)
+	// Streamed: a site can be gigabytes, and the zip is written as it is
+	// read. An error halfway can only cut the stream, which the client
+	// sees as a broken download rather than a wrong one.
+	if _, err := archive.Zip(r.Context(), w, dir, isTrue(r.URL.Query().Get("all"))); err != nil {
+		s.opts.Bus.Emit(events.Event{Type: "download.failed", Subject: domain, Actor: "operator", Level: "warn", Message: err.Error()})
+	}
+	return Handled, nil
 }
