@@ -36,15 +36,17 @@ projects without a domain. What still blocks a V1 site is listed by
 
 ## 2. Getting a site online
 
-- Publish on create, unpublish on delete or archive, for every hostname the
-  site answers to, through the door chosen for new sites.
-- Run `cloudflared` under its own unit.
-- Cloudflare's IP ranges (plus an override file) as trusted edge hops in
-  `internal/edge`, so the orange cloud in front of 443 is believed.
-- Detect the public IP for the 80/443 door; serialize door moves.
-- ACME DNS-01 through Cloudflare TXT, so a domain still on the tunnel can get
-  its certificate before its DNS moves.
-- Publish and certify `aliases` (they are served already); `www: false`.
+Done: one publisher for creation, deletion and moves (`internal/publish`),
+every name of a site (aliases and the implicit `www.` included, `www: false`
+to drop it) published and certified; the door for new sites and the public
+address (detected, or written); dns-01 through Cloudflare; Cloudflare's
+ranges as trusted edge hops; `cloudflared` run, re-adopted and watched by the
+supervisor; moves serialized; panel and CLI.
+
+Left:
+- Prove it against the real Cloudflare API and a real connector, from a
+  throwaway zone (the tests use a fake API and a fake connector), including
+  that the `cloudflared` release in use takes `--token-file`.
 - House response cache (`cache` modes in the manifest), behind the door.
 - VPN-only sites and the VPN's own DNS.
 - Cloudflare extras: edge purge and cache rules, DNS record editor, Access

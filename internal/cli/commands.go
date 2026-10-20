@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -204,8 +205,14 @@ const siteUsage = `usage: middleware site <command> [flags]
 
   list                        every site folder
   show <domain>               one site, with its manifest
-  add <domain> [--template static|node|go|docker] [--manifest file.json|-]
-  rm <domain> [--archive]     delete, or move to data/archive/
+  add <domain> [--template static|node|go|docker|project] [--manifest file.json|-]
+              [--publish=false] [--door tunnel|ports]
+                              published by default when a DNS module is on
+  rm <domain> [--archive]     unpublish, then delete or move to data/archive/
+  publish <domain> [--door tunnel|ports]
+                              put every name of the site on the internet
+  unpublish <domain>          take its tunnel rules and records away
+  published                   every name the house published, with its state
   restart <domain> | --all    force a handover
   stop | start <domain>       write disabled into the manifest
   hold <domain> [--title t] [--message m]
@@ -233,6 +240,8 @@ func (e *Env) site(args []string) error {
 		follow   = fs.Bool("f", false, "follow the log")
 		lines    = fs.Int("lines", 200, "lines of log")
 		worker   = fs.String("worker", "", "a worker's log instead of the site's")
+		publish  = fs.String("publish", "", "add: true or false (default: true when a DNS module is on)")
+		door     = fs.String("door", "", "add, publish: tunnel or ports (default: the door for new sites)")
 	)
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -308,6 +317,18 @@ func (e *Env) site(args []string) error {
 		} else {
 			body["template"] = *template
 		}
+		switch *publish {
+		case "":
+		case "true", "1", "yes":
+			body["publish"] = true
+		case "false", "0", "no":
+			body["publish"] = false
+		default:
+			return fmt.Errorf("site add: --publish is true or false, not %q", *publish)
+		}
+		if *door != "" {
+			body["door"] = *door
+		}
 		var raw []byte
 		if err := cl.Do("POST", "/api/v1/sites", body, &raw); err != nil {
 			return err
@@ -316,7 +337,67 @@ func (e *Env) site(args []string) error {
 			e.printJSON(raw)
 			return nil
 		}
+		var out struct {
+			Publishing bool `json:"publishing"`
+		}
+		_ = json.Unmarshal(raw, &out)
 		fmt.Fprintf(e.Stdout, "Created %s. The engine picks it up on its next tick.\n", domain)
+		if out.Publishing {
+			fmt.Fprintf(e.Stdout, "Publishing it in the background: `middleware site published` shows how it went.\n")
+		}
+		return nil
+	case "publish":
+		if err := need(); err != nil {
+			return err
+		}
+		body := map[string]any{}
+		if *door != "" {
+			body["door"] = *door
+		}
+		var out struct {
+			Lines []struct{ Status, Text string } `json:"lines"`
+		}
+		if err := cl.Do("POST", "/api/v1/sites/"+domain+"/publish", body, &out); err != nil {
+			return err
+		}
+		return e.printLines(out.Lines)
+	case "unpublish":
+		if err := need(); err != nil {
+			return err
+		}
+		var out struct {
+			Lines []struct{ Status, Text string } `json:"lines"`
+		}
+		if err := cl.Do("POST", "/api/v1/sites/"+domain+"/unpublish", map[string]any{}, &out); err != nil {
+			return err
+		}
+		return e.printLines(out.Lines)
+	case "published":
+		var raw []byte
+		if err := cl.Do("GET", "/api/v1/publish", nil, &raw); err != nil {
+			return err
+		}
+		if c.json {
+			e.printJSON(raw)
+			return nil
+		}
+		var recs map[string]struct {
+			Site, Door, State, Error string
+		}
+		if err := json.Unmarshal(raw, &recs); err != nil {
+			return err
+		}
+		names := make([]string, 0, len(recs))
+		for n := range recs {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		rows := make([][]string, 0, len(names))
+		for _, n := range names {
+			r := recs[n]
+			rows = append(rows, []string{n, r.Site, r.Door, r.State, oneLine(r.Error)})
+		}
+		Table(e.Stdout, []string{"NAME", "SITE", "DOOR", "STATE", "ERROR"}, rows)
 		return nil
 	case "rm", "remove", "delete":
 		if err := need(); err != nil {
@@ -705,4 +786,24 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// printLines prints a publish or move result one line per name, and fails
+// when any line failed, so a script notices.
+func (e *Env) printLines(lines []struct{ Status, Text string }) error {
+	failed := 0
+	for _, l := range lines {
+		mark := map[string]string{"ok": "✓", "skip": "·", "fail": "✗"}[l.Status]
+		fmt.Fprintf(e.Stdout, "%s %s\n", mark, l.Text)
+		if l.Status == "fail" {
+			failed++
+		}
+	}
+	if len(lines) == 0 {
+		fmt.Fprintln(e.Stdout, "nothing to do: every name is already where it should be")
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d name(s) failed; they are retried with backoff", failed)
+	}
+	return nil
 }

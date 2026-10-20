@@ -63,6 +63,8 @@ in the API ([api.md](api.md)) and the panel.
 | `token list` / `token add <name>` / `token rm <id>` | API tokens; the token is shown once |
 | `modules` (or `modules list`) / `modules verify <key> k=v…` / `modules enable <key> k=v…` / `modules disable <key>` / `modules forget <key>` | [modules.md](modules.md); `enable` verifies before it saves and prints one line per check; a value of `@file` or `-` reads the value from a file or stdin so a token never sits in the shell history. `forget` disables and deletes the credentials |
 | `inbound status` / `inbound open <door>` / `inbound close <door>` | the three doors (`tunnel`, `ports`, `local`) and the certificates on disk. Moving domains and renewing is `POST /inbound/move` and `POST /inbound/certificates/{domain}/renew` in the API |
+| `site publish <domain> [--door d]` / `site unpublish <domain>` / `site published` | put every name of a site on the internet, take them back, and list what the house published with each name's state |
+| `migrate [--sites dir] [--apply]` | convert V1 manifests; see [upgrade.md](upgrade.md) |
 | `inbound local [on\|off] [--http addr] [--dns addr]` | the development bench: plain HTTP and a name server for the sites on this machine; prints the resolver snippet. See [install.md](install.md#local-development-bench) |
 | `waf list` / `waf block <ip> [duration] [reason]` / `waf unblock <ip>` | the block list, [security.md](security.md); the duration defaults to one day. Under-attack mode and the traffic are `/waf/under-attack` and `/waf/traffic` in the API |
 | `guard incidents` | what the guard found and has not been dismissed; dismissing is `POST /guard/incidents/{id}/dismiss` |

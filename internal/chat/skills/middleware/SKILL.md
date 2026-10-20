@@ -467,6 +467,14 @@ CNAME to the tunnel, or an A/AAAA to this machine. With the `cloudflare`
 module on, the house writes the records; without it, say exactly which
 record the person must create and at what value.
 
+**Publishing is the house's, not yours.** A site created through the house
+is published on the door for new sites; every name it answers to (its
+domain, `aliases`, and `www.` in front of an apex unless `"www": false`)
+follows: an alias you add to the manifest is published on the next pass,
+one you remove is unpublished. `middleware site published` shows each name
+and its state; `manual` means no DNS provider covers it and a person must
+point it here. Never write DNS records or tunnel rules yourself.
+
 **Certificates.** Only on the ports door, only for domains this installation
 serves. A domain moved to the ports door before its certificate exists
 answers "No certificate yet".
@@ -477,16 +485,17 @@ and moves them. The same call from here:
 ```sh
 curl -s --unix-socket data/api.sock -X POST http://x/api/v1/inbound/move \
   -H 'Content-Type: application/json' \
-  -d '{"domains": ["shop.example.com"], "to": "ports", "ip": "203.0.113.9"}'
+  -d '{"domains": ["shop.example.com"], "to": "ports"}'
 ```
 
 (From a site conversation you cannot open `data/api.sock`; ask the person to
 publish from the Inbound screen, or use a token against the panel domain.)
 
 The order of a move is the only part that must not change:
-- **to ports**: certificate first (the challenge is answered through the door
-  the domain currently uses), then DNS to this machine, then the tunnel
-  route removed. If the certificate does not come, the domain is not moved.
+- **to ports**: certificate first (by a TXT record when the DNS provider
+  manages the zone, otherwise through the door the domain currently uses),
+  then DNS to this machine, then the tunnel route removed. If the
+  certificate does not come, the domain is not moved.
 - **to tunnel**: the tunnel route first, then the CNAME. The other way round
   gives a window of provider errors.
 

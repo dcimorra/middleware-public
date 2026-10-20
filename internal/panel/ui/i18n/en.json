@@ -1,6 +1,5 @@
 {
   "app.title": "middleware",
-
   "nav.groupManage": "Manage",
   "nav.groupObserve": "Observe",
   "nav.sites": "Sites",
@@ -14,7 +13,6 @@
   "nav.system": "System",
   "nav.session": "Session",
   "nav.menu": "Menu",
-
   "common.cancel": "Cancel",
   "common.close": "Close",
   "common.confirm": "Confirm",
@@ -28,41 +26,33 @@
   "common.copy": "Copy",
   "common.copied": "Copied",
   "common.copyFailed": "Copy failed — select it by hand",
-
   "stream.live": "live",
   "stream.connecting": "connecting",
   "stream.reconnecting": "reconnecting",
-
   "theme.auto": "System",
   "theme.light": "Light",
   "theme.dark": "Dark",
   "theme.button": "Theme: {theme}. Click to change",
-
   "keys.title": "Keyboard shortcuts",
   "keys.search": "Focus the search box",
   "keys.help": "Show this list",
   "keys.new": "New (site, task, token…) on screens that create things",
   "keys.escape": "Close a dialog, leave a field",
-
   "time.now": "just now",
   "time.minutes": "{n} min",
   "time.hours": "{n} h",
   "time.days": "{n} d",
   "time.ago": "{v} ago",
   "time.in": "in {v}",
-
   "level.info": "info",
   "level.warn": "warning",
   "level.error": "error",
-
   "check.ok": "ok",
   "check.skip": "skip",
   "check.fail": "fail",
   "check.pending": "…",
-
   "spark.peak": "max {n}/s",
   "spark.label": "Requests per second: now {now}, peak {max}",
-
   "mode.run": "run",
   "mode.static": "static",
   "mode.upstream": "upstream",
@@ -70,7 +60,6 @@
   "mode.stopped": "stopped",
   "mode.unmanaged": "unmanaged",
   "mode.unknown": "unknown",
-
   "status.up": "up",
   "status.down": "down",
   "status.failing": "failing",
@@ -79,12 +68,10 @@
   "status.held": "held",
   "status.stopped": "stopped",
   "status.notServed": "not served",
-
   "template.static": "Static files",
   "template.node": "Node.js app",
   "template.go": "Go app",
   "template.docker": "Docker container",
-
   "auth.loginTitle": "Sign in",
   "auth.loginLead": "The operator password for this installation.",
   "auth.setupTitle": "Set up the operator",
@@ -101,7 +88,6 @@
   "auth.firstRun": "First run? Set up the operator",
   "auth.haveAccount": "Already set up? Sign in",
   "auth.expired": "Your session ended. Sign in again.",
-
   "sites.search": "Search sites",
   "sites.new": "New site",
   "sites.newTitle": "New site",
@@ -122,7 +108,6 @@
   "sites.col.port": "Port",
   "sites.col.revision": "Revision",
   "sites.col.lastEvent": "Last event",
-
   "site.tab.overview": "Overview",
   "site.tab.manifest": "Manifest",
   "site.tab.logs": "Logs",
@@ -162,7 +147,7 @@
   "site.deployStarted": "Deploy started; watch the events",
   "site.delete": "Delete",
   "site.deleteQ": "Delete {domain}?",
-  "site.deleteBody": "The site stops answering immediately.",
+  "site.deleteBody": "It is unpublished first: its tunnel routes and the DNS records that point at this house are removed. Then the site stops answering.",
   "site.archive": "Archive instead of deleting",
   "site.archiveHint": "The folder moves to data/archive/ and can be restored by hand. Unchecked, it is deleted for good.",
   "site.archived": "{domain} archived",
@@ -180,17 +165,14 @@
   "site.envEmpty": "No instance is running, so there is nothing resolved.",
   "site.envKey": "Variable",
   "site.envValue": "Value",
-
   "manifest.hint": "site.json as the engine reads it. Saving validates it; a change to run, env or runtime triggers a handover.",
   "manifest.saved": "Manifest saved",
   "manifest.changedUnderneath": "The manifest changed on disk at {at} while you were editing. Reload to see it; saving overwrites.",
-
   "editor.label": "JSON editor",
   "editor.format": "Format",
   "editor.formatted": "Formatted",
   "editor.saved": "Saved",
   "editor.invalid": "Not valid JSON (line {line}): {msg}",
-
   "logs.label": "Log output",
   "logs.worker": "Which log",
   "logs.main": "Site",
@@ -201,7 +183,6 @@
   "logs.ended": "stream ended",
   "logs.clear": "Clear",
   "logs.empty": "(the log is empty)",
-
   "files.path": "Path",
   "files.emptyDir": "Empty folder",
   "files.pick": "Pick a file",
@@ -215,7 +196,6 @@
   "files.discardBody": "What you typed is lost.",
   "files.discard": "Discard",
   "files.saved": "{path} saved",
-
   "chat.placeholder": "Ask the agent to change something in this site… (Ctrl+Enter to send)",
   "chat.message": "Message",
   "chat.provider": "Provider",
@@ -242,7 +222,6 @@
   "chat.capacity": "{used} of {max} running",
   "chat.capacityTitle": "Agent turns running on this machine, of the cap set in Settings",
   "chat.capacityFull": "Every agent slot is taken ({used} of {max}). The message was not sent: try again when a turn ends, or raise the cap in Settings.",
-
   "access.title": "Access",
   "access.hint": "Who may reach this site. Applied live, no restart.",
   "access.password": "Password",
@@ -265,7 +244,6 @@
   "access.underAttackOn": "{domain} is under attack mode",
   "access.underAttackOff": "{domain} left under attack mode",
   "access.saved": "Access and WAF saved",
-
   "inbound.sub": "Three doors into this machine: a tunnel, the public ports, and the local bench.",
   "inbound.door.tunnel": "Tunnel",
   "inbound.door.ports": "Ports 80/443",
@@ -308,7 +286,6 @@
   "inbound.moveTo": "To",
   "inbound.moved": "{n} domain(s) moved to {door}",
   "inbound.moveFailed": "Some domains did not move; see the lines",
-
   "waf.sub": "Always on. Rate limits, blocking and under-attack mode for the whole machine.",
   "waf.traffic": "Traffic, last minute",
   "waf.perSecond": "Requests per second",
@@ -347,7 +324,6 @@
   "waf.recent": "Recent addresses",
   "waf.hits": "Hits",
   "waf.status": "Status",
-
   "modules.sub": "What not every installation wants. Enabling verifies before it saves.",
   "modules.emptyTitle": "No modules",
   "modules.emptyHint": "This build ships none.",
@@ -395,7 +371,6 @@
   "settings.depsHint": "The agent CLIs come from npm and have releases of their own. The installation checks daily for a newer one.",
   "settings.depsAutoUpdate": "Install newer releases automatically",
   "settings.depsSaved": "Saved",
-
   "tasks.sub": "Scheduled work, one JSON file each under tasks/.",
   "tasks.new": "New task",
   "tasks.newTitle": "New task",
@@ -422,7 +397,6 @@
   "tasks.deleteQ": "Delete task {name}?",
   "tasks.deleteBody": "The file is removed; a run in progress finishes.",
   "tasks.deleted": "{name} deleted",
-
   "events.sub": "Everything that changed state, as it happens.",
   "events.typeFilter": "Type prefix, e.g. instance.",
   "events.subjectFilter": "Subject (domain)",
@@ -438,7 +412,6 @@
   "events.col.actor": "Actor",
   "events.col.message": "Message",
   "events.data": "Data",
-
   "guard.sub": "Rules cut first; a model is only asked afterwards.",
   "guard.incidents": "Incidents",
   "guard.rules": "Rules",
@@ -454,7 +427,6 @@
   "guard.col.description": "Description",
   "guard.dismiss": "Dismiss",
   "guard.dismissed": "Incident dismissed",
-
   "settings.general": "Installation",
   "settings.panelDomain": "Panel domain",
   "settings.panelDomainHint": "Where this console answers. Empty means loopback only.",
@@ -509,7 +481,6 @@
   "settings.defaultProviderHint": "For a site whose manifest names none.",
   "settings.agentsBad": "The cap must be 1 to 64, the reserved slots fewer than the cap, and a provider's cap 0 to 64.",
   "settings.agentsSaved": "Agent limits saved and in force.",
-
   "system.version": "Version",
   "system.uptime": "Uptime",
   "system.load": "Load",
@@ -535,5 +506,34 @@
   "system.restart": "Restart middleware",
   "system.restartQ": "Restart the middleware?",
   "system.restartBody": "Sites keep running and are re-adopted. Open WebSockets through the proxy drop. This console reconnects by itself.",
-  "system.restarting": "Restarting…"
+  "system.restarting": "Restarting…",
+  "template.project": "Project (no domain)",
+  "mode.project": "project",
+  "status.project": "no domain",
+  "status.notAnswering": "not answering",
+  "sites.publish": "Publish it now",
+  "sites.publishHint": "Points every name of the site at this house through the door for new sites: DNS, the tunnel's route or a certificate. A name without a dot is a project and is not published.",
+  "sites.createdPublishing": "{domain} created; publishing it",
+  "site.publish": "Publish",
+  "site.unpublish": "Unpublish",
+  "site.published": "Published",
+  "site.notPublished": "not published",
+  "site.publishedNow": "Published",
+  "site.unpublishedNow": "Unpublished",
+  "site.unpublishQ": "Unpublish {domain}?",
+  "site.unpublishBody": "Its tunnel routes and the DNS records that point at this house are removed. The site keeps running here.",
+  "publish.state.published": "published",
+  "publish.state.pending": "pending",
+  "publish.state.failed": "failed",
+  "publish.state.manual": "needs a person",
+  "publish.state.retiring": "unpublishing",
+  "inbound.col.published": "Published",
+  "inbound.publishing": "Publishing",
+  "inbound.publishingDetail": "Where new sites are published, and the address the ports door is reached at. Empty detects it.",
+  "inbound.newSites": "Door for new sites",
+  "inbound.publicIP": "Public IPv4",
+  "inbound.publicIPHint": "Used for the A records of the ports door. Empty detects it each time it is needed.",
+  "inbound.publishingSaved": "Publishing settings saved",
+  "inbound.retry": "Retry what failed",
+  "inbound.retried": "Retrying every name that is not published"
 }

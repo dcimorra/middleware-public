@@ -43,6 +43,7 @@ export function inboundScreen() {
         cell(h("a", { class: "cell-link", href: `#/sites/${enc(d.domain)}` }, d.domain), null, "primary"),
         cell(doorBadge(d.door), t("inbound.col.door")),
         cell(dnsBadge(d.dns), t("inbound.col.dns")),
+        cell(d.published ? h("span", { class: "badge " + ({ published: "ok", failed: "bad", manual: "warn", retiring: "warn" }[d.published] || ""), title: d.publish_error || "" }, t("publish.state." + d.published)) : h("span", { class: "muted" }, "—"), t("inbound.col.published")),
         cell(exp ? h("span", { class: "status", title: fmtTime(exp) },
           h("span", { class: "dot " + (daysLeft < 7 ? "bad" : daysLeft < 21 ? "warn" : "ok") }),
           daysLeft < 0 ? t("inbound.certExpired") : t("inbound.certDays", { n: daysLeft }),
@@ -58,13 +59,14 @@ export function inboundScreen() {
     moveBtn.disabled = selected.size === 0;
     moveBtn.addEventListener("click", move);
     const tbl = domains.length ? table([
-      { label: "" }, { label: t("inbound.col.domain") }, { label: t("inbound.col.door") }, { label: t("inbound.col.dns") }, { label: t("inbound.col.cert") }, { label: "" },
+      { label: "" }, { label: t("inbound.col.domain") }, { label: t("inbound.col.door") }, { label: t("inbound.col.dns") }, { label: t("inbound.col.published") }, { label: t("inbound.col.cert") }, { label: "" },
     ], rows, { responsive: true }).el : empty(t("inbound.emptyTitle"), t("inbound.emptyHint"));
     const thCb = tbl.querySelector("th");
     if (thCb) { clear(thCb).append(all); }
 
     clear(body).append(
       doorCards,
+      publishingCard(data),
       h("div", { class: "card pad0" },
         h("div", { class: "log-bar card-pad" }, h("h2", { class: "grow" }, t("inbound.domains")), moveBtn),
         tbl,
@@ -142,6 +144,30 @@ export function inboundScreen() {
     );
   }
 
+  // Where new sites go and the address A records point at: the two
+  // decisions publishing needs that are not a site's own.
+  function publishingCard(data) {
+    const door = h("select", null, h("option", { value: "tunnel" }, t("inbound.door.tunnel")), h("option", { value: "ports" }, t("inbound.door.ports")));
+    door.value = data.new_sites || "tunnel";
+    const ip = h("input", { type: "text", class: "mono", value: data.public_ip || "", placeholder: "203.0.113.10", autocomplete: "off" });
+    const save = h("button", { type: "button", class: "btn sm" }, icon("save"), t("common.save"));
+    const retry = h("button", { type: "button", class: "btn sm" }, icon("refresh"), t("inbound.retry"));
+    save.addEventListener("click", async () => {
+      save.classList.add("busy");
+      try { await api.put("/inbound/publishing", { new_sites: door.value, public_ip: ip.value.trim() }); toast(t("inbound.publishingSaved"), "ok"); }
+      catch (e) { toastError(e); } finally { save.classList.remove("busy"); }
+    });
+    retry.addEventListener("click", async () => {
+      try { await api.post("/publish/retry"); toast(t("inbound.retried"), "ok"); } catch (e) { toastError(e); }
+    });
+    return h("div", { class: "card" },
+      h("h2", null, t("inbound.publishing")),
+      h("p", { class: "small muted" }, t("inbound.publishingDetail")),
+      h("div", { class: "form-row" }, field(t("inbound.newSites"), door), field(t("inbound.publicIP"), ip, t("inbound.publicIPHint"))),
+      h("div", { class: "actions" }, save, retry),
+    );
+  }
+
   function doorBadge(door) {
     if (door === "tunnel") return h("span", { class: "badge info" }, t("inbound.door.tunnel"));
     if (door === "ports") return h("span", { class: "badge accent" }, t("inbound.door.ports"));
@@ -189,6 +215,7 @@ export function inboundScreen() {
   // reading result lines or has the move dialog open.
   subs.push(onEvent("inbound.", () => { if (!document.querySelector("dialog[open]") && !body.querySelector(".checklist li")) load(body, render); }));
   subs.push(onEvent("cert.", () => load(body, render)));
+  subs.push(onEvent("publish.", () => { if (!document.querySelector("dialog[open]") && !body.querySelector(".checklist li")) load(body, render); }));
   load(body, render);
   return { el: p.el, destroy() { subs.forEach((u) => u()); } };
 }

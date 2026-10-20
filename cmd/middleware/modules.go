@@ -71,6 +71,10 @@ func buildModules(root string, bus *events.Bus, restart func(context.Context, st
 	}
 	cf := cloudflare.New(mgr)
 	cf.Service = service
+	cf.Connector = &cloudflare.Connector{Root: root, Bus: bus, Want: func() bool {
+		cfg, err := mgr.Config(cloudflare.Key)
+		return err == nil && mgr.Enabled(cloudflare.Key) && cfg["tunnel_id"] != ""
+	}}
 	gh := github.New(mgr, bus, restart)
 	mgr.Register(cf)
 	mgr.Register(gh)
@@ -91,8 +95,12 @@ type modulesHook struct{}
 func (modulesHook) Wrap(next http.Handler) http.Handler { return next }
 
 func (modulesHook) Run(ctx context.Context, a *app.App) error {
-	_, err := modulesFor(a)
-	return err
+	set, err := modulesFor(a)
+	if err != nil {
+		return err
+	}
+	go set.Cloudflare.Connector.Run(ctx)
+	return nil
 }
 
 // modulesCommand is the CLI. It works on the store directly; the running

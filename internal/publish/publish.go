@@ -92,8 +92,8 @@ type Record struct {
 	State    string       `json:"state"`
 	Error    string       `json:"error,omitempty"`
 	Attempts int          `json:"attempts,omitempty"`
-	Next     time.Time    `json:"next,omitempty"`
-	At       time.Time    `json:"at,omitempty"`
+	Next     time.Time    `json:"next,omitzero"`
+	At       time.Time    `json:"at,omitzero"`
 	// IP is the A record's address when published on the ports door, so
 	// unpublishing knows which record is the house's.
 	IP string `json:"ip,omitempty"`

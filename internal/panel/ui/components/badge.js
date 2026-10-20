@@ -5,11 +5,11 @@
 import { h } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 
-const MODE_CLASS = { run: "accent", static: "info", upstream: "info", hold: "warn", stopped: "", disabled: "", unmanaged: "warn" };
+const MODE_CLASS = { run: "accent", static: "info", upstream: "info", hold: "warn", stopped: "", disabled: "", unmanaged: "warn", project: "" };
 
 const MODE_LABEL = {
   run: "mode.run", static: "mode.static", upstream: "mode.upstream", hold: "mode.hold",
-  stopped: "mode.stopped", disabled: "mode.stopped", unmanaged: "mode.unmanaged",
+  stopped: "mode.stopped", disabled: "mode.stopped", unmanaged: "mode.unmanaged", project: "mode.project",
 };
 
 export function siteMode(site) {
@@ -27,6 +27,12 @@ export function modeBadge(site) {
 export function aliveStatus(site) {
   const mode = siteMode(site);
   if (site.handing) return h("span", { class: "status" }, h("span", { class: "dot warn" }), t("status.handing"));
+  // A process alive that does not answer its health check is down for
+  // whoever visits; the last check's error says why.
+  const lastCheck = (site.checks || [])[site.checks ? site.checks.length - 1 : 0];
+  if (site.health === "down" && (mode === "run" || mode === "static")) {
+    return h("span", { class: "status", title: (lastCheck && lastCheck.error) || "" }, h("span", { class: "dot bad" }), t("status.notAnswering"));
+  }
   if (mode === "run") {
     if (site.alive) return h("span", { class: "status" }, h("span", { class: "dot ok" }), t("status.up"));
     if (site.error) return h("span", { class: "status", title: site.error }, h("span", { class: "dot bad" }), t("status.failing"));
@@ -35,6 +41,7 @@ export function aliveStatus(site) {
   if (mode === "static" || mode === "upstream") return h("span", { class: "status" }, h("span", { class: "dot ok" }), t("status.serving"));
   if (mode === "hold") return h("span", { class: "status" }, h("span", { class: "dot warn" }), t("status.held"));
   if (mode === "stopped") return h("span", { class: "status" }, h("span", { class: "dot" }), t("status.stopped"));
+  if (mode === "project") return h("span", { class: "status" }, h("span", { class: "dot" }), t("status.project"));
   return h("span", { class: "status" }, h("span", { class: "dot" }), t("status.notServed"));
 }
 

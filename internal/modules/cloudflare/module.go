@@ -41,6 +41,8 @@ type Module struct {
 	// BaseURL overrides the API for tests.
 	BaseURL string
 	HTTP    *http.Client
+	// Connector runs cloudflared; nil in the CLI, which only edits config.
+	Connector *Connector
 }
 
 // New builds the module over the manager that holds its config.
@@ -188,9 +190,9 @@ func (m *Module) Verify(ctx context.Context, cfg modules.Config) []modules.Line 
 //	modules/cloudflared/config.yml          tunnel id, metrics address, protocol
 //	modules/cloudflared/token               the tunnel token, mode 0600
 //
-// and the unit the installer writes runs
+// and the Connector runs, for as long as the module is enabled,
 //
-//	modules/bin/cloudflared --config modules/cloudflared/config.yml tunnel run --token-file modules/cloudflared/token
+//	modules/bin/cloudflared --config modules/cloudflared/config.yml tunnel --no-autoupdate run --token-file modules/cloudflared/token
 //
 // The ingress rules are not in config.yml on purpose: they live in the
 // API (remotely managed tunnel), which is where Publish writes them, so
@@ -216,7 +218,7 @@ func (m *Module) Install(ctx context.Context, cfg modules.Config, progress func(
 		progress("cloudflared already installed, keeping it")
 	}
 	dir := filepath.Join(root, "modules", "cloudflared")
-	config := fmt.Sprintf("# Written by the cloudflare module. Ingress rules live in the API, not here.\ntunnel: %s\nmetrics: 127.0.0.1:46101\nprotocol: auto\nno-autoupdate: true\n", cfg["tunnel_id"])
+	config := fmt.Sprintf("# Written by the cloudflare module. Ingress rules live in the API, not here.\ntunnel: %s\nmetrics: %s\nprotocol: auto\nno-autoupdate: true\n", cfg["tunnel_id"], MetricsAddr)
 	if err := fsx.WriteAtomic(filepath.Join(dir, "config.yml"), []byte(config), 0o644); err != nil {
 		return err
 	}
@@ -240,16 +242,25 @@ func (m *Module) Install(ctx context.Context, cfg modules.Config, progress func(
 // module.
 func (m *Module) Enable(ctx context.Context, cfg modules.Config) error { return nil }
 
-// Disable has nothing to stop: the connector, when it runs, is a unit of
-// the installer's, and routes already written keep working.
+// Disable has nothing to do itself: the Connector sees the module off on
+// its next pass and stops cloudflared, and routes already written stay.
 func (m *Module) Disable(ctx context.Context) error { return nil }
 
 // Routes exposes read-only state for the panel.
 func (m *Module) Routes() map[string]http.Handler {
 	return map[string]http.Handler{
-		"zones":   http.HandlerFunc(m.handleZones),
-		"ingress": http.HandlerFunc(m.handleIngress),
+		"zones":     http.HandlerFunc(m.handleZones),
+		"ingress":   http.HandlerFunc(m.handleIngress),
+		"connector": http.HandlerFunc(m.handleConnector),
 	}
+}
+
+func (m *Module) handleConnector(w http.ResponseWriter, r *http.Request) {
+	if m.Connector == nil {
+		writeError(w, http.StatusNotImplemented, errNoConnector)
+		return
+	}
+	writeJSON(w, m.Connector.Status())
 }
 
 func (m *Module) handleZones(w http.ResponseWriter, r *http.Request) {

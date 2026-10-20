@@ -12,7 +12,7 @@ import { page, empty, errorBox, loading, table, cell, search as searchBox } from
 import { icon } from "../lib/icons.js";
 
 import { modeBadge, aliveStatus, siteMode } from "../components/badge.js";
-import { open, field } from "../components/dialog.js";
+import { open, field, checkbox } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 
 export function sitesScreen({ query }) {
@@ -75,22 +75,40 @@ export function sitesScreen({ query }) {
   async function newSite() {
     const domain = h("input", { type: "text", placeholder: "example.com", autocomplete: "off", autocapitalize: "off", spellcheck: "false", required: true });
     const template = h("select", null,
-      ...["static", "node", "go", "docker"].map((k) => h("option", { value: k }, t("template." + k))),
+      ...["static", "node", "go", "docker", "project"].map((k) => h("option", { value: k }, t("template." + k))),
     );
+    // Publishing is on by default: a site is something people reach. A
+    // name without a dot is a project and has nothing to publish.
+    const publish = checkbox(t("sites.publish"), { checked: true });
+    const isProject = () => !domain.value.includes(".");
+    const syncPublish = () => {
+      publish.input.disabled = isProject();
+      if (isProject()) template.value = "project";
+      else if (template.value === "project") template.value = "static";
+    };
+    domain.addEventListener("input", syncPublish);
+    let published = false;
     const made = await open({
       title: t("sites.newTitle"),
-      body: [field(t("sites.domain"), domain, t("sites.domainHint")), field(t("sites.template"), template, t("sites.templateHint"))],
+      body: [
+        field(t("sites.domain"), domain, t("sites.domainHint")),
+        field(t("sites.template"), template, t("sites.templateHint")),
+        h("div", { class: "field" }, publish.el, h("div", { class: "hint" }, t("sites.publishHint"))),
+      ],
       buttons: [{ label: t("common.cancel"), value: null }, { label: t("common.create"), submit: true, primary: true }],
       onSubmit: async (_form, showError) => {
         const d = domain.value.trim().toLowerCase();
-        if (!/^[a-z0-9.-]+\.[a-z0-9-]+$/.test(d)) { showError(t("sites.badDomain")); return false; }
-        const site = await api.post("/sites", { domain: d, template: template.value });
+        if (!/^[a-z0-9-]+(\.[a-z0-9-]+)*$/.test(d)) { showError(t("sites.badDomain")); return false; }
+        const body = { domain: d, template: template.value };
+        if (!isProject()) body.publish = publish.input.checked;
+        const site = await api.post("/sites", body);
+        published = Boolean(site.publishing);
         store.putSite(site);
         return site.domain;
       },
     });
     if (made) {
-      toast(t("sites.created", { domain: made }), "ok");
+      toast(t(published ? "sites.createdPublishing" : "sites.created", { domain: made }), "ok");
       navigate(`/sites/${encodeURIComponent(made)}`);
     }
   }

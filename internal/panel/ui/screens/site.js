@@ -5,6 +5,7 @@
 import { h, clear, append, shortRev, fmtTime } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
+import { onEvent } from "../lib/stream.js";
 import { store } from "../lib/store.js";
 import { navigate } from "../lib/router.js";
 import { page, kv, table, cell, empty, loading, errorBox, notice } from "../components/page.js";
@@ -86,6 +87,17 @@ function overviewTab(domain) {
   const el = h("div");
   const subs = [];
   const envBox = h("div");
+  // The names the house published for this site, from GET /publish:
+  // [name, record] pairs, refreshed on publish.* events.
+  let published = [];
+  async function loadPublished() {
+    try {
+      const recs = await api.get("/publish");
+      published = Object.entries(recs || {}).filter(([, r]) => r.site === domain).sort(([a], [b]) => a.localeCompare(b));
+    } catch { published = []; }
+    render();
+  }
+  subs.push(onEvent("publish.", () => loadPublished()));
 
   function render() {
     const s = store.site(domain);
@@ -112,6 +124,10 @@ function overviewTab(domain) {
     } else {
       actions.append(btn(t("site.adopt"), "plus", adopt, "primary"));
     }
+    if (!unmanaged && mode !== "project") {
+      actions.append(btn(t("site.publish"), "upload", publish));
+      if (published.length) actions.append(btn(t("site.unpublish"), "door", unpublish));
+    }
     actions.append(btn(t("site.delete"), "trash", del, "danger"));
 
     const pairs = [
@@ -126,6 +142,12 @@ function overviewTab(domain) {
       [t("site.staticRoot"), m.static ? (m.static.root || "public") : null],
       [t("site.holdTitle"), m.hold && m.hold.enabled ? (m.hold.title || "—") : null],
       [t("site.app"), m.app || null],
+      [t("site.published"), published.length ? h("div", { class: "stack-sm" }, ...published.map(([name, r]) => h("div", null,
+        h("code", null, name), " ",
+        h("span", { class: "badge " + ({ published: "ok", failed: "bad", manual: "warn", retiring: "warn" }[r.state] || ""), title: r.error || "" }, t("publish.state." + r.state)),
+        " ", h("span", { class: "small muted" }, t("inbound.door." + r.door)),
+        r.error ? h("div", { class: "small dim" }, r.error) : null,
+      ))) : (mode === "project" ? null : h("span", { class: "muted" }, t("site.notPublished")))],
     ];
 
     append(el, [
@@ -208,6 +230,24 @@ function overviewTab(domain) {
     if (ok) toast(t("site.heldNow"), "ok");
   }
 
+  async function publish() {
+    try {
+      const r = await api.post(`/sites/${enc(domain)}/publish`, {});
+      const failed = (r.lines || []).filter((l) => l.status === "fail");
+      toast(failed.length ? failed.map((l) => l.text).join("; ") : t("site.publishedNow"), failed.length ? "bad" : "ok");
+    } catch (e) { toastError(e); }
+    loadPublished();
+  }
+
+  async function unpublish() {
+    if (!(await confirm({ title: t("site.unpublishQ", { domain }), body: t("site.unpublishBody"), confirmLabel: t("site.unpublish"), danger: true }))) return;
+    try {
+      await api.post(`/sites/${enc(domain)}/unpublish`, {});
+      toast(t("site.unpublishedNow"), "ok");
+    } catch (e) { toastError(e); }
+    loadPublished();
+  }
+
   async function del() {
     const archive = checkbox(t("site.archive"), { checked: true });
     const yes = await confirm({
@@ -242,7 +282,7 @@ function overviewTab(domain) {
 
   subs.push(store.subscribe("site:" + domain, render));
   render();
-  if (siteMode(store.site(domain) || {}) !== "unmanaged") loadEnv();
+  if (siteMode(store.site(domain) || {}) !== "unmanaged") { loadEnv(); loadPublished(); }
   return { el, destroy() { subs.forEach((u) => u()); } };
 }
 

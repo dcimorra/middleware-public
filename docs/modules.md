@@ -38,7 +38,11 @@ certificates on this machine.
 - **Verify**: the loopback listener answers; with cloudflare, the token can
   create and list tunnels.
 - **Installs**: `cloudflared` under `modules/` when the cloudflare module is
-  on, and a worker that keeps it running.
+  on. The supervisor runs it itself while the module is on and has a
+  tunnel (no unit: a container has no systemd), restarts it with backoff,
+  re-adopts it after a restart of its own like a site, and asks its
+  `/ready` on `127.0.0.1:46101`. Its log is `data/logs/cloudflared.log`; its
+  state, `GET /api/v1/modules/cloudflare/connector`.
 
 ## inbound-ports
 
@@ -55,7 +59,11 @@ serves get certificates; the panel domain included.
 
 Moving domains between doors happens from the Inbound screen or with
 `POST /api/v1/inbound/move`; the certificate is obtained before DNS is
-touched, so a domain is never moved to a door that cannot answer it.
+touched, so a domain is never moved to a door that cannot answer it. With
+the cloudflare module on, the certificate comes through dns-01 for the zones
+it manages, so a brand new name gets one before its DNS points here.
+The client address behind Cloudflare's proxy is believed from Cloudflare's
+own ranges (built in; `data/edge/cloudflare-ips.txt` replaces them).
 
 ## cloudflare
 

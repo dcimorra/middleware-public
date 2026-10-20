@@ -542,3 +542,6 @@ details.section[open] summary { border-bottom: 1px solid var(--border); margin-b
 .signin .row input { flex: 1; }
 .signin pre.log { min-height: 0; max-height: 160px; margin-top: 8px; }
 .binary-line { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 10px; }
+
+/* A short vertical list inside a key-value cell (published names). */
+.stack-sm{display:flex;flex-direction:column;gap:4px}

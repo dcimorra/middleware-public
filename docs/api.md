@@ -168,8 +168,9 @@ The external programs the modules run (the agent CLIs), installed under
 
 | method | path | result |
 | --- | --- | --- |
-| GET | `/inbound` | → `{doors: {tunnel: {open}, ports: {open, http, https, listening, error}, local: {open, http, dns, listening, error, help}}, domains: [{domain, door, cert_expires, dns, tunnel_route}], dns_error?}` |
-| POST | `/inbound/move` | `{domains: [], to: "tunnel"|"ports", ip?}` → `{ok, lines: [{status, text}]}` |
+| GET | `/inbound` | → `{doors: {tunnel: {open}, ports: {open, http, https, listening, error}, local: {open, http, dns, listening, error, help}}, domains: [{domain, door, cert_expires, dns, tunnel_route, published, publish_error}], new_sites, public_ip, dns_error?}` |
+| POST | `/inbound/move` | `{domains: [], to: "tunnel"|"ports"}` → `{ok, lines: [{status, text}]}` |
+| PUT | `/inbound/publishing` | `{new_sites?: "tunnel"|"ports", public_ip?}` → `{new_sites, public_ip}`; an empty `public_ip` goes back to detecting it |
 | POST | `/inbound/doors/{door}` | `{open}` → `doors` (door is `tunnel`, `ports` or `local`; written to `data/inbound.json` and acted on at once) |
 | PUT | `/inbound/local` | `{open, http?, dns?}` → `doors`; the local door's listeners (plain HTTP and the name server), 400 when an address is malformed or collides with the ports door |
 | GET | `/inbound/certificates` | → `[{domain, issued, expires, issuer}]` |
@@ -178,11 +179,30 @@ The external programs the modules run (the agent CLIs), installed under
 `dns` (`"A 203.0.113.9"`, `"CNAME …cfargotunnel.com"`) and `tunnel_route`
 (`"yes"`/`"no"`) are filled by the cloudflare module and empty when it is
 off; when it is on but cannot be reached, `dns_error` says so and the rest
-of the answer stands. A move to the ports door obtains the certificate first
-and marks the domain only when that worked. With the cloudflare module on,
-each domain that was marked is then published: a CNAME to the tunnel, or an
-A record to `ip` for the ports door, with a `skip` line when `ip` was not
-sent.
+of the answer stands. A move is publishing names one by one, through the
+same publisher as creating a site (below): to the ports door the certificate
+comes first (dns-01 when the cloudflare module manages the zone, so the name
+need not point here yet) and DNS only after it; the A record uses
+`public_ip`, or the address the machine is seen from.
+
+## Publishing
+
+| method | path | result |
+| --- | --- | --- |
+| GET | `/publish` | → `{name: {site, door, state, error?, attempts?, next?, at?, ip?}}`; state is `published`, `pending`, `failed` (retried with backoff, 1 min doubling to 1 h), `manual` (no DNS provider, or a zone it does not manage: a person points the name) or `retiring` |
+| POST | `/publish/retry` | → `{ok}`; every name not published is tried on the next pass, manual ones included |
+| POST | `/sites/{domain}/publish` | `{door?}` → `{lines}`; every name of the site (its domain, aliases and the implicit `www.` of an apex) on that door, kept there from now on |
+| POST | `/sites/{domain}/unpublish` | → `{lines}`; tunnel rules and the records that point at this house are removed, nothing else |
+
+`POST /sites` publishes the new site on the door for new sites when a DNS
+provider is on (`"publish": false` to skip it, `"door"` to choose); the
+answer carries `publishing: true` and the outcome arrives as `publish.*`
+events. `DELETE /sites/{domain}` unpublishes first; a name that cannot be
+removed then stays `retiring` and is retried. The intent and what the house
+wrote live in `data/publish.json`, so an alias added later is published and
+one removed is unpublished without anyone asking. A site folder removed by
+hand keeps its records (`publish.orphan`, said once): only a deletion
+through the house takes names off the internet.
 
 ## WAF
 
