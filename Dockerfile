@@ -35,6 +35,11 @@ ENV MIDDLEWARE_ROOT=/srv/middleware
 # interface of the container; docker-compose.yml publishes it on the host's
 # loopback only, so nothing outside the machine reaches it.
 ENV MIDDLEWARE_LISTEN=0.0.0.0:46100
+# Same reasoning for the local door (development bench): its defaults go
+# on every interface and on unprivileged ports, which docker-compose.yml
+# publishes as the host's 80 and 5353. A file that already names other
+# addresses keeps them.
+ENV MIDDLEWARE_LOCAL_HTTP=0.0.0.0:8080 MIDDLEWARE_LOCAL_DNS=0.0.0.0:5353
 # 46100 is the loopback API and panel; 8080 and 8443 are where the ports
 # door is expected to listen inside the container (map them to 80 and 443
 # on the host; see docker-compose.yml).

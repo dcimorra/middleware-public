@@ -100,9 +100,12 @@ open `http://misite.middleware/`. Browsers resolve `*.localhost` to the
 machine on their own, so `misite.localhost` needs no resolver change.
 
 Under Docker the listeners must bind every interface of the container
-and be published on the host's loopback: set the Local card's addresses to
-`0.0.0.0:8080` and `0.0.0.0:5353`, and uncomment the two local-door lines
-in `docker-compose.yml`. The local and ports doors cannot share port 80;
+and be published on the host's loopback. The image defaults them to
+`0.0.0.0:8080` and `0.0.0.0:5353` (`MIDDLEWARE_LOCAL_HTTP` and
+`MIDDLEWARE_LOCAL_DNS`, honoured until the file names other addresses);
+open the door and uncomment the local-door lines in `docker-compose.yml`.
+An installation whose file already says `127.0.0.1:80` fixes it with
+`middleware inbound local on --http 0.0.0.0:8080 --dns 0.0.0.0:5353`. The local and ports doors cannot share port 80;
 on a development machine leave the ports door closed.
 
 ## What `middleware install` does

@@ -102,9 +102,20 @@ func DefaultState() State {
 	s.Tunnel.Open = true
 	s.Ports.HTTP = ":80"
 	s.Ports.HTTPS = ":443"
-	s.Local.HTTP = DefaultLocalHTTP
-	s.Local.DNS = DefaultLocalDNS
+	s.Local.HTTP = localDefault("MIDDLEWARE_LOCAL_HTTP", DefaultLocalHTTP)
+	s.Local.DNS = localDefault("MIDDLEWARE_LOCAL_DNS", DefaultLocalDNS)
 	return s
+}
+
+// localDefault lets the container image put the local door on every
+// interface of the container (0.0.0.0:8080, 0.0.0.0:5353): inside one,
+// loopback is unreachable from the host and 80 needs a capability the
+// image does not have. The file, once written, wins over the variable.
+func localDefault(env, fallback string) string {
+	if v := os.Getenv(env); v != "" {
+		return v
+	}
+	return fallback
 }
 
 // Path is where the file lives under a root.
@@ -124,10 +135,10 @@ func LoadState(root string) (State, error) {
 		s.Ports.HTTPS = ":443"
 	}
 	if s.Local.HTTP == "" {
-		s.Local.HTTP = DefaultLocalHTTP
+		s.Local.HTTP = localDefault("MIDDLEWARE_LOCAL_HTTP", DefaultLocalHTTP)
 	}
 	if s.Local.DNS == "" {
-		s.Local.DNS = DefaultLocalDNS
+		s.Local.DNS = localDefault("MIDDLEWARE_LOCAL_DNS", DefaultLocalDNS)
 	}
 	return s, nil
 }
