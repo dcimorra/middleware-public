@@ -48,9 +48,9 @@ serves get certificates; the panel domain included.
   (`skip` if the DNS does not point here yet, with the reason).
 - **Installs**: nothing. Certificates go to `data/certs/`.
 
-Moving domains between doors: `middleware inbound move --to ports a.com b.com`
-checks the certificate exists before touching DNS, so a domain is never
-moved to a door that cannot answer it.
+Moving domains between doors happens from the Inbound screen or with
+`POST /api/v1/inbound/move`; the certificate is obtained before DNS is
+touched, so a domain is never moved to a door that cannot answer it.
 
 ## cloudflare
 

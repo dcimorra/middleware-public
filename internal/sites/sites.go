@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/access"
 	"github.com/dcimorra/middleware-public/internal/engine"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/fsx"
@@ -218,12 +219,32 @@ func (m *Manager) Create(domain string, mf *manifest.Manifest, template string) 
 			return Site{}, err
 		}
 	}
+	if err := sealPassword(mf); err != nil {
+		_ = os.RemoveAll(dir)
+		return Site{}, err
+	}
 	if err := manifest.Save(dir, mf); err != nil {
 		_ = os.RemoveAll(dir)
 		return Site{}, err
 	}
 	m.emit("site.created", domain, "", "site created", map[string]any{"template": template, "mode": string(mf.Mode())})
 	return m.describe(domain), nil
+}
+
+// sealPassword hashes a plain access password before it reaches disk. The
+// panel and the API send what the operator typed; access.CheckPassword
+// only ever accepts a hash, so a clear value saved as is would never match
+// and the site would look protected while refusing everyone.
+func sealPassword(mf *manifest.Manifest) error {
+	if mf == nil || mf.Access == nil || mf.Access.Password == "" || access.IsHash(mf.Access.Password) {
+		return nil
+	}
+	h, err := access.HashPassword(mf.Access.Password)
+	if err != nil {
+		return err
+	}
+	mf.Access.Password = h
+	return nil
 }
 
 // Update replaces the manifest.
@@ -234,6 +255,9 @@ func (m *Manager) Update(domain string, mf *manifest.Manifest) (Site, error) {
 	}
 	if mf.Version == 0 {
 		mf.Version = manifest.Version
+	}
+	if err := sealPassword(mf); err != nil {
+		return Site{}, err
 	}
 	if err := manifest.Save(dir, mf); err != nil {
 		return Site{}, fmt.Errorf("manifest: %w", err)
@@ -275,6 +299,9 @@ func (m *Manager) Patch(domain string, partial map[string]json.RawMessage) (Site
 	mf, err := manifest.Parse(merged)
 	if err != nil {
 		return Site{}, fmt.Errorf("manifest: %w", err)
+	}
+	if err := sealPassword(mf); err != nil {
+		return Site{}, err
 	}
 	if err := manifest.Save(dir, mf); err != nil {
 		return Site{}, err

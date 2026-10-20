@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/access"
 	"github.com/dcimorra/middleware-public/internal/engine"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/manifest"
@@ -468,5 +469,32 @@ func TestDeployRunsTheBuildStepsAndWritesThePointer(t *testing.T) {
 	}
 	if got := strings.TrimSpace(string(mustRead(t, filepath.Join(dir, ".current")))); got != id {
 		t.Fatal("a failed build moved the pointer")
+	}
+}
+
+func TestASitePasswordIsHashedBeforeItReachesDisk(t *testing.T) {
+	f := newFixture(t, false)
+	m := f.m
+	if _, err := m.Create("p.test", nil, "static"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Patch("p.test", map[string]json.RawMessage{"access": json.RawMessage(`{"password":"hunter2pass"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	mf, err := manifest.Load(filepath.Join(m.Root, "sites", "p.test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !access.IsHash(mf.Access.Password) || !access.CheckPassword(mf.Access.Password, "hunter2pass") {
+		t.Fatalf("stored password = %q", mf.Access.Password)
+	}
+	// Saving the manifest again must not hash the hash.
+	before := mf.Access.Password
+	if _, err := m.Update("p.test", mf); err != nil {
+		t.Fatal(err)
+	}
+	mf, _ = manifest.Load(filepath.Join(m.Root, "sites", "p.test"))
+	if mf.Access.Password != before {
+		t.Fatal("a stored hash was re-hashed")
 	}
 }
