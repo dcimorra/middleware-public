@@ -265,11 +265,31 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, Errorf(http.StatusUnauthorized, "authentication required"))
 		return
 	}
+	// A scoped token is a service door: the route it asks for must be one
+	// its scopes open, for the site in the path. Public routes are public
+	// to it as to anyone.
+	if !public && len(caller.Scopes) > 0 && !auth.Allows(caller.Scopes, pattern, siteIn(pattern, r.URL.Path)) {
+		s.writeError(w, r, Errorf(http.StatusForbidden, "this token's scopes (%s) do not open %s", strings.Join(caller.Scopes, ", "), pattern))
+		return
+	}
 	if caller.Via == auth.ViaCookie && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && r.Header.Get(CSRFHeader) != CSRFValue {
 		s.writeError(w, r, Errorf(http.StatusForbidden, "cookie requests must send %s: %s", CSRFHeader, CSRFValue))
 		return
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// siteIn is the {domain} of path under pattern, or "". The mux does not
+// fill PathValue until it dispatches, and the scope check runs before.
+func siteIn(pattern, path string) string {
+	_, p, _ := strings.Cut(pattern, " ")
+	ps, xs := strings.Split(p, "/"), strings.Split(path, "/")
+	for i, seg := range ps {
+		if seg == "{domain}" && i < len(xs) {
+			return strings.ToLower(xs[i])
+		}
+	}
+	return ""
 }
 
 // WriteJSON encodes v with the status.

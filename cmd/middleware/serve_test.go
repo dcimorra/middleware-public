@@ -16,20 +16,10 @@ import (
 
 	"github.com/dcimorra/middleware-public/internal/api"
 	"github.com/dcimorra/middleware-public/internal/app"
+	"github.com/dcimorra/middleware-public/internal/auth"
 	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/settings"
 )
-
-// freePort asks the kernel for a port nobody holds.
-func freePort(t *testing.T) string {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	return ln.Addr().String()
-}
 
 // TestServeAnswersEverySectionOfTheAPI builds the process the way `serve`
 // does, hooks and all, and asks every section of docs/api.md for its
@@ -41,7 +31,11 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "data"), 0o755)
 	s := settings.Defaults()
-	s.Listen = freePort(t)
+	// Port 0, and the real address read back from middleware.started: a
+	// port picked free and handed over later can be taken in between by
+	// anything else on the machine, and this test then failed now and
+	// then with "connection refused".
+	s.Listen = "127.0.0.1:0"
 	if err := settings.Save(root, s); err != nil {
 		t.Fatal(err)
 	}
@@ -135,17 +129,27 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 
 	// The request chain: a host nobody serves gets the proxy's answer
 	// through inbound → waf → access → traffic, not a crash in one of them.
-	// The API socket opens before the loopback listener, so the listener
-	// is given a moment rather than assumed.
-	var resp *http.Response
+	// The API socket opens before the loopback listener, so the listener's
+	// address is waited for rather than assumed.
 	for wait := time.Now().Add(10 * time.Second); ; {
-		var err error
-		if resp, err = http.Get("http://" + s.Listen + "/"); err == nil {
+		_, body := get("/events?type=middleware.started")
+		var evs []struct {
+			Data struct {
+				Listen string `json:"listen"`
+			} `json:"data"`
+		}
+		if json.Unmarshal([]byte(body), &evs) == nil && len(evs) > 0 && evs[len(evs)-1].Data.Listen != "" {
+			s.Listen = evs[len(evs)-1].Data.Listen
 			break
-		} else if time.Now().After(wait) {
-			t.Fatal(err)
+		}
+		if time.Now().After(wait) {
+			t.Fatalf("middleware.started never said where it listens: %s", body)
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+	resp, err := http.Get("http://" + s.Listen + "/")
+	if err != nil {
+		t.Fatal(err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode == 0 || resp.StatusCode >= 500 {
@@ -252,6 +256,14 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 			case "GET", "POST", "PUT", "PATCH", "DELETE":
 				live[strings.ToUpper(m)+" "+strings.TrimPrefix(path, api.Prefix)] = true
 			}
+		}
+	}
+	// Every route a token scope opens is still a route: renamed, the scope
+	// would quietly stop opening it and a service door would just fail.
+	for _, r := range auth.ScopeRoutes() {
+		method, path, _ := strings.Cut(r, " ")
+		if !live[method+" "+strings.TrimPrefix(path, api.Prefix)] {
+			t.Errorf("token scope route %s is not registered", r)
 		}
 	}
 	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "api.md"))

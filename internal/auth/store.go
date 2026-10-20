@@ -63,12 +63,16 @@ type Token struct {
 	Hash     string    `json:"hash"`
 	Created  time.Time `json:"created"`
 	LastUsed time.Time `json:"last_used,omitempty"`
+	// Scopes narrow the token to a service door (scopes.go); empty is
+	// the operator's full access.
+	Scopes []string `json:"scopes,omitempty"`
 }
 
 // Public is a token as shown to the operator: everything but the hash.
 type Public struct {
 	ID       string    `json:"id"`
 	Name     string    `json:"name"`
+	Scopes   []string  `json:"scopes,omitempty"`
 	Created  time.Time `json:"created"`
 	LastUsed time.Time `json:"last_used,omitempty"`
 }
@@ -254,6 +258,12 @@ func (s *Store) DeleteSession(id string) error {
 // CreateToken mints a token and returns its record and the secret, which
 // is shown once and never recoverable: only its hash is kept.
 func (s *Store) CreateToken(name string) (Public, string, error) {
+	return s.CreateScopedToken(name, nil)
+}
+
+// CreateScopedToken creates a token that opens only what scopes list.
+// The scopes must have been checked (CheckScopes).
+func (s *Store) CreateScopedToken(name string, scopes []string) (Public, string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return Public{}, "", ErrTokenNameNeeded
@@ -272,7 +282,7 @@ func (s *Store) CreateToken(name string) (Public, string, error) {
 	}
 	id := hex.EncodeToString(raw[:])
 	secret = "mw_" + secret
-	t := Token{ID: id, Name: name, Hash: hashToken(secret), Created: s.now()}
+	t := Token{ID: id, Name: name, Hash: hashToken(secret), Created: s.now(), Scopes: scopes}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.load(); err != nil {
@@ -347,7 +357,7 @@ func (s *Store) LookupToken(secret string) (Public, bool) {
 }
 
 func (t Token) public() Public {
-	return Public{ID: t.ID, Name: t.Name, Created: t.Created, LastUsed: t.LastUsed}
+	return Public{ID: t.ID, Name: t.Name, Scopes: t.Scopes, Created: t.Created, LastUsed: t.LastUsed}
 }
 
 func hashToken(secret string) string {

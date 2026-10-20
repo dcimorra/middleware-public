@@ -700,7 +700,10 @@ func (e *Env) system(args []string) error {
 
 const tokenUsage = `usage: middleware token <command>
 
-  add <name>    create a token; the secret is printed once
+  add <name> [--scope s]...
+                create a token; the secret is printed once. With --scope it
+                is a service door: read, restart or deploy, optionally for
+                one site (restart:shop.example), and nothing else
   list          tokens, with when each was last used
   rm <id>       revoke a token
 `
@@ -714,6 +717,8 @@ func (e *Env) token(args []string) error {
 	fs := flag.NewFlagSet("token "+sub, flag.ContinueOnError)
 	var c common
 	c.bind(fs)
+	var scopes multiFlag
+	fs.Var(&scopes, "scope", "what the token opens (read, restart, deploy; :site to narrow); repeatable")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
@@ -728,7 +733,11 @@ func (e *Env) token(args []string) error {
 			return errors.New("token add: a name is required")
 		}
 		var raw []byte
-		if err := cl.Do("POST", "/api/v1/auth/tokens", map[string]string{"name": strings.Join(pos, " ")}, &raw); err != nil {
+		body := map[string]any{"name": strings.Join(pos, " ")}
+		if len(scopes) > 0 {
+			body["scopes"] = []string(scopes)
+		}
+		if err := cl.Do("POST", "/api/v1/auth/tokens", body, &raw); err != nil {
 			return err
 		}
 		if c.json {
@@ -759,9 +768,13 @@ func (e *Env) token(args []string) error {
 		}
 		rows := make([][]string, 0, len(list))
 		for _, t := range list {
-			rows = append(rows, []string{t.ID, t.Name, t.Created.Local().Format("2006-01-02"), ago(t.LastUsed)})
+			scope := "all"
+			if len(t.Scopes) > 0 {
+				scope = strings.Join(t.Scopes, ",")
+			}
+			rows = append(rows, []string{t.ID, t.Name, scope, t.Created.Local().Format("2006-01-02"), ago(t.LastUsed)})
 		}
-		Table(e.Stdout, []string{"ID", "NAME", "CREATED", "LAST USED"}, rows)
+		Table(e.Stdout, []string{"ID", "NAME", "OPENS", "CREATED", "LAST USED"}, rows)
 		return nil
 	case "rm", "remove", "delete", "revoke":
 		if len(pos) == 0 {
@@ -772,6 +785,12 @@ func (e *Env) token(args []string) error {
 	fmt.Fprint(e.Stderr, tokenUsage)
 	return fmt.Errorf("token: unknown command %q", sub)
 }
+
+// multiFlag collects a repeated flag.
+type multiFlag []string
+
+func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
+func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 
 func oneLine(s string) string {
 	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")

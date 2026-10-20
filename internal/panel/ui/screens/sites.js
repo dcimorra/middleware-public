@@ -22,9 +22,15 @@ export function sitesScreen({ query }) {
   const p = page({ title: t("nav.sites"), icon: "globe", actions: [searchBox(search), archivedBtn, newBtn] });
   const container = h("div", { class: "card pad0" });
   const count = h("p", { class: "small muted", role: "status" });
-  p.body.append(container, count);
+  // Bulk actions: a bar over the list while something is selected. The
+  // selection survives re-renders (the stream re-renders often) and drops
+  // sites that went away.
+  const bulkBar = h("div", { class: "notice bulk-bar", hidden: true });
+  p.body.append(bulkBar, container, count);
 
   let filter = "";
+  const selected = new Set();
+  let visible = [];
   const subs = [];
 
   function render() {
@@ -35,6 +41,9 @@ export function sitesScreen({ query }) {
     const list = (q ? all.filter((s) => s.domain.toLowerCase().includes(q) || siteMode(s).includes(q) || groupOf(s).toLowerCase().includes(q)) : all)
       // Grouped sites first, by group, then the rest; by domain inside.
       .slice().sort((a, b) => (groupOf(a) === "") - (groupOf(b) === "") || groupOf(a).localeCompare(groupOf(b)) || a.domain.localeCompare(b.domain));
+    for (const d of [...selected]) if (!store.site(d)) selected.delete(d);
+    visible = list.map((s) => s.domain);
+    renderBulk();
     clear(container);
     if (all.length === 0) {
       container.append(empty(t("sites.emptyTitle"), t("sites.emptyHint"), h("button", { type: "button", class: "btn primary", onClick: newSite }, icon("plus"), t("sites.new")), "globe"));
@@ -52,11 +61,18 @@ export function sitesScreen({ query }) {
     for (const s of list) {
       if (grouped && groupOf(s) !== current) {
         current = groupOf(s);
-        rows.push(h("tr", { class: "group-row" }, h("th", { colspan: "6", scope: "colgroup" }, current || t("sites.ungrouped"))));
+        rows.push(h("tr", { class: "group-row" }, h("th", { colspan: "7", scope: "colgroup" }, current || t("sites.ungrouped"))));
       }
       rows.push(row(s));
     }
+    const all_ = h("input", { type: "checkbox", "aria-label": t("sites.selectAll") });
+    all_.checked = visible.length > 0 && visible.every((d) => selected.has(d));
+    all_.addEventListener("change", () => {
+      for (const d of visible) { if (all_.checked) selected.add(d); else selected.delete(d); }
+      render();
+    });
     container.append(table([
+      { label: all_, class: "check-col" },
       { label: t("sites.col.domain") },
       { label: t("sites.col.mode") },
       { label: t("sites.col.status") },
@@ -70,7 +86,12 @@ export function sitesScreen({ query }) {
   function row(s) {
     const href = `#/sites/${encodeURIComponent(s.domain)}`;
     const last = store.lastEventFor(s.domain);
+    const box = h("input", { type: "checkbox", "aria-label": t("sites.select", { domain: s.domain }) });
+    box.checked = selected.has(s.domain);
+    box.addEventListener("click", (e) => e.stopPropagation());
+    box.addEventListener("change", () => { if (box.checked) selected.add(s.domain); else selected.delete(s.domain); render(); });
     const tr = h("tr", { class: "row-link", tabindex: "-1" },
+      cell(box, null, "check-col"),
       cell(h("a", { class: "cell-link", href }, s.domain), null, "primary"),
       cell(modeBadge(s), t("sites.col.mode")),
       cell(aliveStatus(s), t("sites.col.status")),
@@ -79,7 +100,7 @@ export function sitesScreen({ query }) {
       cell(last ? h("span", { class: "small dim", title: last.time }, h("span", { class: "mono" }, last.type), " ", last.message || "", " · ", fmtAgo(last.time, t)) : h("span", { class: "small muted" }, "—"), t("sites.col.lastEvent")),
     );
     tr.addEventListener("click", (e) => {
-      if (e.target.closest("a")) return;
+      if (e.target.closest("a") || e.target.closest("input")) return;
       navigate(`/sites/${encodeURIComponent(s.domain)}`);
     });
     return tr;
@@ -124,6 +145,62 @@ export function sitesScreen({ query }) {
       toast(t(published ? "sites.createdPublishing" : "sites.created", { domain: made }), "ok");
       navigate(`/sites/${encodeURIComponent(made)}`);
     }
+  }
+
+  function renderBulk() {
+    clear(bulkBar);
+    bulkBar.hidden = selected.size === 0;
+    if (!selected.size) return;
+    const del = h("button", { type: "button", class: "btn sm danger" }, icon("trash"), t("sites.bulkDelete"));
+    const none = h("button", { type: "button", class: "btn sm" }, t("sites.selectNone"));
+    del.addEventListener("click", bulkDelete);
+    none.addEventListener("click", () => { selected.clear(); render(); });
+    bulkBar.append(h("div", { class: "grow" }, h("strong", null, t("sites.selected", { n: selected.size }))), h("div", { class: "actions" }, none, del));
+  }
+
+  // One confirmation that names every site and makes the count typed, not
+  // clicked: deleting thirty sites must not be one tired Enter. Archiving
+  // is on by default, as for one site. They go one at a time and each
+  // result is shown; a failure stops nothing else.
+  async function bulkDelete() {
+    const domains = [...selected].sort();
+    const archive = checkbox(t("site.archive"), { checked: true });
+    const typed = h("input", { type: "text", inputmode: "numeric", autocomplete: "off" });
+    const results = h("div", { class: "stack-sm small" });
+    let done = false;
+    await open({
+      title: t("sites.bulkDeleteQ", { n: domains.length }),
+      wide: true,
+      body: [
+        h("p", null, t("sites.bulkDeleteBody")),
+        h("p", { class: "mono small" }, domains.join("  ")),
+        h("div", { class: "field" }, archive.el, h("div", { class: "hint" }, t("site.archiveHint"))),
+        field(t("sites.bulkDeleteType", { n: domains.length }), typed),
+        results,
+      ],
+      buttons: [{ label: t("common.close"), value: null }, { label: t("sites.bulkDelete"), submit: true, danger: true, primary: true }],
+      onSubmit: async (_f, showError) => {
+        if (done) return true;
+        if (typed.value.trim() !== String(domains.length)) { showError(t("sites.bulkDeleteTypeWrong", { n: domains.length })); return false; }
+        showError("");
+        clear(results);
+        for (const d of domains) {
+          const line = h("div", null, h("code", null, d), " … ");
+          results.append(line);
+          try {
+            await api.del(`/sites/${encodeURIComponent(d)}` + (archive.input.checked ? "?archive=true" : ""));
+            store.dropSite(d);
+            selected.delete(d);
+            line.append(h("span", { class: "level-ok" }, archive.input.checked ? t("sites.bulkArchived") : t("sites.bulkDeleted")));
+          } catch (e) {
+            line.append(h("span", { class: "level-error" }, e.message));
+          }
+        }
+        done = true;
+        render();
+        return false; // the results are the answer; Close ends it
+      },
+    });
   }
 
   newBtn.addEventListener("click", newSite);

@@ -7,7 +7,7 @@ import { h, clear, copy } from "../lib/dom.js";
 import { t, LANGUAGES, currentLang } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
 import { page, load, table, cell, empty, kv } from "../components/page.js";
-import { open, confirm, field, toggle } from "../components/dialog.js";
+import { open, confirm, field, toggle, checkbox } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 import { getTheme, setTheme, setLang } from "../lib/theme.js";
 import { fmtTime, fmtAgo } from "../lib/dom.js";
@@ -152,6 +152,7 @@ export function settingsScreen() {
     const rows = (tokens || []).map((tk) => h("tr", null,
       cell(tk.name || tk.id, null, "primary"),
       cell(h("code", { class: "small" }, tk.id), t("settings.tokenId")),
+      cell((tk.scopes || []).length ? h("code", { class: "small" }, tk.scopes.join(", ")) : h("span", { class: "muted" }, t("settings.tokenFull")), t("settings.tokenOpens")),
       cell(tk.created ? h("span", { title: fmtTime(tk.created) }, fmtAgo(tk.created, t)) : "", t("settings.created")),
       cell(tk.last_used ? h("span", { title: fmtTime(tk.last_used) }, fmtAgo(tk.last_used, t)) : h("span", { class: "muted" }, t("settings.neverUsed")), t("settings.lastUsed")),
       cell(revokeBtn(tk), null, "right"),
@@ -159,7 +160,7 @@ export function settingsScreen() {
     clear(tokensCard).append(
       h("div", { class: "log-bar card-pad" }, h("h2", { class: "grow" }, t("settings.tokens")), newBtn),
       h("p", { class: "small muted card-pad" }, t("settings.tokensHint")),
-      rows.length ? table([{ label: t("settings.tokenName") }, { label: t("settings.tokenId") }, { label: t("settings.created") }, { label: t("settings.lastUsed") }, { label: "" }], rows, { responsive: true }).el
+      rows.length ? table([{ label: t("settings.tokenName") }, { label: t("settings.tokenId") }, { label: t("settings.tokenOpens") }, { label: t("settings.created") }, { label: t("settings.lastUsed") }, { label: "" }], rows, { responsive: true }).el
         : empty(t("settings.noTokens"), t("settings.noTokensHint")),
     );
     return null;
@@ -174,13 +175,26 @@ export function settingsScreen() {
   }
   async function newToken() {
     const name = h("input", { type: "text", placeholder: "ci", required: true });
+    // Full access, or a service door: some of read, restart and deploy,
+    // for every site or for one.
+    const kind = h("select", null, h("option", { value: "" }, t("settings.tokenKindFull")), h("option", { value: "scoped" }, t("settings.tokenKindScoped")));
+    const actions = ["read", "restart", "deploy"].map((a) => ({ a, box: checkbox(t("settings.scope." + a), {}) }));
+    const site = h("input", { type: "text", class: "mono", placeholder: "shop.example", autocomplete: "off" });
+    const scopedBox = h("div", { hidden: true }, h("div", { class: "field" }, ...actions.map(({ box }) => h("div", null, box.el))), field(t("settings.tokenSite"), site, t("settings.tokenSiteHint")));
+    kind.addEventListener("change", () => { scopedBox.hidden = kind.value !== "scoped"; });
     const r = await open({
       title: t("settings.newToken"),
-      body: field(t("settings.tokenName"), name, t("settings.tokenNameHint")),
+      body: [field(t("settings.tokenName"), name, t("settings.tokenNameHint")), field(t("settings.tokenKind"), kind, t("settings.tokenKindHint")), scopedBox],
       buttons: [{ label: t("common.cancel"), value: null }, { label: t("common.create"), submit: true, primary: true }],
       onSubmit: async (_f, showError) => {
         if (!name.value.trim()) { showError(t("settings.tokenNameRequired")); return false; }
-        return api.post("/auth/tokens", { name: name.value.trim() });
+        const body = { name: name.value.trim() };
+        if (kind.value === "scoped") {
+          const d = site.value.trim().toLowerCase();
+          body.scopes = actions.filter(({ box }) => box.input.checked).map(({ a }) => (d ? `${a}:${d}` : a));
+          if (!body.scopes.length) { showError(t("settings.tokenScopeRequired")); return false; }
+        }
+        return api.post("/auth/tokens", body);
       },
     });
     if (!r || !r.token) return;

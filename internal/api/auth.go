@@ -1,6 +1,7 @@
 package api
 
 import (
+	"github.com/dcimorra/middleware-public/internal/manifest"
 	"net/http"
 
 	"github.com/dcimorra/middleware-public/internal/auth"
@@ -105,16 +106,22 @@ func (s *Server) tokensCreate(w http.ResponseWriter, r *http.Request) (any, erro
 		return nil, err
 	}
 	var body struct {
-		Name string `json:"name"`
+		Name   string   `json:"name"`
+		Scopes []string `json:"scopes"`
 	}
 	if err := ReadJSON(r, &body); err != nil {
 		return nil, err
 	}
-	pub, secret, err := st.CreateToken(body.Name)
+	if err := auth.CheckScopes(body.Scopes, manifest.ValidName); err != nil {
+		return nil, Errorf(http.StatusBadRequest, "%v", err)
+	}
+	// A scoped token cannot mint a wider one: only the operator's (full)
+	// callers reach here, because no scope opens this route.
+	pub, secret, err := st.CreateScopedToken(body.Name, body.Scopes)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"id": pub.ID, "name": pub.Name, "created": pub.Created, "token": secret}, nil
+	return map[string]any{"id": pub.ID, "name": pub.Name, "scopes": pub.Scopes, "created": pub.Created, "token": secret}, nil
 }
 
 func (s *Server) tokensDelete(w http.ResponseWriter, r *http.Request) (any, error) {

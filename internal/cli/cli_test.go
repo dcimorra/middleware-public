@@ -184,6 +184,17 @@ func TestTokenEventsAndSystemCommands(t *testing.T) {
 	if out, err = run(t, cl, "token", "rm", id); err != nil || !strings.Contains(out, "revoked") {
 		t.Fatalf("token rm: %q %v", out, err)
 	}
+	out, err = run(t, cl, "token", "add", "mask", "--scope", "restart:a.example", "--scope", "read")
+	if err != nil || !strings.Contains(out, "mw_") {
+		t.Fatalf("token add --scope: %q %v", out, err)
+	}
+	out, err = run(t, cl, "token", "list")
+	if err != nil || !strings.Contains(out, "restart:a.example,read") {
+		t.Fatalf("token list does not show the scopes:\n%s%v", out, err)
+	}
+	if _, err = run(t, cl, "token", "add", "bad", "--scope", "reboot"); err == nil {
+		t.Fatal("a scope outside the list was accepted")
+	}
 	out, err = run(t, cl, "system")
 	if err != nil || !strings.Contains(out, "version  test") || !strings.Contains(out, "via      socket") {
 		t.Fatalf("system:\n%s%v", out, err)

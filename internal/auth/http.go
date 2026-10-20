@@ -27,6 +27,8 @@ type Caller struct {
 	Via     Via
 	TokenID string // when Via is token
 	Token   string // the token's name, for the audit trail
+	// Scopes are the token's; empty is full access.
+	Scopes []string
 }
 
 // Authenticated reports whether the caller may use the API.
@@ -74,7 +76,7 @@ func (s *Store) Resolve(r *http.Request) Caller {
 	if h := r.Header.Get("Authorization"); h != "" {
 		if secret, ok := strings.CutPrefix(h, "Bearer "); ok {
 			if t, ok := s.LookupToken(strings.TrimSpace(secret)); ok {
-				return Caller{Via: ViaToken, TokenID: t.ID, Token: t.Name}
+				return Caller{Via: ViaToken, TokenID: t.ID, Token: t.Name, Scopes: t.Scopes}
 			}
 		}
 		return Caller{}

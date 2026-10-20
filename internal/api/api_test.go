@@ -547,3 +547,38 @@ func TestACommandRunsInTheSiteFolderAndItsTimeoutKills(t *testing.T) {
 		t.Fatalf("an hour: %d", resp.StatusCode)
 	}
 }
+
+func TestAScopedTokenOpensItsRoutesForItsSiteAndNothingElse(t *testing.T) {
+	f := newFixture(t).withToken()
+	for _, d := range []string{"a.test", "b.test"} {
+		if resp, body := f.call("POST", "/api/v1/sites", map[string]any{"domain": d}); resp.StatusCode != 201 {
+			t.Fatalf("create %s: %d %v", d, resp.StatusCode, body)
+		}
+	}
+	if resp, _ := f.call("POST", "/api/v1/auth/tokens", map[string]any{"name": "x", "scopes": []string{"reboot"}}); resp.StatusCode != 400 {
+		t.Fatalf("an unknown scope: %d", resp.StatusCode)
+	}
+	if resp, _ := f.call("POST", "/api/v1/auth/tokens", map[string]any{"name": "x", "scopes": []string{"restart:Not A Site"}}); resp.StatusCode != 400 {
+		t.Fatalf("a scope for no site: %d", resp.StatusCode)
+	}
+	resp, body := f.call("POST", "/api/v1/auth/tokens", map[string]any{"name": "mask", "scopes": []string{"restart:a.test", "read"}})
+	if resp.StatusCode != 200 {
+		t.Fatalf("create scoped: %d %v", resp.StatusCode, body)
+	}
+	f.token = body["token"].(string)
+	// Opened: its site's restart (refused for another reason here: the
+	// fixture has no engine, so not 403) and reading.
+	if resp, body := f.call("POST", "/api/v1/sites/a.test/restart", nil); resp.StatusCode == 403 || resp.StatusCode == 401 {
+		t.Fatalf("its own restart: %d %v", resp.StatusCode, body)
+	}
+	if resp, _ := f.call("GET", "/api/v1/sites", nil); resp.StatusCode != 200 {
+		t.Fatalf("read: %d", resp.StatusCode)
+	}
+	// Closed: another site's restart, a write it was not given, and the
+	// token routes, so it cannot mint a wider token.
+	for _, c := range [][2]string{{"POST", "/api/v1/sites/b.test/restart"}, {"POST", "/api/v1/sites/A.TEST/stop"}, {"DELETE", "/api/v1/sites/a.test"}, {"POST", "/api/v1/auth/tokens"}, {"GET", "/api/v1/auth/tokens"}} {
+		if resp, body := f.call(c[0], c[1], map[string]any{"name": "wider"}); resp.StatusCode != 403 {
+			t.Errorf("%s %s with a scoped token: %d %v", c[0], c[1], resp.StatusCode, body)
+		}
+	}
+}

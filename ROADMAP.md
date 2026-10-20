@@ -65,8 +65,6 @@ cgroup above.
 ## 7. The panel
 
 - Per site: a cache screen (waits for §2's house cache).
-- Bulk delete.
-- A service door with scoped tokens (restart-only, for apps like Mask).
 - A repos list and a pull watcher.
 - A Spanish catalogue beside `en.json`.
 - An installable app (web manifest, service worker for push).
@@ -111,7 +109,10 @@ cgroup above.
   a headless Chromium, and converted by `migrate`.
 - **§7 Per site**: Activity (live traffic and incidents), worker restart,
   stop and start, the manifest's history kept by the engine whoever wrote
-  it and restorable, run a command, and Security and Access screens.
+  it and restorable, run a command, and Security and Access screens;
+  bulk delete, typed count and archive by default; service doors as
+  scoped tokens (read, restart, deploy, optionally for one site), checked
+  by the API on the route it matched, from the panel and the CLI.
 - **§4 Engine**: docker sites behind V1's walls at their own paths
   (proven on a rootless daemon), `middleware exec`, `needs`, task runs
   re-adopted and stoppable, agent turns in a cgroup of their own, rename,
