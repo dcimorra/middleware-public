@@ -128,7 +128,12 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 	// Never a browser: a turn runs on a server, and a CLI that tried to
 	// open one would sit waiting for it.
 	env["NO_BROWSER"] = "true"
-	return agent.StartCLI(ctx, &parser{}, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req)...)
+	return agent.StartCLIStream(ctx, &parser{}, req.Stream, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req)...)
+}
+
+// Adopt implements agent.Adopter.
+func (p *Provider) Adopt(ctx context.Context, pid int, stream string) agent.Run {
+	return agent.AdoptCLI(ctx, &parser{}, pid, stream)
 }
 
 // parser is deliberately loose. Known shapes:

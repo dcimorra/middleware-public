@@ -59,6 +59,15 @@ type Request struct {
 	// Name is the conversation's name, for files that must be one per
 	// conversation and not one per site.
 	Name string
+	// Stream is the file the CLI's output goes to; it outlives this
+	// process so a restarted supervisor can adopt the turn.
+	Stream string
+}
+
+// Adopter is a provider that can pick up a run a previous supervisor
+// started, from its pid and its output file.
+type Adopter interface {
+	Adopt(ctx context.Context, pid int, stream string) Run
 }
 
 // Run is one turn in progress.

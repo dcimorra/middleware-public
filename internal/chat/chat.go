@@ -574,6 +574,7 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 		Jail:      s.Jail,
 		Env:       map[string]string{"PATH": m.agentPath(), MarkVar: name},
 		Name:      name,
+		Stream:    m.streamPath(name, turnID),
 	}
 	if c.Origin == OriginSite {
 		system = SiteSystem(c)
@@ -605,6 +606,9 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 	m.mu.Lock()
 	m.running[name].run = run
 	m.mu.Unlock()
+	if pr, ok := run.(interface{ PID() int }); ok {
+		_ = fsx.WriteJSON(m.runningPath(name), runningFile{Name: name, TurnID: turnID, PID: pr.PID(), Stream: req.Stream, Provider: s.Provider, Model: model, Origin: c.Origin, Started: time.Now()}, 0o600)
+	}
 	m.emit("agent.started", name, "", "", map[string]any{"turn_id": turnID, "provider": s.Provider, "model": model})
 	go m.follow(name, turnID, s, run, cancel)
 	return turnID, nil
@@ -718,6 +722,9 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 	// event goes out only after that: whoever reacts to agent.done can
 	// Send again and read the turn from History at once.
 	m.sent(name, turnID)
+	_ = os.Remove(m.runningPath(name))
+	_ = os.Remove(m.streamPath(name, turnID))
+	_ = os.Remove(m.streamPath(name, turnID) + ".err")
 	var queued []string
 	queuedModel := ""
 	m.mu.Lock()
@@ -859,4 +866,58 @@ func lentTo(siteDir string) []string {
 		return nil
 	}
 	return raw.Chat.Reads
+}
+
+// runningFile is data/chat/running/<name>.json: a turn in progress, so a
+// supervisor that restarts mid-turn adopts it instead of losing it.
+type runningFile struct {
+	Name     string    `json:"name"`
+	TurnID   string    `json:"turn_id"`
+	PID      int       `json:"pid"`
+	Stream   string    `json:"stream"`
+	Provider string    `json:"provider"`
+	Model    string    `json:"model,omitempty"`
+	Origin   string    `json:"origin,omitempty"`
+	Started  time.Time `json:"started"`
+}
+
+func (m *Manager) runningPath(name string) string {
+	return filepath.Join(m.opts.Root, "data", "chat", "running", name+".json")
+}
+
+func (m *Manager) streamPath(name, turnID string) string {
+	return filepath.Join(m.opts.Root, "data", "chat", "streams", name+"-"+turnID+".out")
+}
+
+// Recover adopts the turns a previous supervisor left: still running, it
+// is followed to its end; finished while nobody listened, its output is
+// read to its result all the same. Before, a restart lost every turn in
+// flight: the CLI died on its next write to a pipe nobody read, and the
+// conversation kept a question with no answer and no word about why.
+func (m *Manager) Recover(ctx context.Context) {
+	ents, _ := os.ReadDir(filepath.Join(m.opts.Root, "data", "chat", "running"))
+	for _, e := range ents {
+		var rf runningFile
+		path := filepath.Join(m.opts.Root, "data", "chat", "running", e.Name())
+		if fsx.ReadJSON(path, &rf) != nil || rf.Name == "" {
+			_ = os.Remove(path)
+			continue
+		}
+		s, err := m.Resolve(rf.Name)
+		provider, perr := m.opts.Registry.Get(rf.Provider)
+		adopter, ok := provider.(agent.Adopter)
+		if err != nil || perr != nil || !ok {
+			_ = os.Remove(path)
+			m.emit("agent.error", rf.Name, "error", "a turn in flight when the supervisor restarted could not be picked up", map[string]any{"turn_id": rf.TurnID})
+			continue
+		}
+		s.Model = rf.Model
+		cctx, cancel := context.WithDeadline(context.Background(), rf.Started.Add(TurnLimit))
+		run := adopter.Adopt(cctx, rf.PID, rf.Stream)
+		m.mu.Lock()
+		m.running[rf.Name] = &running{turnID: rf.TurnID, provider: rf.Provider, origin: rf.Origin, model: rf.Model, started: rf.Started, cancel: cancel, done: make(chan struct{}), run: run}
+		m.mu.Unlock()
+		m.emit("agent.adopted", rf.Name, "", "a turn from before the restart, picked up", map[string]any{"turn_id": rf.TurnID, "pid": rf.PID})
+		go m.follow(rf.Name, rf.TurnID, s, run, cancel)
+	}
 }

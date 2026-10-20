@@ -192,7 +192,12 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 	if p.cfg.OAuthToken != "" && p.cfg.APIKey == "" {
 		env["CLAUDE_CODE_OAUTH_TOKEN"] = p.cfg.OAuthToken
 	}
-	return agent.StartCLI(ctx, &parser{}, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req, settingsFile)...)
+	return agent.StartCLIStream(ctx, &parser{}, req.Stream, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req, settingsFile)...)
+}
+
+// Adopt implements agent.Adopter.
+func (p *Provider) Adopt(ctx context.Context, pid int, stream string) agent.Run {
+	return agent.AdoptCLI(ctx, &parser{}, pid, stream)
 }
 
 // parser reads stream-json: one JSON object per line with a "type" of

@@ -2,11 +2,15 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -14,21 +18,28 @@ import (
 )
 
 // CLIRun is the one subprocess runner both adapters share: a child in its
-// own process group, stdout read line by line through a parser, stderr
-// kept in a bounded buffer for the error event, and an end that never
-// waits on a grandchild. The stdout pipe is read by us and only by us, and
-// the moment the parser says the run is over the child gets a short grace
-// and then SIGKILL to its whole group: a tool it left running (a dev
-// server started from a Bash call) must not keep the turn open forever.
+// own process group whose output goes to a file, read back line by line
+// through a parser, and an end that never waits on a grandchild.
+//
+// A file and not a pipe, for two reasons. A pipe ties the child's life to
+// this process: when the supervisor restarts, the child's next write gets
+// SIGPIPE and the turn dies with nobody recording it. And a file can be
+// read again: the next supervisor finds the turn still running and adopts
+// it (AdoptCLI), or finds it finished and reads its result anyway. The
+// moment the parser says the run is over the child gets a short grace and
+// then SIGKILL to its whole group: a tool it left running (a dev server
+// started from a Bash call) must not keep the turn open forever.
 type CLIRun struct {
 	events chan Event
-	cmd    *exec.Cmd
+	cmd    *exec.Cmd // nil for an adopted run
+	pid    int
+	stream string
+	temp   bool // stream is ours to remove
 	stop   chan struct{}
 	once   sync.Once
-	stderr strings.Builder
-	// stderrDone closes when the stderr reader reaches the pipe's end.
-	stderrDone chan struct{}
-	errMu      sync.Mutex
+	exited chan struct{}
+	exitMu sync.Mutex
+	exitEr error
 }
 
 // Parser turns one stdout line into zero or more events and says whether
@@ -45,17 +56,48 @@ type Parser interface {
 // returns a release for whatever it opened, called once Start returns.
 var SpawnAttr func() (*syscall.SysProcAttr, func(), error)
 
-// StartCLI launches bin with args in dir and streams its output through p.
-// The caller's Jail is already translated into args by the adapter.
+// StartCLI launches bin with args in dir, its output to a temporary file.
 func StartCLI(ctx context.Context, p Parser, dir string, env []string, bin string, args ...string) (*CLIRun, error) {
+	return StartCLIStream(ctx, p, "", dir, env, bin, args...)
+}
+
+// StartCLIStream is StartCLI with the output in stream, which survives
+// this process: what AdoptCLI reads after a restart. stream's .err file
+// beside it holds stderr.
+func StartCLIStream(ctx context.Context, p Parser, stream, dir string, env []string, bin string, args ...string) (*CLIRun, error) {
 	path, err := exec.LookPath(bin)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", bin, err)
 	}
+	temp := false
+	if stream == "" {
+		f, err := os.CreateTemp("", "agent-*.out")
+		if err != nil {
+			return nil, err
+		}
+		f.Close()
+		stream, temp = f.Name(), true
+	}
+	if err := os.MkdirAll(filepath.Dir(stream), 0o700); err != nil {
+		return nil, err
+	}
+	out, err := os.OpenFile(stream, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	defer out.Close()
+	errf, err := os.OpenFile(stream+".err", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	defer errf.Close()
 	cmd := exec.Command(path, args...)
 	cmd.Dir = dir
 	cmd.Env = env
 	cmd.Stdin = nil
+	// The files themselves, never a writer: Wait would then hang on a
+	// grandchild that keeps the descriptor.
+	cmd.Stdout, cmd.Stderr = out, errf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	release := func() {}
 	if SpawnAttr != nil {
@@ -64,67 +106,158 @@ func StartCLI(ctx context.Context, p Parser, dir string, env []string, bin strin
 		}
 	}
 	defer release()
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, err
-	}
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	r := &CLIRun{events: make(chan Event, 64), cmd: cmd, stop: make(chan struct{}), stderrDone: make(chan struct{})}
-	go r.readStderr(stderr)
-	go r.loop(ctx, p, stdout)
+	r := &CLIRun{events: make(chan Event, 64), cmd: cmd, pid: cmd.Process.Pid, stream: stream, temp: temp, stop: make(chan struct{}), exited: make(chan struct{})}
+	go func() {
+		err := cmd.Wait()
+		r.exitMu.Lock()
+		r.exitEr = err
+		r.exitMu.Unlock()
+		close(r.exited)
+	}()
+	go r.loop(ctx, p)
 	return r, nil
+}
+
+// AdoptCLI picks up a run a previous supervisor started: the process if
+// it is still alive (pid checked against the stream it writes to), and in
+// any case its stream from the beginning, so a turn that finished while
+// nobody was listening is still read to its result.
+func AdoptCLI(ctx context.Context, p Parser, pid int, stream string) *CLIRun {
+	r := &CLIRun{events: make(chan Event, 64), pid: pid, stream: stream, stop: make(chan struct{}), exited: make(chan struct{})}
+	if !writesTo(pid, stream) {
+		close(r.exited)
+	} else {
+		go func() {
+			for syscall.Kill(pid, 0) == nil && !zombie(pid) {
+				time.Sleep(time.Second)
+			}
+			close(r.exited)
+		}()
+	}
+	go r.loop(ctx, p)
+	return r
+}
+
+// writesTo says pid is alive and has stream open: a reused pid is not.
+func writesTo(pid int, stream string) bool {
+	if pid <= 0 || syscall.Kill(pid, 0) != nil || zombie(pid) {
+		return false
+	}
+	fds, err := os.ReadDir("/proc/" + strconv.Itoa(pid) + "/fd")
+	if err != nil {
+		return false
+	}
+	for _, fd := range fds {
+		if target, err := os.Readlink("/proc/" + strconv.Itoa(pid) + "/fd/" + fd.Name()); err == nil && target == stream {
+			return true
+		}
+	}
+	return false
+}
+
+func zombie(pid int) bool {
+	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return true
+	}
+	i := bytes.LastIndexByte(data, ')')
+	return i < 0 || i+2 >= len(data) || data[i+2] == 'Z'
 }
 
 // Events implements Run.
 func (r *CLIRun) Events() <-chan Event { return r.events }
 
 // Stop implements Run.
-func (r *CLIRun) Stop() {
-	r.once.Do(func() { close(r.stop) })
+func (r *CLIRun) Stop() { r.once.Do(func() { close(r.stop) }) }
+
+// PID is the process group leader of the run.
+func (r *CLIRun) PID() int { return r.pid }
+
+// Stream is the file the run's output goes to.
+func (r *CLIRun) Stream() string { return r.stream }
+
+func (r *CLIRun) stderrText() string {
+	data, _ := os.ReadFile(r.stream + ".err")
+	if len(data) > 16*1024 {
+		data = data[len(data)-16*1024:]
+	}
+	return strings.TrimSpace(string(data))
 }
 
-func (r *CLIRun) readStderr(f io.Reader) {
-	defer close(r.stderrDone)
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 64*1024), 1024*1024)
-	for sc.Scan() {
-		r.errMu.Lock()
-		if r.stderr.Len() < 16*1024 {
-			r.stderr.WriteString(sc.Text())
-			r.stderr.WriteByte('\n')
+// tail sends the stream's complete lines until the process has exited and
+// everything it wrote was read, or quit closes.
+func (r *CLIRun) tail(lines chan<- string, quit <-chan struct{}) {
+	defer close(lines)
+	f, err := os.Open(r.stream)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	rd := bufio.NewReaderSize(f, 64*1024)
+	var partial strings.Builder
+	for {
+		chunk, err := rd.ReadString('\n')
+		partial.WriteString(chunk)
+		if err == nil {
+			line := strings.TrimRight(partial.String(), "\n")
+			partial.Reset()
+			select {
+			case lines <- line:
+			case <-quit:
+				return
+			}
+			continue
 		}
-		r.errMu.Unlock()
+		if !errors.Is(err, io.EOF) {
+			return
+		}
+		select {
+		case <-r.exited:
+			// One more pass for what was written between the last read
+			// and the exit, then the unterminated rest.
+			for {
+				chunk, err := rd.ReadString('\n')
+				partial.WriteString(chunk)
+				if err != nil {
+					break
+				}
+				select {
+				case lines <- strings.TrimRight(partial.String(), "\n"):
+				case <-quit:
+					return
+				}
+				partial.Reset()
+			}
+			if s := strings.TrimSpace(partial.String()); s != "" {
+				select {
+				case lines <- s:
+				case <-quit:
+				}
+			}
+			return
+		case <-quit:
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
 }
 
-func (r *CLIRun) stderrText() string {
-	r.errMu.Lock()
-	defer r.errMu.Unlock()
-	return strings.TrimSpace(r.stderr.String())
-}
-
-func (r *CLIRun) loop(ctx context.Context, p Parser, stdout io.Reader) {
+func (r *CLIRun) loop(ctx context.Context, p Parser) {
 	defer close(r.events)
-	lines := make(chan string, 16)
-	go func() {
-		sc := bufio.NewScanner(stdout)
-		// A single assistant message carrying a large file in a tool input
-		// can run to megabytes; a line the scanner refuses would end the
-		// run with a misleading error.
-		sc.Buffer(make([]byte, 64*1024), 16*1024*1024)
-		for sc.Scan() {
-			lines <- sc.Text()
+	defer func() {
+		if r.temp {
+			os.Remove(r.stream)
+			os.Remove(r.stream + ".err")
 		}
-		close(lines)
 	}()
-	sawEnd := false
-	stopped := false
+	lines := make(chan string, 16)
+	quit := make(chan struct{})
+	defer close(quit)
+	go r.tail(lines, quit)
+	sawEnd, stopped := false, false
 	emit := func(evs []Event) {
 		for _, ev := range evs {
 			if ev.Kind == KindResult || ev.Kind == KindError {
@@ -153,26 +286,10 @@ read:
 			break read
 		}
 	}
-	// Whatever the child still writes after this point is drained and
-	// dropped, so the scanner goroutine can reach the pipe's end once the
-	// process is gone instead of blocking on a channel nobody reads.
-	go func() {
-		for range lines {
-		}
-	}()
 	if !stopped {
 		emit(p.Flush())
 	}
-	if !stopped {
-		// Wait closes the pipes, so stderr must be drained before it or the
-		// last lines (the "not logged in" that explains the exit) are lost.
-		// Bounded: a grandchild holding the pipe must not hold the turn.
-		select {
-		case <-r.stderrDone:
-		case <-time.After(3 * time.Second):
-		}
-	}
-	exitErr := r.wait(stopped)
+	exitErr := r.end(stopped)
 	if stopped {
 		r.send(Event{Kind: KindError, Text: "stopped"})
 		return
@@ -189,29 +306,30 @@ read:
 	}
 }
 
-// wait reaps the child. After a clean end it gets three seconds to exit on
-// its own; a stop kills at once. Either way the whole group goes, and Wait
-// is bounded because the pipe is ours, not a writer handed to exec.Cmd.
-func (r *CLIRun) wait(stopped bool) error {
-	done := make(chan error, 1)
-	go func() { done <- r.cmd.Wait() }()
+// end lets the child exit: three seconds after a clean end, at once after
+// a stop. Either way the whole group goes, and nothing here waits on a
+// grandchild: the output is a file, not a pipe.
+func (r *CLIRun) end(stopped bool) error {
 	grace := 3 * time.Second
 	if stopped {
-		_ = syscall.Kill(-r.cmd.Process.Pid, syscall.SIGTERM)
+		_ = syscall.Kill(-r.pid, syscall.SIGTERM)
 		grace = 2 * time.Second
 	}
 	select {
-	case err := <-done:
-		return err
+	case <-r.exited:
 	case <-time.After(grace):
+		_ = syscall.Kill(-r.pid, syscall.SIGKILL)
+		select {
+		case <-r.exited:
+		case <-time.After(5 * time.Second):
+			return errors.New("agent process survived SIGKILL")
+		}
 	}
-	_ = syscall.Kill(-r.cmd.Process.Pid, syscall.SIGKILL)
-	select {
-	case err := <-done:
-		return err
-	case <-time.After(5 * time.Second):
-		return errors.New("agent process survived SIGKILL")
-	}
+	// Whatever it left in its group goes too.
+	_ = syscall.Kill(-r.pid, syscall.SIGKILL)
+	r.exitMu.Lock()
+	defer r.exitMu.Unlock()
+	return r.exitEr
 }
 
 func (r *CLIRun) send(ev Event) {
