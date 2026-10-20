@@ -281,3 +281,17 @@ func TestClientIPPrefersTheEdgeHeader(t *testing.T) {
 		t.Fatalf("a direct client named its own address: %s", ClientIP(r))
 	}
 }
+
+func TestATokenIDNeverLooksLikeAFlag(t *testing.T) {
+	s := newStore(t)
+	s.SetPassword("password-1")
+	for i := 0; i < 300; i++ {
+		p, _, err := s.CreateToken("t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasPrefix(p.ID, "-") || strings.Trim(p.ID, "0123456789abcdef") != "" {
+			t.Fatalf("token id %q", p.ID)
+		}
+	}
+}

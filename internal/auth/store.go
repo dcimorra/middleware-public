@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -261,10 +262,15 @@ func (s *Store) CreateToken(name string) (Public, string, error) {
 	if err != nil {
 		return Public{}, "", err
 	}
-	id, err := randomToken(6)
-	if err != nil {
+	// Hex, not base64url: the id is typed after `middleware token rm`, and
+	// one in 64 base64url ids began with "-" and was read as a flag (CI
+	// failed on it on 20 October 2026). Ids made before stay valid and are
+	// removed with `token rm -- <id>`.
+	var raw [6]byte
+	if _, err := rand.Read(raw[:]); err != nil {
 		return Public{}, "", err
 	}
+	id := hex.EncodeToString(raw[:])
 	secret = "mw_" + secret
 	t := Token{ID: id, Name: name, Hash: hashToken(secret), Created: s.now()}
 	s.mu.Lock()
