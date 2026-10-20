@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="{{.Lang}}"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">{{if .Reload}}<meta http-equiv="refresh" content="{{.Reload}}">{{end}}
+<title>{{.Title}}</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --paper:#fbfbfa; --ink:#1b1b1e; --grey:#75757c; --rule:#e4e4e0;
+    --accent:#1b1b1e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper:#0d0d0f; --ink:#e9e9e6; --grey:#87878f; --rule:#232326;
+            --accent:#e9e9e6; }
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; overflow-x:hidden; }
+  body {
+    min-height:100dvh; display:grid; place-items:center;
+    padding:clamp(1.5rem, 6vw, 3rem);
+    background:var(--paper); color:var(--ink);
+    font:400 16px/1.7 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  main { width:100%; max-width:26rem; }
+
+  /* The mark: a shape per state and nothing else. No colour and no movement,
+     which is the point of this one — it has to be legible without either. */
+  .status {
+    display:flex; align-items:center; gap:.5rem; margin:0 0 .75rem;
+    font-size:.8125rem; color:var(--grey); letter-spacing:.01em;
+  }
+  .status::before {
+    content:"·"; font-size:1.5em; line-height:0; color:var(--ink);
+  }
+  .waiting .status::before { content:"⋯"; font-size:1em; line-height:1; }
+  .paused  .status::before { content:"–"; font-size:1em; line-height:1; }
+  .broken   .status::before { content:"×"; font-size:1em; line-height:1; }
+  .nothing   .status::before { content:"·"; }
+  .locked .status::before { content:"○"; font-size:.8em; line-height:1; }
+
+  h1 {
+    margin:0; font-size:1.375rem; font-weight:560;
+    letter-spacing:-.015em; line-height:1.3; text-wrap:balance;
+  }
+  .signal { height:1px; margin:1.25rem 0; background:var(--rule); }
+  .line { margin:0; color:var(--grey); font-size:.9375rem; }
+
+  .password { display:flex; flex-wrap:wrap; gap:.5rem; margin:1.25rem 0 0; }
+  .password input {
+    flex:1 1 10rem; min-width:0; padding:.55rem .1rem;
+    border:0; border-bottom:1px solid var(--rule); border-radius:0;
+    background:none; color:var(--ink); font:inherit; font-size:.9375rem;
+  }
+  .password input:focus { outline:0; border-bottom-color:var(--ink); }
+  .password button {
+    flex:none; padding:.55rem 0; border:0; background:none; color:var(--ink);
+    font:inherit; font-size:.9375rem; font-weight:550; cursor:pointer;
+    text-decoration:underline; text-underline-offset:4px;
+  }
+  .password button:hover, .password button:focus-visible { color:var(--grey); }
+  .password .wrong { flex-basis:100%; margin:0; font-size:.8125rem; color:var(--ink); }
+  .when { margin:.85rem 0 0; color:var(--grey); font-size:.875rem; }
+  .when time { color:var(--ink); }
+
+  .exit {
+    display:inline-block; margin-top:1.25rem; color:var(--ink);
+    font-size:.9375rem; font-weight:550;
+    text-decoration:underline; text-underline-offset:4px;
+  }
+  .exit::after { content:" →"; text-decoration:none; }
+  .exit:hover, .exit:focus-visible { color:var(--grey); }
+  :focus-visible { outline:2px solid var(--ink); outline-offset:3px; }
+
+  footer {
+    display:flex; gap:1rem; justify-content:space-between; align-items:baseline;
+    margin:2.5rem 0 0; font-size:.75rem; color:var(--grey);
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    letter-spacing:.04em;
+  }
+  footer .code { color:color-mix(in oklab, var(--grey) 55%, transparent); }
+</style>
+</head><body class="{{.Signal}}">
+<main>
+  <p class="status">{{.Label}}</p>
+  <h1>{{.Title}}</h1>
+  <div class="signal" aria-hidden="true"></div>
+  <p class="line">{{.Line}}</p>
+  {{.Extra}}
+  {{if .LinkHref}}<a class="exit" href="{{.LinkHref}}">{{.LinkText}}</a>{{end}}
+  <footer><span>{{.Foot}}</span><span class="code">{{.Status}}</span></footer>
+</main>
+</body></html>

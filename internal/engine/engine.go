@@ -54,11 +54,12 @@ type Site struct {
 	Instance runtime.Instance
 	Workers  map[string]*worker
 
-	health    healthState
-	handing   bool
-	failures  int
-	nextStart time.Time
-	lastErr   string
+	health     healthState
+	needsSince time.Time // first start waiting for its needs since
+	handing    bool
+	failures   int
+	nextStart  time.Time
+	lastErr    string
 }
 
 // Snapshot is what the proxy and the panel read: immutable, copied under
@@ -76,6 +77,9 @@ type Snapshot struct {
 	Workers  map[string]WorkerSnapshot
 	Health   Health
 	Checks   []Check
+	// Missing is what the site needs (manifest `needs`) that is not
+	// available now, each with why.
+	Missing []string
 }
 
 // WorkerSnapshot is a worker's state for readers.
@@ -173,7 +177,7 @@ func (e *Engine) Restart(ctx context.Context, domain string) error {
 
 func (e *Engine) snapshot(s *Site) Snapshot {
 	sn := Snapshot{Domain: s.Domain, Dir: s.Dir, Mode: s.Mode, Manifest: s.Manifest, Handing: s.handing, Error: s.Err,
-		Health: s.health.status, Checks: append([]Check(nil), s.health.checks...)}
+		Health: s.health.status, Checks: append([]Check(nil), s.health.checks...), Missing: e.missingLocked(s)}
 	if sn.Error == "" {
 		sn.Error = s.lastErr
 	}
@@ -341,6 +345,9 @@ func (e *Engine) reconcile(ctx context.Context, domain, dir string) {
 		return
 	}
 	if time.Now().Before(s.nextStart) {
+		return
+	}
+	if s.Instance == nil && e.waitForNeeds(s) {
 		return
 	}
 	s.handing = true

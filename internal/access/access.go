@@ -43,6 +43,8 @@ import (
 type Site struct {
 	Domain string
 	Access *manifest.Access
+	// Title and Theme dress the pages this door shows (see pages).
+	Title, Theme string
 }
 
 // Lookup resolves a host to its site.
@@ -146,14 +148,14 @@ func (a *Access) Wrap(next http.Handler) http.Handler {
 		zone, route := matchRoute(ac.Routes, CleanPath(r.URL.Path))
 		ip := a.clientIP(r)
 		if !admitted(ip, ac.Allow, ac.Deny) || (route != nil && !admitted(ip, route.Allow, route.Deny)) {
-			pages.Write(w, "forbidden", http.StatusForbidden)
+			pages.Render(w, r, pages.ForSite("forbidden", site.Title, site.Domain, site.Theme))
 			return
 		}
 		if len(ac.DenyCountries) > 0 && a.opts.Country != nil && ip != nil {
 			cc := strings.ToUpper(a.opts.Country(r, ip))
 			for _, d := range ac.DenyCountries {
 				if cc != "" && cc == strings.ToUpper(d) {
-					pages.Write(w, "forbidden", http.StatusForbidden)
+					pages.Render(w, r, pages.ForSite("forbidden", site.Title, site.Domain, site.Theme))
 					return
 				}
 			}
@@ -178,7 +180,7 @@ func (a *Access) Wrap(next http.Handler) http.Handler {
 		}
 		for _, d := range doors {
 			if !a.hasSession(r, site, d) && !a.basicAuth(r, d.hash) {
-				a.askPassword(w, r, d, false)
+				a.askPassword(w, r, site, d, false)
 				return
 			}
 		}
@@ -379,17 +381,17 @@ func (a *Access) clearSessions(w http.ResponseWriter, r *http.Request) {
 
 func (a *Access) login(w http.ResponseWriter, r *http.Request, site Site, d door) {
 	if r.Method != http.MethodPost {
-		a.askPassword(w, r, d, false)
+		a.askPassword(w, r, site, d, false)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		a.askPassword(w, r, d, true)
+		a.askPassword(w, r, site, d, true)
 		return
 	}
 	if !a.check(d.hash, r.PostForm.Get("password")) {
 		// A wrong password costs a full derivation; a flood of them is
 		// the WAF's business, which runs before this.
-		a.askPassword(w, r, d, true)
+		a.askPassword(w, r, site, d, true)
 		return
 	}
 	a.setSession(w, r, site, d)
@@ -405,10 +407,10 @@ func safeNext(next string) string {
 	return next
 }
 
-// askPassword answers 401. Browsers get the form; anything that does not
-// ask for HTML (curl, a deploy script) gets a Basic challenge instead,
-// because the form would only get in its way.
-func (a *Access) askPassword(w http.ResponseWriter, r *http.Request, d door, failed bool) {
+// askPassword answers 401. Browsers get the form, inside the site's own
+// design; anything that does not ask for HTML (curl, a deploy script) gets
+// a Basic challenge instead, because the form would only get in its way.
+func (a *Access) askPassword(w http.ResponseWriter, r *http.Request, site Site, d door, failed bool) {
 	w.Header().Set("Cache-Control", "no-store")
 	if !strings.Contains(r.Header.Get("Accept"), "text/html") {
 		w.Header().Set("WWW-Authenticate", `Basic realm="site", charset="UTF-8"`)
@@ -419,10 +421,23 @@ func (a *Access) askPassword(w http.ResponseWriter, r *http.Request, d door, fai
 	if r.URL.Path == LoginPath {
 		next = r.FormValue("next")
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusUnauthorized)
-	_ = loginTpl.Execute(w, map[string]any{"Action": LoginPath, "Next": safeNext(next), "Zone": d.zone, "Message": d.message, "Failed": failed})
+	n := pages.ForSite("password", site.Title, site.Domain, site.Theme)
+	if d.message != "" {
+		n.Line = d.message
+	}
+	var form strings.Builder
+	_ = formTpl.Execute(&form, map[string]any{"Action": LoginPath, "Next": safeNext(next), "Zone": d.zone, "Failed": failed})
+	n.Extra = template.HTML(form.String())
+	pages.Render(w, r, n)
 }
+
+// formTpl is the password form every design styles (.password, .wrong).
+var formTpl = template.Must(template.New("form").Parse(`<form class="password" method="post" action="{{.Action}}">
+<input type="hidden" name="next" value="{{.Next}}"><input type="hidden" name="zone" value="{{.Zone}}">
+<input type="password" name="password" autocomplete="current-password" autofocus required aria-label="Password" placeholder="Password">
+<button type="submit">Enter</button>
+{{if .Failed}}<p class="wrong">That password is not right.</p>{{end}}
+</form>`))
 
 func hostOf(r *http.Request) string {
 	h := r.Host
@@ -431,37 +446,6 @@ func hostOf(r *http.Request) string {
 	}
 	return strings.ToLower(strings.TrimSuffix(h, "."))
 }
-
-// The form follows the visitor pages' look so a protected site and a held
-// site feel like the same house. It has no assets and no script.
-var loginTpl = template.Must(template.New("login").Parse(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex">
-<title>Password required</title>
-<style>
-:root{color-scheme:light dark;--fg:#1b1b1f;--bg:#f6f6f8;--mute:#6b6b75;--line:#d4d4da;--err:#b3261e}
-@media(prefers-color-scheme:dark){:root{--fg:#e8e8ec;--bg:#121216;--mute:#9a9aa6;--line:#3a3a44;--err:#f2b8b5}}
-html,body{height:100%;margin:0}
-body{display:grid;place-items:center;background:var(--bg);color:var(--fg);
-font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;padding:24px;box-sizing:border-box}
-main{max-width:22rem;width:100%;text-align:center}
-h1{font-size:1.5rem;font-weight:600;margin:0 0 .5rem}
-p{margin:0 0 1.25rem;color:var(--mute)}
-.mark{width:40px;height:40px;border-radius:12px;background:currentColor;opacity:.12;margin:0 auto 1.25rem}
-input,button{font:inherit;width:100%;box-sizing:border-box;padding:.6rem .8rem;border-radius:8px;border:1px solid var(--line);background:transparent;color:inherit}
-button{margin-top:.75rem;cursor:pointer;font-weight:600}
-.err{color:var(--err)}
-</style></head>
-<body><main><div class="mark"></div><h1>Password required</h1>
-{{if .Failed}}<p class="err">That password is not right.</p>{{else if .Message}}<p>{{.Message}}</p>{{else}}<p>This site is private. Enter its password to continue.</p>{{end}}
-<form method="post" action="{{.Action}}">
-<input type="hidden" name="next" value="{{.Next}}">
-<input type="hidden" name="zone" value="{{.Zone}}">
-<input type="password" name="password" autocomplete="current-password" autofocus required aria-label="Password">
-<button type="submit">Enter</button>
-</form></main></body></html>
-`))
 
 // Closed is the door when Access could not start (its key unreadable, the
 // disk full). Every site that has an access rule answers 503 and the rest
@@ -474,7 +458,7 @@ func Closed(lookup Lookup) func(http.Handler) http.Handler {
 			if lookup != nil {
 				if site, ok := lookup(hostOf(r)); ok && guarded(site.Access) {
 					w.Header().Set("Cache-Control", "no-store")
-					pages.Write(w, "unavailable", http.StatusServiceUnavailable)
+					pages.Render(w, r, pages.ForSite("down", site.Title, site.Domain, site.Theme))
 					return
 				}
 			}

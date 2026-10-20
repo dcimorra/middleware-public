@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="{{.Lang}}"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">{{if .Reload}}<meta http-equiv="refresh" content="{{.Reload}}">{{end}}
+<title>{{.Title}}</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --paper:#ffffff; --ground:#eef0f4; --ink:#16171c; --grey:#6b6d78;
+    --rule:#e6e7ec; --accent:#3d5a8a;
+    --r: 18px;
+  }
+  body.waiting { --accent:#0f6f68; }
+  body.paused  { --accent:#a86016; }
+  body.broken   { --accent:#a13b32; }
+  body.nothing   { --accent:#5f6570; }
+  body.locked { --accent:#3d5a8a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper:#15161a; --ground:#0b0b0d; --ink:#eeede9; --grey:#9698a3;
+            --rule:#26272e; }
+    body.waiting { --accent:#3fd0c4; }
+    body.paused  { --accent:#e0a250; }
+    body.broken   { --accent:#e8776c; }
+    body.nothing   { --accent:#8b909b; }
+    body.locked { --accent:#7fa8dd; }
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; overflow-x:hidden; }
+  body {
+    min-height:100dvh; display:grid; place-items:center;
+    padding:clamp(1rem, 5vw, 3rem);
+    background:
+      radial-gradient(80% 55% at 50% 0%,
+        color-mix(in oklab, var(--accent) 22%, transparent), transparent 70%),
+      var(--ground);
+    color:var(--ink);
+    font:400 16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  main {
+    width:100%; max-width:31rem; padding:clamp(1.5rem, 5vw, 2.5rem);
+    background:var(--paper); border:1px solid var(--rule); border-radius:var(--r);
+    box-shadow:0 1px 2px rgba(0,0,0,.04), 0 12px 32px -12px rgba(0,0,0,.18);
+  }
+
+  /* The pill: the state, and the only coloured thing above the fold. */
+  .status {
+    display:inline-flex; align-items:center; gap:.5rem; margin:0 0 1.25rem;
+    padding:.3rem .7rem .3rem .55rem; border-radius:999px;
+    background:color-mix(in oklab, var(--accent) 12%, transparent);
+    color:var(--accent);
+    font:500 .75rem/1 ui-sans-serif,system-ui,sans-serif;
+    letter-spacing:.02em;
+  }
+  .status::before {
+    content:""; width:.5rem; height:.5rem; border-radius:999px;
+    background:var(--accent); flex:none;
+  }
+  .waiting .status::before { animation:pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { transform:scale(1); opacity:1 }
+                     50% { transform:scale(.55); opacity:.4 } }
+  .paused .status::before { animation:breathe 4s ease-in-out infinite; }
+  @keyframes breathe { 0%,100% { opacity:1 } 50% { opacity:.3 } }
+  .broken .status::before { animation:blink 2.4s steps(1,end) infinite; }
+  @keyframes blink { 0%,44% { opacity:1 } 45%,54% { opacity:.15 }
+                        55%,64% { opacity:1 } 65%,74% { opacity:.15 }
+                        75%,100% { opacity:1 } }
+  .nothing .status::before { background:var(--grey); }
+  /* A ring and not a dot: there is a key in the way, and a keyhole is hollow.
+     It is the one state that is told apart by shape alone, which is what makes
+     it survive motion being turned off. */
+  .locked .status::before {
+    background:none; box-shadow:inset 0 0 0 2px var(--accent);
+  }
+  @media (prefers-reduced-motion:reduce) {
+    .status::before { animation:none !important; }
+  }
+
+  h1 {
+    margin:0; font-size:clamp(1.5rem, 5.5vw, 2rem); font-weight:640;
+    letter-spacing:-.02em; line-height:1.15; text-wrap:balance;
+  }
+  .signal { display:none; }
+  .line { margin:.75rem 0 0; color:var(--grey); }
+
+  .password { display:flex; flex-wrap:wrap; gap:.5rem; margin:1.5rem 0 0; }
+  .password input {
+    flex:1 1 11rem; min-width:0; padding:.7rem .85rem;
+    border:1px solid var(--rule); border-radius:10px;
+    background:color-mix(in oklab, var(--ground) 55%, var(--paper));
+    color:var(--ink); font:inherit; font-size:1rem;
+  }
+  .password input:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  .password button {
+    flex:none; padding:.7rem 1.1rem; border:0; border-radius:10px;
+    background:var(--accent); color:#fff;
+    font:inherit; font-weight:550; font-size:.9375rem; cursor:pointer;
+    transition:filter .16s ease;
+  }
+  .password button:hover, .password button:focus-visible { filter:brightness(1.1); }
+  .password .wrong { flex-basis:100%; margin:0; font-size:.875rem; color:var(--accent); }
+  .when { margin:1rem 0 0; color:var(--grey); font-size:.9375rem; }
+  .when time { color:var(--ink); font-weight:500; }
+
+  .exit {
+    display:inline-flex; align-items:center; gap:.5rem; margin-top:1.5rem;
+    padding:.7rem 1.1rem; border-radius:10px; text-decoration:none;
+    background:var(--accent); color:#fff; font-weight:550; font-size:.9375rem;
+    transition:filter .16s ease;
+  }
+  .exit::after { content:"→"; }
+  .exit:hover, .exit:focus-visible { filter:brightness(1.1); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+
+  footer {
+    display:flex; gap:1rem; justify-content:space-between; align-items:baseline;
+    margin:1.75rem 0 0; padding:1rem 0 0; border-top:1px solid var(--rule);
+    font:400 .75rem/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    letter-spacing:.05em; color:var(--grey);
+  }
+  footer .code { color:color-mix(in oklab, var(--grey) 55%, transparent); }
+</style>
+</head><body class="{{.Signal}}">
+<main>
+  <p class="status">{{.Label}}</p>
+  <h1>{{.Title}}</h1>
+  <p class="line">{{.Line}}</p>
+  {{.Extra}}
+  {{if .LinkHref}}<a class="exit" href="{{.LinkHref}}">{{.LinkText}}</a>{{end}}
+  <footer><span>{{.Foot}}</span><span class="code">{{.Status}}</span></footer>
+</main>
+</body></html>

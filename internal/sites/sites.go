@@ -68,6 +68,7 @@ type Site struct {
 	Error    string                  `json:"error"`
 	Health   engine.Health           `json:"health"`
 	Checks   []engine.Check          `json:"checks,omitempty"`
+	Missing  []string                `json:"missing,omitempty"`
 	Managed  bool                    `json:"managed"`
 	Manifest *manifest.Manifest      `json:"manifest,omitempty"`
 	Workers  map[string]WorkerStatus `json:"workers,omitempty"`
@@ -171,7 +172,7 @@ func (m *Manager) describe(domain string) Site {
 		s.Mode = sn.Mode
 	}
 	s.Alive, s.Port, s.Revision, s.Handing = sn.Alive, sn.Port, sn.Revision, sn.Handing
-	s.Health, s.Checks = sn.Health, sn.Checks
+	s.Health, s.Checks, s.Missing = sn.Health, sn.Checks, sn.Missing
 	if s.Error == "" {
 		s.Error = sn.Error
 	}

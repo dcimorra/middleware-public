@@ -136,6 +136,7 @@ function overviewTab(domain) {
       [t("site.port"), s.port ? h("code", null, String(s.port)) : null],
       [t("site.revision"), s.revision ? h("code", { title: s.revision }, shortRev(s.revision)) : null],
       [t("site.error"), s.error ? h("span", { class: "level-error" }, s.error) : null],
+      [t("site.missing"), (s.missing || []).length ? h("div", { class: "stack-sm" }, ...s.missing.map((x) => h("span", { class: "level-warn" }, x))) : null],
       [t("site.handing"), s.handing ? t("common.yes") : null],
       [t("site.runtime"), m.run && m.run.runtime ? m.run.runtime : null],
       [t("site.upstream"), m.upstream || null],
@@ -218,12 +219,19 @@ function overviewTab(domain) {
     }
     const title = h("input", { type: "text", value: cur.title || "" });
     const message = h("textarea", { value: cur.message || "" });
+    const mode = h("select", null, ...["maintenance", "404", "410", "500"].map((k) => h("option", { value: k }, t("site.holdMode." + k))));
+    mode.value = cur.mode || "maintenance";
+    // A local time in the picker, sent as RFC 3339: the page shows it and
+    // it goes out as Retry-After.
+    const until = h("input", { type: "datetime-local", value: cur.until ? new Date(cur.until).toISOString().slice(0, 16) : "" });
     const ok = await open({
       title: t("site.holdQ", { domain }),
-      body: [h("p", { class: "dim" }, t("site.holdBody")), field(t("site.holdTitle"), title), field(t("site.holdMessage"), message)],
+      body: [h("p", { class: "dim" }, t("site.holdBody")), field(t("site.holdModeLabel"), mode), field(t("site.holdTitle"), title), field(t("site.holdMessage"), message), field(t("site.holdUntil"), until, t("site.holdUntilHint"))],
       buttons: [{ label: t("common.cancel"), value: null }, { label: t("site.hold"), submit: true, primary: true }],
       onSubmit: async () => {
-        const r = await api.post(`/sites/${enc(domain)}/hold`, { enabled: true, title: title.value, message: message.value });
+        const body = { enabled: true, title: title.value, message: message.value, mode: mode.value === "maintenance" ? "" : mode.value };
+        if (until.value) body.until = new Date(until.value).toISOString().replace(/\.\d{3}Z$/, "Z");
+        const r = await api.post(`/sites/${enc(domain)}/hold`, body);
         if (r && r.domain) store.putSite(r);
       },
     });

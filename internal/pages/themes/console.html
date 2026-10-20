@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="{{.Lang}}"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">{{if .Reload}}<meta http-equiv="refresh" content="{{.Reload}}">{{end}}
+<title>{{.Title}}</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --ground:#0a0b0d; --panel:#111318; --ink:#dfe3ea; --grey:#767c88;
+    --rule:#1e2128; --accent:#5aa9e6;
+  }
+  body.waiting { --accent:#43d6c4; }
+  body.paused  { --accent:#e0a250; }
+  body.broken   { --accent:#e8776c; }
+  body.nothing   { --accent:#767c88; }
+  body.locked { --accent:#5aa9e6; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; overflow-x:hidden; }
+  body {
+    min-height:100dvh; display:grid; place-items:center;
+    padding:clamp(1rem, 4vw, 2.5rem);
+    background:var(--ground); color:var(--ink);
+    font:400 14px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    -webkit-font-smoothing:antialiased;
+  }
+  main {
+    width:100%; max-width:46rem;
+    background:var(--panel); border:1px solid var(--rule); border-radius:8px;
+    overflow:hidden;
+  }
+
+  /* The bar: the state and the code, which on this one are the headline. */
+  .status {
+    display:flex; align-items:center; gap:.6rem; margin:0;
+    padding:.7rem clamp(.9rem, 3vw, 1.4rem);
+    border-bottom:1px solid var(--rule);
+    background:color-mix(in oklab, var(--accent) 8%, transparent);
+    color:var(--accent);
+    font-size:.8125rem; letter-spacing:.08em; text-transform:uppercase;
+  }
+  .status::before {
+    content:""; width:.5rem; height:1rem; flex:none; background:var(--accent);
+  }
+  .waiting .status::before { animation:cursor 1.06s steps(1,end) infinite; }
+  @keyframes cursor { 0%,50% { opacity:1 } 51%,100% { opacity:0 } }
+  .paused .status::before { opacity:.45; }
+  .broken .status::before { animation:tartamudea 2.2s steps(1,end) infinite; }
+  @keyframes tartamudea { 0%,40% { opacity:1 } 41%,48% { opacity:.1 }
+                          49%,56% { opacity:1 } 57%,64% { opacity:.1 }
+                          65%,100% { opacity:1 } }
+  .nothing .status::before { background:var(--grey); opacity:.5; }
+  /* Partido en dos y no hueco: un rectángulo vacío de este tamaño se lee como
+     un glifo que le falta a la fuente, que es justo lo que una página servida
+     porque algo va wrong no se puede permitir sugerir. */
+  .locked .status::before {
+    background:linear-gradient(var(--accent) 0 38%, transparent 38% 62%, var(--accent) 62% 100%);
+  }
+  @media (prefers-reduced-motion:reduce) { .status::before { animation:none !important; } }
+  .status .code { margin-left:auto; color:var(--grey); letter-spacing:.06em; }
+
+  .content { padding:clamp(1.1rem, 4vw, 1.75rem) clamp(.9rem, 3vw, 1.4rem); }
+  h1 {
+    margin:0; font-size:clamp(1.125rem, 4vw, 1.5rem); font-weight:600;
+    letter-spacing:-.01em; line-height:1.25; word-break:break-word;
+  }
+  /* The rule stands in for the band: same job, drawn the way this one draws. */
+  .signal { height:1px; margin:1rem 0; background:var(--rule); }
+  .line { margin:0; color:var(--grey); max-width:62ch;
+          font-family:ui-sans-serif,system-ui,-apple-system,sans-serif; }
+
+  .password { display:flex; flex-wrap:wrap; gap:.5rem; margin:1.25rem 0 0; max-width:32rem; }
+  .password input {
+    flex:1 1 11rem; min-width:0; padding:.6rem .75rem;
+    border:1px solid var(--rule); border-radius:6px;
+    background:var(--ground); color:var(--ink); font:inherit; font-size:.9375rem;
+  }
+  .password input:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  .password button {
+    flex:none; padding:.6rem 1rem; border:1px solid var(--accent); border-radius:6px;
+    background:transparent; color:var(--accent);
+    font:inherit; font-size:.875rem; letter-spacing:.04em; cursor:pointer;
+    text-transform:uppercase; transition:background .16s ease, color .16s ease;
+  }
+  .password button:hover, .password button:focus-visible { background:var(--accent); color:var(--ground); }
+  .password .wrong { flex-basis:100%; margin:0; font-size:.8125rem; color:var(--accent); }
+  .when { margin:.9rem 0 0; color:var(--grey); font-size:.8125rem; }
+  .when time { color:var(--ink); }
+
+  .exit {
+    display:inline-block; margin-top:1.25rem; padding:.6rem 1rem;
+    border:1px solid var(--rule); border-radius:6px; text-decoration:none;
+    color:var(--ink); font-size:.875rem; letter-spacing:.04em;
+    transition:border-color .16s ease, color .16s ease;
+  }
+  .exit::after { content:" →"; color:var(--grey); }
+  .exit:hover, .exit:focus-visible { border-color:var(--accent); color:var(--accent); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+
+  footer {
+    padding:.7rem clamp(.9rem, 3vw, 1.4rem); border-top:1px solid var(--rule);
+    font-size:.75rem; letter-spacing:.06em; color:var(--grey);
+  }
+  footer .code { display:none; }
+</style>
+</head><body class="{{.Signal}}">
+<main>
+  <p class="status">{{.Label}}<span class="code">{{.Status}}</span></p>
+  <div class="content">
+    <h1>{{.Title}}</h1>
+    <div class="signal" aria-hidden="true"></div>
+    <p class="line">{{.Line}}</p>
+    {{.Extra}}
+    {{if .LinkHref}}<a class="exit" href="{{.LinkHref}}">{{.LinkText}}</a>{{end}}
+  </div>
+  <footer><span>{{.Foot}}</span><span class="code">{{.Status}}</span></footer>
+</main>
+</body></html>

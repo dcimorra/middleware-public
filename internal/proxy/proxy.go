@@ -7,6 +7,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"html/template"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -81,7 +82,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, u.String(), http.StatusMovedPermanently)
 			return
 		}
-		pages.Write(w, "unknown", http.StatusNotFound)
+		pages.Write(w, r, "unknown", http.StatusNotFound)
 		return
 	}
 	h.serveSite(w, r, sn)
@@ -96,21 +97,23 @@ func (h *Handler) serveSite(w http.ResponseWriter, r *http.Request, sn engine.Sn
 	}
 	switch sn.Mode {
 	case manifest.ModeDisabled:
-		pages.Write(w, "stopped", http.StatusServiceUnavailable)
+		pages.Render(w, r, SiteNotice(sn, "stopped"))
 	case manifest.ModeHold:
-		title, msg := "", ""
-		if m.Hold != nil {
-			title, msg = m.Hold.Title, m.Hold.Message
-		}
-		pages.Write(w, "hold", http.StatusServiceUnavailable, title, msg)
+		pages.Render(w, r, holdNotice(sn))
 	case manifest.ModeRun:
 		if !sn.Alive || sn.Port == 0 {
-			pages.Write(w, "unavailable", http.StatusServiceUnavailable)
+			// Starting is worth a reload in five seconds; a site that
+			// crashed and is backing off is not, and the page says which.
+			key := "starting"
+			if sn.Error != "" && !sn.Handing {
+				key = "down"
+			}
+			pages.Render(w, r, SiteNotice(sn, key))
 			return
 		}
-		h.forward(w, r, "http://127.0.0.1:"+strconv.Itoa(sn.Port))
+		h.forward(w, r, sn, "http://127.0.0.1:"+strconv.Itoa(sn.Port))
 	case manifest.ModeUpstream:
-		h.forward(w, r, m.Upstream)
+		h.forward(w, r, sn, m.Upstream)
 	default:
 		h.static(w, r, sn)
 	}
@@ -119,10 +122,10 @@ func (h *Handler) serveSite(w http.ResponseWriter, r *http.Request, sn engine.Sn
 // forward proxies to target. httputil.ReverseProxy handles WebSocket
 // upgrades by hijacking both ends, so a long-lived socket keeps flowing;
 // what it cannot survive is this process restarting, which is documented.
-func (h *Handler) forward(w http.ResponseWriter, r *http.Request, target string) {
+func (h *Handler) forward(w http.ResponseWriter, r *http.Request, sn engine.Snapshot, target string) {
 	u, err := url.Parse(target)
 	if err != nil {
-		pages.Write(w, "unavailable", http.StatusBadGateway)
+		pages.Render(w, r, SiteNotice(sn, "down"))
 		return
 	}
 	rp := &httputil.ReverseProxy{
@@ -145,7 +148,9 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, target string)
 			if errors.Is(err, context.Canceled) {
 				return
 			}
-			pages.Write(w, "unavailable", http.StatusBadGateway)
+			// 503 and not 502: Cloudflare replaces a 502 from the origin
+			// with its own page, and the visitor never sees this one.
+			pages.Render(w, r, SiteNotice(sn, "down"))
 		},
 	}
 	rp.ServeHTTP(w, r)
@@ -256,3 +261,42 @@ func insideSite(siteDir, full string) bool {
 
 func dirExists(p string) bool  { st, err := os.Stat(p); return err == nil && st.IsDir() }
 func fileExists(p string) bool { st, err := os.Stat(p); return err == nil && !st.IsDir() }
+
+// SiteNotice is one of a site's pages: its name as the title, its domain
+// at the foot, its design.
+func SiteNotice(sn engine.Snapshot, key string) pages.Notice {
+	title, theme := "", ""
+	if m := sn.Manifest; m != nil {
+		title = m.Title
+		if m.Notice != nil {
+			theme = m.Notice.Theme
+		}
+	}
+	return pages.ForSite(key, title, sn.Domain, theme)
+}
+
+// holdNotice is the page a held site shows: its mode, its own message if
+// it wrote one, and when it is due back.
+func holdNotice(sn engine.Snapshot) pages.Notice {
+	hold := sn.Manifest.Hold
+	key := "hold"
+	if hold != nil && hold.Mode != "" && hold.Mode != "maintenance" {
+		key = "hold-" + hold.Mode
+	}
+	n := SiteNotice(sn, key)
+	if hold == nil {
+		return n
+	}
+	if hold.Title != "" {
+		n.Title = hold.Title
+	}
+	if hold.Message != "" {
+		n.Line = hold.Message
+	}
+	if until, err := time.Parse(time.RFC3339, hold.Until); err == nil && until.After(time.Now()) {
+		n.RetryAfter = int(time.Until(until).Seconds()) + 1
+		n.Extra = template.HTML(`<p class="when">Back <time datetime="` + until.UTC().Format(time.RFC3339) + `">` +
+			template.HTMLEscapeString(until.UTC().Format("Mon 2 Jan, 15:04 UTC")) + `</time></p>`)
+	}
+	return n
+}

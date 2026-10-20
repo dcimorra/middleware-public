@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dcimorra/middleware-public/internal/engine"
 	"github.com/dcimorra/middleware-public/internal/manifest"
@@ -150,5 +151,55 @@ func TestAProjectAnswersNoHostname(t *testing.T) {
 	h := New(lookupFor(map[string]engine.Snapshot{"tools": {Domain: "tools", Mode: manifest.ModeProject}}))
 	if resp := do(t, h, "tools", "/"); resp.StatusCode != 404 {
 		t.Fatalf("a project answered %d", resp.StatusCode)
+	}
+}
+
+func TestStartingAndDownAreToldApartAndHoldModesAnswerTheirCode(t *testing.T) {
+	m, _ := manifest.Parse([]byte(`{"version":2,"title":"Shop","run":{"command":["x"]},"notice":{"theme":"card"}}`))
+	cases := []struct {
+		sn         engine.Snapshot
+		code       int
+		want       string
+		retryAfter string
+	}{
+		{engine.Snapshot{Domain: "a.test", Mode: manifest.ModeRun, Manifest: m}, 503, "Starting", "5"},
+		{engine.Snapshot{Domain: "a.test", Mode: manifest.ModeRun, Manifest: m, Error: "exit 1"}, 503, "Not answering", "30"},
+		{engine.Snapshot{Domain: "a.test", Mode: manifest.ModeDisabled, Manifest: m}, 503, "Switched off", ""},
+	}
+	until := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
+	for _, mode := range []struct {
+		mode, label string
+		code        int
+	}{{"", "Maintenance", 503}, {"404", "Not found", 404}, {"410", "Gone", 410}, {"500", "Error", 500}} {
+		hm, _ := manifest.Parse([]byte(`{"version":2,"title":"Shop","hold":{"enabled":true,"mode":"` + mode.mode + `","until":"` + until + `","message":"Back after the move"}}`))
+		retry := ""
+		if mode.mode == "" {
+			retry = "7200"
+		}
+		cases = append(cases, struct {
+			sn         engine.Snapshot
+			code       int
+			want       string
+			retryAfter string
+		}{engine.Snapshot{Domain: "a.test", Mode: manifest.ModeHold, Manifest: hm}, mode.code, mode.label, retry})
+	}
+	for _, c := range cases {
+		h := New(lookupFor(map[string]engine.Snapshot{"a.test": c.sn}))
+		resp := do(t, h, "a.test", "/")
+		b, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != c.code || !strings.Contains(string(b), c.want) || !strings.Contains(string(b), "Shop") {
+			t.Errorf("%s/%s: %d, page without %q", c.sn.Mode, c.want, resp.StatusCode, c.want)
+		}
+		if got := resp.Header.Get("Retry-After"); c.retryAfter != "" && (got == "" || (c.retryAfter == "7200" && got < "7100")) || c.retryAfter == "5" && got != "5" {
+			t.Errorf("%s/%s: Retry-After %q", c.sn.Mode, c.want, got)
+		}
+	}
+}
+
+func TestAnUpstreamThatFailsGets503NotACloudflare502(t *testing.T) {
+	m, _ := manifest.Parse([]byte(`{"version":2,"run":{"command":["x"]}}`))
+	h := New(lookupFor(map[string]engine.Snapshot{"a.test": {Domain: "a.test", Mode: manifest.ModeRun, Alive: true, Port: 1, Manifest: m}}))
+	if resp := do(t, h, "a.test", "/"); resp.StatusCode != 503 {
+		t.Fatalf("status %d", resp.StatusCode)
 	}
 }

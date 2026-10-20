@@ -24,7 +24,9 @@ import (
 	"github.com/dcimorra/middleware-public/internal/modules/cloudflare"
 	"github.com/dcimorra/middleware-public/internal/modules/github"
 	"github.com/dcimorra/middleware-public/internal/modules/vpn"
+	"github.com/dcimorra/middleware-public/internal/pages"
 	"github.com/dcimorra/middleware-public/internal/publish"
+	"github.com/dcimorra/middleware-public/internal/settings"
 )
 
 // The order of the hooks is the shape of the process, so it is written
@@ -129,6 +131,8 @@ func buildWire(a *app.App) app.Hook {
 		srv.RegisterInbound(api.InboundOptions{Hook: inboundHook, DNS: cloudflareDNS{set: set}, Publisher: w.publisher})
 	}
 	srv.RegisterWAF(api.WAFOptions{WAF: theWAF, Traffic: theTraffic})
+	pages.SetHouseTheme(a.Settings.VisitorTheme)
+	srv.OnSettingsSaved(func(st settings.Settings) { pages.SetHouseTheme(st.VisitorTheme) })
 	srv.RegisterAgents(api.AgentsOptions{Registry: providers(), Chat: chatManager})
 	if taskScheduler != nil {
 		srv.RegisterTasks(api.TasksOptions{Scheduler: taskScheduler, Root: a.Root})

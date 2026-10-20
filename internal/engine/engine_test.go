@@ -413,3 +413,27 @@ func TestAProjectRunsItsWorkersAndServesNothing(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "site.json"), []byte(`{"version":2}`), 0o644)
 	waitFor(t, e, "tools", func(s Snapshot) bool { return len(s.Workers) == 0 })
 }
+
+// A whole machine coming up starts in order: a site waits for what it
+// needs, and the snapshot names what is missing.
+func TestASiteWaitsForWhatItNeedsAndSaysWhatIsMissing(t *testing.T) {
+	e, sites := newTestEngine(t)
+	m := fmt.Sprintf(`{"version":2,"needs":["api.test","w@api.test"],"run":{"command":[%q],"env":{"MW_TEST_SERVER":"1","BUILD":"front"}}}`, os.Args[0])
+	os.MkdirAll(filepath.Join(sites, "front.test"), 0o755)
+	os.WriteFile(filepath.Join(sites, "front.test", "site.json"), []byte(m), 0o644)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	sn := waitFor(t, e, "front.test", func(s Snapshot) bool { return len(s.Missing) == 2 })
+	time.Sleep(600 * time.Millisecond)
+	if sn, _ = e.Lookup("front.test"); sn.Alive {
+		t.Fatal("started before what it needs")
+	}
+	api := fmt.Sprintf(`{"version":2,"run":{"command":[%q],"env":{"MW_TEST_SERVER":"1","BUILD":"api"}},"workers":{"w":{"command":[%q],"env":{"MW_TEST_SERVER":"1","BUILD":"w"}}}}`, os.Args[0], os.Args[0])
+	os.MkdirAll(filepath.Join(sites, "api.test"), 0o755)
+	os.WriteFile(filepath.Join(sites, "api.test", "site.json"), []byte(api), 0o644)
+	waitFor(t, e, "front.test", func(s Snapshot) bool { return s.Alive && len(s.Missing) == 0 })
+	if api, _ := e.Lookup("api.test"); !api.Alive {
+		t.Fatal("front started before api")
+	}
+}

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="{{.Lang}}"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">{{if .Reload}}<meta http-equiv="refresh" content="{{.Reload}}">{{end}}
+<title>{{.Title}}</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --paper:#f1efe6; --ink:#111111; --grey:#55534b; --rule:#111111;
+    --accent:#ff3b1f; --sobre:#111111;
+  }
+  body.waiting  { --accent:#00b39a; }
+  body.paused   { --accent:#e8a400; }
+  body.broken    { --accent:#ff3b1f; }
+  body.nothing    { --accent:#8a8880; --sobre:#111111; }
+  body.locked { --accent:#1c3fd6; --sobre:#f1efe6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper:#0e0e0c; --ink:#f1efe6; --grey:#a9a79d; --rule:#f1efe6; }
+    body.waiting  { --accent:#2be0c8; }
+    body.paused   { --accent:#ffc94d; }
+    body.broken    { --accent:#ff6a4d; }
+    body.nothing    { --accent:#8f8d84; }
+    body.locked { --accent:#5c7dff; --sobre:#0e0e0c; }
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; overflow-x:hidden; }
+  body {
+    position:relative; isolation:isolate;
+    min-height:100dvh; display:grid; grid-template-rows:auto 1fr auto;
+    background:var(--paper); color:var(--ink);
+    font:400 17px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  /* The watermark. Fixed and behind everything, so it does not push a single
+     other element around regardless of how long the title turns out to be. */
+  body::before {
+    content:"{{.Status}}"; position:fixed; z-index:-1; right:-3vw; bottom:-16vw;
+    font:800 48vw/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    color:var(--ink); opacity:.05; letter-spacing:-.04em; pointer-events:none;
+  }
+  header {
+    display:flex; align-items:center; justify-content:space-between; gap:1rem;
+    padding:1.1rem clamp(1.25rem, 5vw, 3rem); border-bottom:5px solid var(--rule);
+  }
+  .status {
+    margin:0; padding:.4rem .85rem; background:var(--accent); color:var(--sobre);
+    font:800 .8125rem/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    letter-spacing:.08em; text-transform:uppercase;
+  }
+  header .mark {
+    font:800 .8125rem/1 ui-monospace,monospace; letter-spacing:.08em;
+    text-transform:uppercase; color:var(--grey);
+  }
+  main { padding:clamp(1.5rem, 6vw, 3.5rem) clamp(1.25rem, 5vw, 3rem); align-self:center; }
+  h1 {
+    margin:0 0 1rem; max-width:20ch; text-wrap:balance;
+    font-size:clamp(2.75rem, 9vw, 6rem); font-weight:800; line-height:.94;
+    letter-spacing:-.03em; text-transform:uppercase;
+  }
+  .signal { display:none; }
+  .line { margin:0; max-width:36ch; font-size:1.0625rem; color:var(--grey); }
+
+  .password {
+    display:flex; flex-wrap:wrap; gap:0; margin:1.75rem 0 0; max-width:30rem;
+    border:3px solid var(--rule);
+  }
+  .password input {
+    flex:1 1 12rem; min-width:0; padding:.85rem 1rem; border:0;
+    border-right:3px solid var(--rule); border-radius:0;
+    background:var(--paper); color:var(--ink); font:inherit; font-size:1rem;
+  }
+  .password input:focus { outline:3px solid var(--accent); outline-offset:-3px; }
+  .password button {
+    flex:none; padding:.85rem 1.4rem; border:0; border-radius:0;
+    background:var(--ink); color:var(--paper);
+    font:800 .9375rem/1 ui-sans-serif,system-ui,sans-serif; letter-spacing:.03em;
+    text-transform:uppercase; cursor:pointer;
+  }
+  .password button:hover, .password button:focus-visible { background:var(--accent); color:var(--sobre); }
+  .password .wrong {
+    flex-basis:100%; margin:0; padding:.6rem 1rem; background:var(--accent);
+    color:var(--sobre); font-size:.875rem; font-weight:700;
+  }
+  .when { margin:1rem 0 0; color:var(--grey); font-size:.9375rem; }
+  .when time { color:var(--ink); font-weight:700; }
+
+  .exit {
+    display:inline-flex; align-items:center; gap:.6rem; margin-top:1.75rem;
+    padding:.8rem 1.3rem; border:3px solid var(--rule); text-decoration:none;
+    color:var(--ink); font-weight:800; letter-spacing:.03em; text-transform:uppercase;
+  }
+  .exit::after { content:"→"; }
+  .exit:hover, .exit:focus-visible { background:var(--ink); color:var(--paper); }
+  :focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+
+  footer {
+    display:flex; gap:1rem; justify-content:space-between; align-items:baseline;
+    padding:1.1rem clamp(1.25rem, 5vw, 3rem); border-top:5px solid var(--rule);
+    font:700 .75rem/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    letter-spacing:.05em; text-transform:uppercase; color:var(--grey);
+  }
+  footer .code { color:var(--ink); }
+</style>
+</head><body class="{{.Signal}}">
+<header>
+  <p class="status">{{.Label}}</p>
+  <span class="mark">{{.Foot}}</span>
+</header>
+<main>
+  <h1>{{.Title}}</h1>
+  <p class="line">{{.Line}}</p>
+  {{.Extra}}
+  {{if .LinkHref}}<a class="exit" href="{{.LinkHref}}">{{.LinkText}}</a>{{end}}
+</main>
+<footer><span>{{.Foot}}</span><span class="code">{{.Status}}</span></footer>
+</body></html>

@@ -143,7 +143,7 @@ func Convert(name string, data []byte) Result {
 		r.Blockers = append(r.Blockers, "the V1 manifest does not read: "+err.Error())
 		return r
 	}
-	c := converter{r: &r}
+	c := &converter{r: &r}
 	m := &manifest.Manifest{Version: manifest.Version, Title: in.Title, Disabled: in.Disabled, WWW: in.WWW}
 	c.blockers(&in)
 	c.serve(&in, m, name)
@@ -153,6 +153,8 @@ func Convert(name string, data []byte) Result {
 	if len(in.Aliases) > 0 {
 		m.Aliases = append([]string(nil), in.Aliases...)
 	}
+	m.Needs = in.Needs
+	m.Notice = c.notice
 	if len(r.Blockers) > 0 {
 		return r
 	}
@@ -164,13 +166,22 @@ func Convert(name string, data []byte) Result {
 	return r
 }
 
-type converter struct{ r *Result }
+type converter struct {
+	r      *Result
+	notice *manifest.Notice
+}
 
-func (c converter) block(format string, args ...any) {
+// themeKeys maps V1's design names to V2's: the same seven designs.
+var themeKeys = map[string]string{
+	"": "", "sobrio": "sober", "ficha": "card", "consola": "console", "nota": "note",
+	"cartel": "poster", "plano": "blueprint", "glitch": "glitch",
+}
+
+func (c *converter) block(format string, args ...any) {
 	c.r.Blockers = append(c.r.Blockers, fmt.Sprintf(format, args...))
 }
 
-func (c converter) note(format string, args ...any) {
+func (c *converter) note(format string, args ...any) {
 	c.r.Notes = append(c.r.Notes, fmt.Sprintf(format, args...))
 }
 
@@ -181,7 +192,7 @@ func present(raw json.RawMessage) bool {
 
 // blockers lists the V1 settings in use that V2 cannot honour yet, each
 // with the phase of docs/parity.md that brings it.
-func (c converter) blockers(in *v1) {
+func (c *converter) blockers(in *v1) {
 	if in.Group != "" {
 		c.block("group %q (panel groups; parity §7)", in.Group)
 	}
@@ -207,7 +218,18 @@ func (c converter) blockers(in *v1) {
 		}
 	}
 	if present(in.Notice) {
-		c.block("notice (holding page theme; parity §3)")
+		var nt struct {
+			Theme string `json:"theme"`
+		}
+		dec := json.NewDecoder(bytes.NewReader(in.Notice))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&nt); err != nil {
+			c.block("notice: %v", err)
+		} else if key, ok := themeKeys[nt.Theme]; !ok {
+			c.block("notice.theme %q is not a V1 design", nt.Theme)
+		} else if key != "" {
+			c.notice = &manifest.Notice{Theme: key}
+		}
 	}
 	if present(in.Cache) {
 		var cr v1Cache
@@ -217,9 +239,6 @@ func (c converter) blockers(in *v1) {
 		} else if len(cr.Rules) > 0 {
 			c.block("cache rules (house cache; parity §2)")
 		}
-	}
-	if len(in.Needs) > 0 {
-		c.block("needs %v (start order; parity §4)", in.Needs)
 	}
 	if present(in.Chat) {
 		c.block("chat (loans to the conversation; parity §5)")
@@ -236,7 +255,7 @@ func (c converter) blockers(in *v1) {
 }
 
 // serve converts what answers a request.
-func (c converter) serve(in *v1, m *manifest.Manifest, name string) {
+func (c *converter) serve(in *v1, m *manifest.Manifest, name string) {
 	switch in.Kind {
 	case "static", "":
 		if len(in.Command) > 0 {
@@ -318,7 +337,7 @@ func (c converter) serve(in *v1, m *manifest.Manifest, name string) {
 	}
 }
 
-func (c converter) duration(field, s string) (time.Duration, bool) {
+func (c *converter) duration(field, s string) (time.Duration, bool) {
 	if s == "" {
 		return 0, false
 	}
@@ -333,7 +352,7 @@ func (c converter) duration(field, s string) (time.Duration, bool) {
 // password turns a V1 auth into a V2 hash. The algorithm is the same
 // (PBKDF2-SHA256, raw base64), only the framing differs; a plain password
 // is hashed so it stops being written in the clear.
-func (c converter) password(where string, a *v1Auth) string {
+func (c *converter) password(where string, a *v1Auth) string {
 	if a == nil {
 		return ""
 	}
@@ -357,7 +376,7 @@ func (c converter) password(where string, a *v1Auth) string {
 	return ""
 }
 
-func (c converter) access(in *v1, m *manifest.Manifest) {
+func (c *converter) access(in *v1, m *manifest.Manifest) {
 	ac := &manifest.Access{}
 	if in.Auth != nil {
 		ac.Password = c.password("auth", in.Auth)
@@ -392,7 +411,7 @@ func (c converter) access(in *v1, m *manifest.Manifest) {
 	}
 }
 
-func (c converter) workers(in *v1, m *manifest.Manifest) {
+func (c *converter) workers(in *v1, m *manifest.Manifest) {
 	for _, w := range in.Workers {
 		if m.Workers == nil {
 			m.Workers = map[string]*manifest.Worker{}
@@ -409,18 +428,20 @@ func (c converter) workers(in *v1, m *manifest.Manifest) {
 	}
 }
 
-func (c converter) hold(in *v1, m *manifest.Manifest) {
+func (c *converter) hold(in *v1, m *manifest.Manifest) {
 	if in.Hold == nil {
 		return
 	}
-	switch {
-	case in.Hold.Until != "":
-		c.block("hold.until (parity §3)")
-	case in.Hold.Mode != "" && in.Hold.Mode != "mantenimiento":
-		c.block("hold mode %q (404/410/500 pages; parity §3)", in.Hold.Mode)
+	mode := in.Hold.Mode
+	switch mode {
+	case "", "mantenimiento":
+		mode = ""
+	case "404", "410", "500":
 	default:
-		m.Hold = &manifest.Hold{Enabled: true, Message: in.Hold.Message}
+		c.block("hold mode %q is not mantenimiento, 404, 410 or 500", mode)
+		return
 	}
+	m.Hold = &manifest.Hold{Enabled: true, Message: in.Hold.Message, Mode: mode, Until: in.Hold.Until}
 }
 
 // Summary counts blockers across results, most common first: the order in

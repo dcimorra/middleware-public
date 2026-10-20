@@ -118,7 +118,11 @@ func buildAccess(a *app.App) app.Hook {
 		if !ok || sn.Manifest == nil {
 			return access.Site{}, false
 		}
-		return access.Site{Domain: sn.Domain, Access: sn.Manifest.Access}, true
+		site := access.Site{Domain: sn.Domain, Access: sn.Manifest.Access, Title: sn.Manifest.Title}
+		if sn.Manifest.Notice != nil {
+			site.Theme = sn.Manifest.Notice.Theme
+		}
+		return site, true
 	}
 	ac, err := access.New(access.Options{
 		DataDir:  dataDir(a),

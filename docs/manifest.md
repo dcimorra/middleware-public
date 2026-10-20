@@ -46,7 +46,9 @@ never shell strings. Paths are relative to the site folder.
   },
 
   "disabled": false,
-  "hold": { "enabled": false, "title": "", "message": "" },
+  "hold": { "enabled": false, "title": "", "message": "", "mode": "maintenance", "until": "" },
+  "notice": { "theme": "card" },
+  "needs": ["api.example.com", "worker@shop.example.com"],
 
   "access": {
     "password": "",
@@ -111,6 +113,24 @@ In `run.command`, `run.env` values, `upstream` and `workers.*.command`:
 
 The process also receives `PORT`, `HOST=127.0.0.1`, `MIDDLEWARE_DOMAIN`,
 `MIDDLEWARE_SITE_DIR` and `HOME` (a per-site home under `data/homes/`).
+
+## Visitor pages, hold and needs
+
+When the site cannot answer, the visitor gets a page in the site's design
+(`notice.theme`: sober, card, console, note, poster, blueprint, glitch; empty
+is the house's, set in settings as `visitor_theme`). The page names the site
+(`title`, else the domain), says the state, and tells **starting** (reloads
+itself in five seconds) from **not answering** (a crash or a failing health
+check). An API client that asked for JSON gets JSON. Upstream errors are 503,
+never 502: Cloudflare replaces an origin's 502 with its own page.
+
+`hold.mode` is what a held site answers: `maintenance` (503, the default),
+`404`, `410` (gone; search engines drop it) or `500`. `hold.until` (RFC 3339)
+is shown and sent as `Retry-After`.
+
+`needs` names what the site needs up: another site, or `worker@site`. A first
+start waits up to a minute for them, then starts anyway and says so; the
+panel names whatever is missing now.
 
 ## Docker
 

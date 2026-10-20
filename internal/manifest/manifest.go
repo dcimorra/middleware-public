@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/dcimorra/middleware-public/internal/pages"
 )
 
 // FileName is the manifest's name inside a site folder.
@@ -40,11 +42,17 @@ type Manifest struct {
 	Hold     *Hold              `json:"hold,omitempty"`
 	Access   *Access            `json:"access,omitempty"`
 	WAF      *WAF               `json:"waf,omitempty"`
-	Cache    *Cache             `json:"cache,omitempty"`
-	Headers  map[string]string  `json:"headers,omitempty"`
-	Deploy   *Deploy            `json:"deploy,omitempty"`
-	Agent    *Agent             `json:"agent,omitempty"`
-	App      string             `json:"app,omitempty"`
+	// Needs is what this site needs up to do its job: another site's
+	// domain, or one of a site's workers as "name@domain". A first start
+	// waits for them (a minute at most) and the panel names what is
+	// missing.
+	Needs   []string          `json:"needs,omitempty"`
+	Cache   *Cache            `json:"cache,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
+	Notice  *Notice           `json:"notice,omitempty"`
+	Deploy  *Deploy           `json:"deploy,omitempty"`
+	Agent   *Agent            `json:"agent,omitempty"`
+	App     string            `json:"app,omitempty"`
 }
 
 // Static serves files.
@@ -123,6 +131,18 @@ type Hold struct {
 	Enabled bool   `json:"enabled"`
 	Title   string `json:"title,omitempty"`
 	Message string `json:"message,omitempty"`
+	// Mode is what the page answers: "maintenance" (503, the default),
+	// "404", "410" (gone, and search engines drop it) or "500".
+	Mode string `json:"mode,omitempty"`
+	// Until is when the site is due back (RFC 3339): shown on the page
+	// and sent as Retry-After.
+	Until string `json:"until,omitempty"`
+}
+
+// Notice is how the visitor pages of this site look.
+type Notice struct {
+	// Theme is one of pages.Themes(); empty is the house's.
+	Theme string `json:"theme,omitempty"`
 }
 
 // Access decides who gets in. Passwords are stored hashed (see
@@ -335,6 +355,30 @@ func (m *Manifest) Validate() error {
 	for _, a := range m.Aliases {
 		if !ValidDomain(a) {
 			return fmt.Errorf("aliases: %q is not a domain", a)
+		}
+	}
+	if m.Hold != nil {
+		switch m.Hold.Mode {
+		case "", "maintenance", "404", "410", "500":
+		default:
+			return fmt.Errorf("hold.mode: %q is not maintenance, 404, 410 or 500", m.Hold.Mode)
+		}
+		if m.Hold.Until != "" {
+			if _, err := time.Parse(time.RFC3339, m.Hold.Until); err != nil {
+				return fmt.Errorf("hold.until: %q is not an RFC 3339 time", m.Hold.Until)
+			}
+		}
+	}
+	if m.Notice != nil && !pages.IsTheme(m.Notice.Theme) {
+		return fmt.Errorf("notice.theme: %q is not one of the designs", m.Notice.Theme)
+	}
+	for _, n := range m.Needs {
+		ok := ValidName(n)
+		if name, dom, isWorker := strings.Cut(n, "@"); isWorker {
+			ok = validName(name) && ValidName(dom)
+		}
+		if !ok {
+			return fmt.Errorf("needs: %q is not a site nor worker@site", n)
 		}
 	}
 	if m.Upstream != "" && !strings.HasPrefix(m.Upstream, "http://") && !strings.HasPrefix(m.Upstream, "https://") {

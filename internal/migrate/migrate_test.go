@@ -35,7 +35,7 @@ func TestAProxySiteKeepsEverythingItHad(t *testing.T) {
 	  "routes": [{"path": "/admin", "note": "back office", "auth": {"password": "zone pw"}, "ip": {"allow": ["10.0.0.0/8"]}}],
 	  "workers": [{"name": "api", "command": ["./api"], "dir": "backend", "port": 8090, "note": "fixed"},
 	              {"name": "queue", "command": ["./q"], "env_files": [".env"], "disabled": true}],
-	  "attack": {"bits": 20}
+	  "attack": {"bits": 20}, "needs": ["z4.example.com", "api@shop.example.com"]
 	}`
 	r := Convert("shop.example.com", []byte(in))
 	if !r.Ready() {
@@ -70,6 +70,9 @@ func TestAProxySiteKeepsEverythingItHad(t *testing.T) {
 	if w := m.Workers["queue"]; w == nil || !w.Disabled || w.Port != 0 {
 		t.Fatalf("worker queue: %+v", w)
 	}
+	if strings.Join(m.Needs, ",") != "z4.example.com,api@shop.example.com" {
+		t.Fatalf("needs: %v", m.Needs)
+	}
 	notes := strings.Join(r.Notes, "\n")
 	for _, want := range []string{"health.timeout", "attack: written but off", "in the clear"} {
 		if !strings.Contains(notes, want) {
@@ -84,7 +87,8 @@ func TestWhatV2CannotDoYetBlocksTheSite(t *testing.T) {
 		`{"kind":"proxy","command":["x"],"claude_api":{"daily_usd":1}}`:      "claude_api",
 		`{"kind":"static","attack":{"on":true}}`:                             "attack mode on",
 		`{"kind":"static","cache":{"rules":[{"path":"/","mode":"origen"}]}}`: "cache rules",
-		`{"kind":"static","hold":{"mode":"410"}}`:                            "hold mode",
+		`{"kind":"static","hold":{"mode":"302"}}`:                            "hold mode",
+		`{"kind":"static","notice":{"theme":"neon"}}`:                        "notice.theme",
 		`{"kind":"static","comand":["typo"]}`:                                "does not read",
 		`{"kind":"cgi"}`:                                                     "kind",
 	}
@@ -189,5 +193,16 @@ func TestAContainedSiteRunsInDockerWithItsLimits(t *testing.T) {
 	}
 	if r := Convert("a.example", []byte(`{"kind":"proxy","command":["x"],"container":{"image":"i","gpu":true}}`)); r.Ready() {
 		t.Fatal("an unknown container setting was dropped silently")
+	}
+}
+
+func TestTheDesignAndTheHoldModeAreCarried(t *testing.T) {
+	r := Convert("a.example", []byte(`{"kind":"static","notice":{"theme":"ficha"},"hold":{"mode":"410","message":"Closed for good","until":"2026-12-01T10:00:00Z"}}`))
+	if !r.Ready() {
+		t.Fatalf("%v", r.Blockers)
+	}
+	m := r.Manifest
+	if m.Notice == nil || m.Notice.Theme != "card" || m.Hold.Mode != "410" || m.Hold.Until != "2026-12-01T10:00:00Z" || m.Hold.Message != "Closed for good" {
+		t.Fatalf("%+v %+v", m.Notice, m.Hold)
 	}
 }

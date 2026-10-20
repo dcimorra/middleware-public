@@ -112,7 +112,7 @@ func (h *Hook) Wrap(next http.Handler) http.Handler {
 		if !h.isPanel(host) {
 			st := h.file.get()
 			if (door == Tunnel && !st.Tunnel.Open) || (door == Ports && !st.Ports.Open) || (door == Local && !st.Local.Open) {
-				pages.Write(w, "doorclosed", http.StatusServiceUnavailable)
+				pages.Write(w, r, "doorclosed", http.StatusServiceUnavailable)
 				return
 			}
 		}
@@ -401,7 +401,7 @@ func (h *Hook) serveHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Hook) serveHTTPS(w http.ResponseWriter, r *http.Request) {
 	host := proxy.Host(r)
 	if !h.Store.Has(host) {
-		pages.Write(w, "nocert", http.StatusServiceUnavailable)
+		pages.Write(w, r, "nocert", http.StatusServiceUnavailable)
 		return
 	}
 	h.Handler.ServeHTTP(w, r)

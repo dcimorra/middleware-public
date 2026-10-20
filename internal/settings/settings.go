@@ -23,8 +23,10 @@ type Settings struct {
 		From int `json:"from,omitempty"`
 		To   int `json:"to,omitempty"`
 	} `json:"ports"`
-	// Pages overrides visitor page texts: key → [title, message].
-	Pages map[string][2]string `json:"pages,omitempty"`
+	// VisitorTheme is the design of the visitor pages that belong to no
+	// site, and of sites that did not choose one (see internal/pages).
+	// It replaces a "pages" text override that nothing ever read.
+	VisitorTheme string `json:"visitor_theme,omitempty"`
 	// Agents caps how many conversations run at once.
 	Agents Agents `json:"agents"`
 	// Deps is how the external CLIs are kept.

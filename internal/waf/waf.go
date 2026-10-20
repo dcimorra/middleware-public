@@ -623,7 +623,7 @@ func matchesAny(s string, subs []string) bool {
 
 func (w *WAF) refuse(rw http.ResponseWriter, r *http.Request, ip net.IP, page string, status int) {
 	w.count(ip, status)
-	pages.Write(rw, page, status)
+	pages.Write(rw, r, page, status)
 }
 
 // Run evicts idle buckets and picks up block-list changes made from the

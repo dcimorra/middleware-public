@@ -535,5 +535,13 @@
   "inbound.publicIPHint": "Used for the A records of the ports door. Empty detects it each time it is needed.",
   "inbound.publishingSaved": "Publishing settings saved",
   "inbound.retry": "Retry what failed",
-  "inbound.retried": "Retrying every name that is not published"
+  "inbound.retried": "Retrying every name that is not published",
+  "site.missing": "Needs, missing now",
+  "site.holdModeLabel": "What visitors get",
+  "site.holdMode.maintenance": "Maintenance (503, back soon)",
+  "site.holdMode.404": "Not found (404)",
+  "site.holdMode.410": "Gone for good (410)",
+  "site.holdMode.500": "Error (500)",
+  "site.holdUntil": "Back at",
+  "site.holdUntilHint": "Optional. Shown on the page and sent as Retry-After."
 }

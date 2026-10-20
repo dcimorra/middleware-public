@@ -42,7 +42,7 @@ func (w *WAF) challenge(rw http.ResponseWriter, r *http.Request, ip net.IP) {
 	})
 	rw.Header().Set("Refresh", "2")
 	w.count(ip, http.StatusServiceUnavailable)
-	pages.Write(rw, "underattack", http.StatusServiceUnavailable)
+	pages.Write(rw, r, "underattack", http.StatusServiceUnavailable)
 }
 
 // cleared reports whether the request carries a valid clearance.

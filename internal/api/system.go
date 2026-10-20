@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/middleware-public/internal/pages"
 	"github.com/dcimorra/middleware-public/internal/settings"
 )
 
@@ -66,6 +67,9 @@ func (s *Server) settingsPut(w http.ResponseWriter, r *http.Request) (any, error
 	// A body without the agents section (an older client) keeps the
 	// defaults; one with it is held to the rules before anything is saved.
 	st.Fill()
+	if !pages.IsTheme(st.VisitorTheme) {
+		return nil, Errorf(http.StatusBadRequest, "visitor_theme: %q is not one of the designs", st.VisitorTheme)
+	}
 	if err := st.Agents.Validate(); err != nil {
 		return nil, Errorf(http.StatusBadRequest, "%s", err.Error())
 	}

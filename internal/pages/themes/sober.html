@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="{{.Lang}}"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">{{if .Reload}}<meta http-equiv="refresh" content="{{.Reload}}">{{end}}
+<title>{{.Title}}</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --paper:#f5f4f1; --ink:#15151a; --grey:#6c6b74; --rule:#e0dfda;
+    --accent:#a13b32;
+    --pad: clamp(1.5rem, 7vw, 6rem);
+  }
+  body.waiting { --accent:#0f6f68; }
+  body.paused  { --accent:#a86016; }
+  body.broken   { --accent:#a13b32; }
+  body.nothing   { --accent:#5f6570; }
+  body.locked { --accent:#3d5a8a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper:#0c0c0e; --ink:#eeede9; --grey:#8e8d96; --rule:#24242a; }
+    body.waiting { --accent:#3fd0c4; }
+    body.paused  { --accent:#e0a250; }
+    body.broken   { --accent:#e8776c; }
+    body.nothing   { --accent:#8b909b; }
+    body.locked { --accent:#7fa8dd; }
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; overflow-x:hidden; }
+  body {
+    min-height:100dvh; overflow-x:hidden;
+    display:grid; grid-template-rows:1fr auto;
+    padding:var(--pad) 0 0;
+    background:
+      radial-gradient(115% 70% at 6% -12%,
+        color-mix(in oklab, var(--accent) 13%, transparent), transparent 62%),
+      var(--paper);
+    color:var(--ink);
+    font:400 17px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  /* A little above centre: optically, a block centred exactly on a tall screen
+     looks like it has slipped down. */
+  main { padding:0 var(--pad) 10vh; max-width:64rem; align-self:center; }
+
+  /* The state, in small caps. First thing read and the only coloured thing. */
+  .status {
+    margin:0 0 clamp(1rem, 3vw, 1.75rem);
+    font:500 .75rem/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    letter-spacing:.2em; text-transform:uppercase; color:var(--accent);
+  }
+  h1 {
+    margin:0; font-size:clamp(2.5rem, 8.5vw, 4.75rem); font-weight:680;
+    letter-spacing:-.045em; line-height:.97; text-wrap:balance;
+  }
+
+  /* The band. Edge to edge: the state crosses the page. */
+  .signal {
+    position:relative; height:6px; overflow:hidden;
+    /* It stretches to both edges with negative margins and not with 100vw:
+       that unit counts the scrollbar, and on a phone it pushed the whole page a
+       little to the right — the code in the foot fell off the edge. */
+    margin:clamp(1.5rem, 4vw, 2.5rem) calc(var(--pad) * -1) clamp(1.5rem, 3vw, 2.25rem);
+    background:color-mix(in oklab, var(--accent) 55%, transparent);
+  }
+  .waiting .signal { background:color-mix(in oklab, var(--accent) 20%, transparent); }
+  .waiting .signal::after {
+    content:""; position:absolute; inset-block:0; left:0; width:34%;
+    background:linear-gradient(90deg, transparent, var(--accent), transparent);
+    animation:recorre 2.1s cubic-bezier(.45,0,.25,1) infinite;
+  }
+  @keyframes recorre { from { transform:translateX(-110%) } to { transform:translateX(330%) } }
+  .paused .signal { animation:breathe 4.5s ease-in-out infinite; }
+  @keyframes breathe { 0%,100% { opacity:.45 } 50% { opacity:1 } }
+  .broken .signal {
+    background:repeating-linear-gradient(90deg,
+      var(--accent) 0 42px, transparent 42px 58px);
+    animation:corta 2.6s steps(1,end) infinite;
+  }
+  @keyframes corta { 0%,58% { opacity:1 } 59%,68% { opacity:.15 } 69%,100% { opacity:1 } }
+  .nothing .signal {
+    height:3px;
+    background:repeating-linear-gradient(90deg,
+      color-mix(in oklab, var(--grey) 45%, transparent) 0 7px, transparent 7px 15px);
+  }
+  /* Closed: a shutter. It neither sweeps nor breathes nor breaks — nothing is
+     happening, there is a key in the way — and even so it looks like none of
+     the other four with the colour taken away. */
+  .locked .signal {
+    background:repeating-linear-gradient(90deg,
+      var(--accent) 0 15px, transparent 15px 23px);
+  }
+  @media (prefers-reduced-motion:reduce) {
+    .signal, .signal::after { animation:none !important; }
+    .waiting .signal::after { position:static; display:block; width:34%; height:100%;
+                            background:var(--accent); }
+  }
+
+  .line { margin:0; max-width:34ch; color:var(--grey); }
+
+  /* The password box. As wide as a password and not as the page: a field
+     sixty characters long says "write a paragraph". */
+  .password { display:flex; flex-wrap:wrap; gap:.625rem; margin:1.75rem 0 0;
+           max-width:34ch; }
+  .password input {
+    flex:1 1 12rem; min-width:0; padding:.7rem .9rem;
+    border:1px solid var(--rule); border-radius:10px;
+    background:color-mix(in oklab, var(--paper) 60%, #fff 40%);
+    color:var(--ink); font:inherit; font-size:1rem;
+  }
+  @media (prefers-color-scheme:dark) {
+    .password input { background:color-mix(in oklab, var(--paper) 70%, #fff 8%); }
+  }
+  .password input:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  .password button {
+    flex:none; padding:.7rem 1.15rem; border:0; border-radius:999px;
+    background:var(--ink); color:var(--paper);
+    font:inherit; font-weight:550; font-size:.9375rem; cursor:pointer;
+    transition:transform .16s ease, filter .16s ease;
+  }
+  .password button:hover, .password button:focus-visible {
+    transform:translateY(-1px); filter:brightness(1.15);
+  }
+  .password .wrong { flex-basis:100%; margin:0; font-size:.875rem; color:var(--accent); }
+  .when { margin:1rem 0 0; max-width:34ch; color:var(--grey); font-size:.9375rem; }
+  .when time { color:var(--ink); font-weight:500; }
+  .exit {
+    display:inline-flex; align-items:center; gap:.5rem; margin-top:1.75rem;
+    padding:.7rem 1.15rem; border-radius:999px; text-decoration:none;
+    background:var(--ink); color:var(--paper); font-weight:550; font-size:.9375rem;
+    transition:transform .16s ease, filter .16s ease;
+  }
+  .exit::after { content:"→"; font-size:1em; }
+  .exit:hover, .exit:focus-visible { transform:translateY(-1px); filter:brightness(1.15); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+
+  /* The foot: whose address this is, and the number for whoever comes asking
+     why their site would not load. */
+  footer {
+    display:flex; gap:1rem; justify-content:space-between; align-items:baseline;
+    margin:clamp(2.5rem, 8vw, 5rem) var(--pad) 0; padding:1rem 0 var(--pad);
+    border-top:1px solid var(--rule);
+    font:400 .75rem/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    letter-spacing:.06em; color:var(--grey);
+  }
+  footer .code { color:color-mix(in oklab, var(--grey) 55%, transparent); }
+</style>
+</head><body class="{{.Signal}}">
+<main>
+  <p class="status">{{.Label}}</p>
+  <h1>{{.Title}}</h1>
+  <div class="signal" aria-hidden="true"></div>
+  <p class="line">{{.Line}}</p>
+  {{.Extra}}
+  {{if .LinkHref}}<a class="exit" href="{{.LinkHref}}">{{.LinkText}}</a>{{end}}
+</main>
+<footer><span>{{.Foot}}</span><span class="code">{{.Status}}</span></footer>
+</body></html>
