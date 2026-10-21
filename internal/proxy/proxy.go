@@ -36,6 +36,11 @@ type Handler struct {
 	Panel     http.Handler
 	panel     atomic.Pointer[string]
 	transport http.RoundTripper
+	// Unrouted records the names nobody serves; DoorOf and ClientIP say,
+	// for its samples, the door a request came by and who sent it.
+	Unrouted *Unrouted
+	DoorOf   func(*http.Request) string
+	ClientIP func(*http.Request) string
 }
 
 // SetPanelDomain changes the name the panel answers on, at once: the
@@ -96,6 +101,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, u.String(), http.StatusMovedPermanently)
 			return
 		}
+		h.noteUnrouted(host, r)
 		pages.Write(w, r, "unknown", http.StatusNotFound)
 		return
 	}
@@ -313,4 +319,18 @@ func holdNotice(sn engine.Snapshot) pages.Notice {
 			template.HTMLEscapeString(until.UTC().Format("Mon 2 Jan, 15:04 UTC")) + `</time></p>`)
 	}
 	return n
+}
+
+func (h *Handler) noteUnrouted(host string, r *http.Request) {
+	if h.Unrouted == nil {
+		return
+	}
+	door, ip := "", r.RemoteAddr
+	if h.DoorOf != nil {
+		door = h.DoorOf(r)
+	}
+	if h.ClientIP != nil {
+		ip = h.ClientIP(r)
+	}
+	h.Unrouted.Note(host, door, ip, r)
 }

@@ -35,6 +35,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/modules/github"
 	"github.com/dcimorra/middleware-public/internal/modules/vpn"
 	"github.com/dcimorra/middleware-public/internal/pages"
+	"github.com/dcimorra/middleware-public/internal/proxy"
 	"github.com/dcimorra/middleware-public/internal/publish"
 	"github.com/dcimorra/middleware-public/internal/push"
 	"github.com/dcimorra/middleware-public/internal/repos"
@@ -177,6 +178,11 @@ func buildWire(a *app.App) app.Hook {
 	}
 	srv.RegisterWAF(api.WAFOptions{WAF: theWAF, Traffic: theTraffic, Attack: theAttack})
 	srv.RegisterSecurity(api.SecurityOptions{Door: theSecurity, Country: edgeCountry})
+	// Whichever of this and the inbound hook is built first makes it.
+	if a.Proxy.Unrouted == nil {
+		a.Proxy.Unrouted = proxy.NewUnrouted()
+	}
+	srv.RegisterUnrouted(a.Proxy.Unrouted)
 	w.updater = buildUpdater(a)
 	srv.RegisterUpdate(w.updater)
 	w.shots = shots.New(shots.Options{

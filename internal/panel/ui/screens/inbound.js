@@ -13,13 +13,14 @@ import { checklist } from "../components/checklist.js";
 import { open, confirm, toggle, field } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 import { vpnCard } from "./vpn.js";
+import { unroutedCard } from "./unrouted.js";
 
 export function inboundScreen() {
   const p = page({ title: t("nav.inbound"), sub: t("inbound.sub"), icon: "door" });
   const body = h("div");
   // Its own card, loaded once: the doors re-render on every inbound event
   // and a device being named must not be wiped by one.
-  p.body.append(body, vpnCard());
+  p.body.append(body, vpnCard(), unroutedCard());
   const subs = [];
   let selected = new Set();
 

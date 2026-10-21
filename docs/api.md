@@ -319,6 +319,8 @@ The external programs the modules run (the agent CLIs), installed under
 | PUT | `/inbound/publishing` | `{new_sites?: "tunnel"|"ports", public_ip?}` → `{new_sites, public_ip}`; an empty `public_ip` goes back to detecting it |
 | POST | `/inbound/doors/{door}` | `{open}` → `doors` (door is `tunnel`, `ports` or `local`; written to `data/inbound.json` and acted on at once) |
 | PUT | `/inbound/local` | `{open, http?, dns?}` → `doors`; the local door's listeners (plain HTTP and the name server), 400 when an address is malformed or collides with the ports door |
+| GET | `/unrouted` | names that reached this house and belong to no site → `[{host, count, first, last, doors: {door: n}, samples: [{when, door, method, path, ip, agent, proxy, tls, sni}]}]`, most recent first; in memory, 200 names, 5 samples each |
+| DELETE | `/unrouted/{host}` | → `{ok}`; forget it |
 | GET | `/inbound/certificates` | → `[{domain, issued, expires, issuer}]` |
 | POST | `/inbound/certificates/{domain}/renew` | → `{ok}`; 502 with the CA's reason when it fails |
 

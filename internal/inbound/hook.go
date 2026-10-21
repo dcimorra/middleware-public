@@ -116,6 +116,9 @@ func (h *Hook) State() State { return h.file.get() }
 
 type ctxKey struct{}
 
+// DoorOf is doorOf for other packages: "tunnel", "ports", "local", "vpn".
+func DoorOf(r *http.Request) string { return string(doorOf(r)) }
+
 // doorOf tells which listener a request came in by. The ports servers tag
 // their connections; everything else is the loopback listener, which is
 // the tunnel door.

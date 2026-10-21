@@ -12,10 +12,12 @@ import (
 
 	"github.com/dcimorra/middleware-public/internal/acme"
 	"github.com/dcimorra/middleware-public/internal/app"
+	"github.com/dcimorra/middleware-public/internal/auth"
 	"github.com/dcimorra/middleware-public/internal/certs"
 	"github.com/dcimorra/middleware-public/internal/edge"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/inbound"
+	"github.com/dcimorra/middleware-public/internal/proxy"
 	"github.com/dcimorra/middleware-public/internal/settings"
 )
 
@@ -75,6 +77,12 @@ func buildInbound(a *app.App) app.Hook {
 		return ok
 	}
 	inboundHook = inbound.New(a.Root, store, solver)
+	// The names nobody serves, with the door they came by.
+	if a.Proxy.Unrouted == nil {
+		a.Proxy.Unrouted = proxy.NewUnrouted()
+	}
+	a.Proxy.DoorOf = inbound.DoorOf
+	a.Proxy.ClientIP = auth.ClientIP
 	inboundHook.PanelDomainNow = a.Proxy.PanelDomain
 	// The VPN door: open while the VPN module is on, VPN-only sites served
 	// nowhere else, narrowed to devices by their address in the tunnel.
