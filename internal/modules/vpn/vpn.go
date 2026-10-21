@@ -127,6 +127,8 @@ type peer struct {
 
 // VPN is the module.
 type VPN struct {
+	// loaded is state.json's time when last read or written (freshLocked).
+	loaded time.Time
 	opts  Options
 	dir   string
 	mu    sync.Mutex
@@ -177,6 +179,9 @@ func New(o Options) (*VPN, error) {
 }
 
 func (v *VPN) load() error {
+	if st, err := os.Stat(filepath.Join(v.dir, "state.json")); err == nil {
+		v.loaded = st.ModTime()
+	}
 	if err := fsx.ReadJSON(filepath.Join(v.dir, "state.json"), &v.state); err != nil && !fsx.IsNotExist(err) {
 		return err
 	}
@@ -198,10 +203,34 @@ func (v *VPN) save() error {
 	if err := fsx.WriteJSON(filepath.Join(v.dir, "state.json"), v.state, 0o600); err != nil {
 		return err
 	}
+	if st, err := os.Stat(filepath.Join(v.dir, "state.json")); err == nil {
+		v.loaded = st.ModTime()
+	}
 	if v.peers == nil {
 		v.peers = []peer{}
 	}
 	return fsx.WriteJSON(filepath.Join(v.dir, "peers.json"), v.peers, 0o600)
+}
+
+// freshLocked reads the files again when another process changed them:
+// `middleware modules disable vpn` runs apart from the service, and the
+// service went on holding the panel inside a VPN that was off, so the
+// command meant to let the operator back in did not. Called under v.mu.
+func (v *VPN) freshLocked() {
+	st, err := os.Stat(filepath.Join(v.dir, "state.json"))
+	if err != nil || st.ModTime().Equal(v.loaded) {
+		return
+	}
+	var s state
+	var peers []peer
+	if fsx.ReadJSON(filepath.Join(v.dir, "state.json"), &s) != nil {
+		return
+	}
+	_ = fsx.ReadJSON(filepath.Join(v.dir, "peers.json"), &peers)
+	if s.Interface == "" {
+		s.Interface = v.opts.Interface
+	}
+	v.state, v.peers, v.loaded = s, peers, st.ModTime()
 }
 
 func (v *VPN) emit(typ, subject string, level string, msg string, data map[string]any) {
@@ -644,6 +673,7 @@ type Status struct {
 func (v *VPN) Status(ctx context.Context) Status {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	v.freshLocked()
 	st := Status{
 		Enabled: v.state.Enabled, Interface: v.state.Interface, Endpoint: v.state.Endpoint,
 		ListenPort: v.state.ListenPort, VPNOnly: v.state.VPNOnly, Peers: []PeerStatus{},
@@ -684,6 +714,7 @@ func (v *VPN) Status(ctx context.Context) Status {
 func (v *VPN) ServerAddress() (netip.Addr, bool) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	v.freshLocked()
 	if !v.state.Enabled || !v.state.Subnet.IsValid() {
 		return netip.Addr{}, false
 	}
@@ -702,6 +733,7 @@ func (v *VPN) Keep(ctx context.Context, every time.Duration) {
 	last := ""
 	for {
 		v.mu.Lock()
+		v.freshLocked()
 		enabled := v.state.Enabled
 		iface := v.state.Interface
 		v.mu.Unlock()
@@ -745,6 +777,7 @@ func (v *VPN) Keep(ctx context.Context, every time.Duration) {
 func (v *VPN) PanelOnly() bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	v.freshLocked()
 	return v.state.Enabled && v.state.VPNOnly
 }
 
@@ -752,6 +785,7 @@ func (v *VPN) PanelOnly() bool {
 func (v *VPN) PeerName(ip netip.Addr) string {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	v.freshLocked()
 	for _, p := range v.peers {
 		if p.Address == ip {
 			return p.Name

@@ -486,3 +486,25 @@ func TestAnInterfaceFoundDownIsBroughtUpAgain(t *testing.T) {
 		t.Fatal("no vpn.up event")
 	}
 }
+
+// `middleware modules disable vpn` is another process: the service must
+// see the VPN off, or the panel stays inside a VPN that is not there.
+func TestAChangeMadeByAnotherProcessIsSeen(t *testing.T) {
+	f := newFixture(t)
+	f.enable(t)
+	f.vpn.AddPeer(context.Background(), "phone")
+	if err := f.vpn.SetOnly(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if !f.vpn.PanelOnly() {
+		t.Fatal("not inside")
+	}
+	time.Sleep(20 * time.Millisecond) // a new mtime
+	other := f.open(t)
+	if err := other.Disable(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if f.vpn.PanelOnly() {
+		t.Fatal("the service still holds the panel inside a VPN another process turned off")
+	}
+}
