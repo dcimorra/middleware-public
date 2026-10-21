@@ -934,6 +934,7 @@
   "edge.has": "It may:",
   "edge.wide": "It may also: {list}. The house does not use that; a narrower token loses less if it leaks.",
   "edge.narrowAlready": "It allows nothing beyond what the house uses.",
+  "edge.unreadable": "This token may not read its own permissions (it lacks Account API Tokens Read), so they cannot be shown here; everything else works the same. To see them, and to narrow it again, put a token with that permission (the one you had before narrowing, if you did not revoke it) in the Cloudflare module.",
   "edge.missing": "The house uses, and this token lacks: {list}.",
   "edge.narrow": "Make a narrow token",
   "edge.narrowQ": "Replace the token with a narrow one?",

@@ -190,6 +190,10 @@ func (c *Client) RegistrarDomains(ctx context.Context) ([]RegistrarDomain, error
 var NeededPermissions = []string{
 	"Zone Read", "DNS Write", "Cloudflare Tunnel Write", "Cache Purge",
 	"Cache Settings Write", "Access: Apps and Policies Read", "Registrar Domains Read",
+	// The token reading itself, which is what the Token tab shows. A
+	// narrowed token without it answered that tab with 9109, and said
+	// nothing about why.
+	"Account API Tokens Read",
 }
 
 // groupKey compares permission names as Cloudflare's screens and its API
@@ -214,6 +218,9 @@ type TokenScope struct {
 	Extra []string `json:"extra"`
 	// Missing are permissions the house uses that it lacks.
 	Missing []string `json:"missing"`
+	// Unreadable says the token may not read its own permissions, so
+	// none of the above is known: it lacks Account API Tokens Read.
+	Unreadable bool `json:"unreadable,omitempty"`
 }
 
 // Scope reads the current account token's permissions. It needs the token
@@ -237,6 +244,9 @@ func (c *Client) Scope(ctx context.Context) (TokenScope, error) {
 		} `json:"policies"`
 	}
 	if _, err := c.do(ctx, http.MethodGet, "/accounts/"+url.PathEscape(c.AccountID)+"/tokens/"+url.PathEscape(v.ID), nil, &tok); err != nil {
+		if IsForbidden(err) {
+			return TokenScope{ID: v.ID, Permissions: []string{}, Extra: []string{}, Missing: []string{}, Unreadable: true}, nil
+		}
 		return TokenScope{}, err
 	}
 	have := map[string]bool{}

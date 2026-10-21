@@ -20,6 +20,8 @@ type edgeFake struct {
 	rules    []map[string]any
 	groups   []map[string]any
 	tokenOut string
+	// selfBlind makes the token unable to read itself (9109).
+	selfBlind bool
 }
 
 func (f *edgeFake) serve(w http.ResponseWriter, r *http.Request) {
@@ -52,6 +54,9 @@ func (f *edgeFake) serve(w http.ResponseWriter, r *http.Request) {
 		ok(map[string]any{"id": "x"})
 	case strings.HasSuffix(p, "/tokens/verify"):
 		ok(map[string]any{"id": "tok1", "status": "active"})
+	case strings.HasSuffix(p, "/tokens/tok1") && f.selfBlind:
+		w.WriteHeader(403)
+		json.NewEncoder(w).Encode(map[string]any{"success": false, "errors": []any{map[string]any{"code": 9109, "message": "Unauthorized to access requested resource"}}})
 	case strings.HasSuffix(p, "/tokens/tok1"):
 		ok(map[string]any{"policies": []any{map[string]any{"permission_groups": []any{map[string]any{"name": "DNS Write"}, map[string]any{"name": "Account Settings Write"}, map[string]any{"name": "Zone Read"}}}}})
 	case strings.HasSuffix(p, "/tokens/permission_groups"):
@@ -177,5 +182,14 @@ func TestAPermissionIsRecognisedWithOrWithoutItsColon(t *testing.T) {
 	}
 	if groupKey("DNS Write") == groupKey("DNS Read") {
 		t.Fatal("different permissions compared equal")
+	}
+}
+
+func TestATokenThatCannotReadItselfSaysSoInsteadOfFailing(t *testing.T) {
+	f, c := newEdgeFake(t)
+	f.selfBlind = true
+	sc, err := c.Scope(context.Background())
+	if err != nil || !sc.Unreadable || sc.ID != "tok1" {
+		t.Fatalf("%+v %v", sc, err)
 	}
 }

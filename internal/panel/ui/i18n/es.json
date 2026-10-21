@@ -934,6 +934,7 @@
   "edge.has": "Puede:",
   "edge.wide": "También puede: {list}. La casa no lo usa; un token más estrecho pierde menos si se filtra.",
   "edge.narrowAlready": "No permite nada más allá de lo que usa la casa.",
+  "edge.unreadable": "Este token no puede leer sus propios permisos (le falta «Account API Tokens Read»), así que no se pueden mostrar aquí; todo lo demás funciona igual. Para verlos, y para volver a reducirlo, pon en el módulo de Cloudflare un token con ese permiso (el que tenías antes de reducirlo, si no lo has revocado).",
   "edge.missing": "La casa usa, y a este token le falta: {list}.",
   "edge.narrow": "Crear un token estrecho",
   "edge.narrowQ": "¿Sustituir el token por uno estrecho?",

@@ -154,6 +154,10 @@ function tokenTab() {
   (async () => {
     try {
       const s = await cf("/token");
+      if (s.unreadable) {
+        clear(el).append(h("h2", null, t("edge.tab.token")), notice("warn", t("edge.unreadable")));
+        return;
+      }
       const narrow = h("button", { type: "button", class: "btn primary" }, t("edge.narrow"));
       narrow.addEventListener("click", async () => {
         if (!(await confirm({ title: t("edge.narrowQ"), body: t("edge.narrowBody"), confirmLabel: t("edge.narrow") }))) return;
