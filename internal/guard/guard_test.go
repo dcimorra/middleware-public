@@ -445,3 +445,29 @@ func TestTheReaderParsesTheRealProcWhenAvailable(t *testing.T) {
 	}
 	t.Fatal("own process not in the table")
 }
+
+func TestAnAgentTurnIsNotJudgedForTheFoldersItsPromptNames(t *testing.T) {
+	fp := newFakeProc(t)
+	h := newHouse(t)
+	a := h.site("a.example", 100, 33001)
+	h.site("b.example", 200, 33002)
+	other := filepath.Join(h.root, "sites", "b.example")
+	fp.add(procSpec{pid: 100, ppid: 1, comm: "server", cmdline: []string{"./server"}, cwd: a.Dir, exe: a.Dir + "/server", startSec: 10, listen: []int{33001}})
+	// The agent CLI and a tool it runs, both in the site's folder; its
+	// prompt names the folder it is denied.
+	fp.add(procSpec{pid: 300, ppid: 1, comm: "claude", cmdline: []string{"claude", "--append-system-prompt", "You may not read " + other}, cwd: a.Dir, exe: "/usr/bin/node", startSec: 30})
+	fp.add(procSpec{pid: 301, ppid: 300, comm: "bash", cmdline: []string{"bash", "-c", "ls " + other}, cwd: a.Dir, exe: "/bin/bash", startSec: 31})
+	// The same thing outside a turn is still an intrusion.
+	fp.add(procSpec{pid: 400, ppid: 1, comm: "claude", cmdline: []string{"claude", "ls " + other}, cwd: a.Dir, exe: "/usr/bin/node", startSec: 32})
+	fp.add(procSpec{pid: 200, ppid: 1, comm: "server", cmdline: []string{"./server"}, cwd: other, startSec: 10, listen: []int{33002}})
+	kills := &killLog{}
+	g, _ := newGuard(t, fp, h, kills, time.Unix(fp.bootUnix+600, 0))
+	g.opts.Agents = func() []int { return []int{300} }
+	incs, err := g.Sweep()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := kills.sorted(); fmt.Sprint(got) != "[400]" || len(incs) != 1 {
+		t.Fatalf("killed %v, incidents %+v: want only the process that is no turn's", got, incs)
+	}
+}

@@ -66,6 +66,12 @@ type Options struct {
 	SitesDir string
 	// Sites returns the sites and their assigned ports.
 	Sites func() []SiteInfo
+	// Agents are the pids of the agent turns running now (chat.Manager
+	// knows them). They and what descends from them are measured with
+	// their site but not judged by the rules: an agent works in its
+	// site's folder with a prompt that names others', and the jail, not
+	// the guard, is what bounds it.
+	Agents func() []int
 	// PortRange is the engine's allocation range.
 	PortRange [2]int
 	Bus       *events.Bus
@@ -216,6 +222,12 @@ func (g *Guard) Sweep() ([]Incident, error) {
 	}
 	var recorded []Incident
 	claimed := map[int]bool{}
+	agents := map[int]bool{}
+	if g.opts.Agents != nil {
+		for _, pid := range g.opts.Agents() {
+			agents[pid] = true
+		}
+	}
 	for _, site := range sites {
 		root := g.rootPID(site.Domain)
 		tree := g.attribute(site, root, procs, byPID, claimed)
@@ -233,7 +245,7 @@ func (g *Guard) Sweep() ([]Incident, error) {
 		disabled := false
 		killed := map[int]bool{}
 		for _, p := range tree {
-			if killed[p.PID] {
+			if killed[p.PID] || agents[p.PID] || descendsAny(p, agents, byPID) {
 				continue
 			}
 			view.Proc = *p
@@ -341,6 +353,22 @@ func (g *Guard) attribute(site SiteInfo, root int, procs []Process, byPID map[in
 		}
 	}
 	return out
+}
+
+func descendsAny(p *Process, roots map[int]bool, byPID map[int]*Process) bool {
+	if len(roots) == 0 {
+		return false
+	}
+	for depth := 0; depth < 64 && p != nil; depth++ {
+		if roots[p.PPID] {
+			return true
+		}
+		if p.PPID <= 1 {
+			return false
+		}
+		p = byPID[p.PPID]
+	}
+	return false
 }
 
 func descends(p *Process, root int, byPID map[int]*Process) bool {

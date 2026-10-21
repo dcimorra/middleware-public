@@ -187,6 +187,12 @@ func buildGuard(a *app.App) app.Hook {
 		PortRange: [2]int{a.Settings.Ports.From, a.Settings.Ports.To},
 		Bus:       a.Bus,
 		Contained: investigate(a),
+		Agents: func() []int {
+			if chatManager == nil {
+				return nil
+			}
+			return chatManager.AgentPIDs()
+		},
 		Sites: func() []guard.SiteInfo {
 			snaps := a.Engine.Sites()
 			out := make([]guard.SiteInfo, 0, len(snaps))
