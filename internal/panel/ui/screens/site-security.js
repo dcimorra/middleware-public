@@ -5,6 +5,7 @@
 // scroll down to press" is one step too many; the rules save with their
 // own button, through a PATCH that touches `security` only.
 
+import { seenCard } from "./site-seen.js";
 import { h, clear, fmtTime, fmtAgo } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
@@ -23,7 +24,7 @@ export function securityTab(domain) {
   const attackBox = h("div");
   const rulesBox = h("div");
   const blocksBox = h("div");
-  const el = h("div", { class: "cards" }, attackBox, rulesBox, blocksBox);
+  const el = h("div", { class: "cards" }, attackBox, rulesBox, blocksBox, seenCard(domain));
   let catalog = null;
   let deadlineLine = null;
   let counts = {};
