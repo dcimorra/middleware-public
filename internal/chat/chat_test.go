@@ -403,3 +403,60 @@ func TestARunningTurnShowsWhatItDidSoFarToWhoeverOpensItLater(t *testing.T) {
 		t.Fatalf("after the end: %+v", c)
 	}
 }
+
+func TestATurnKeepsItsStepsInOrderWithEachToolsAnswerAndItsSubagents(t *testing.T) {
+	p := &fakeProvider{key: "fake", script: []agent.Event{
+		{Kind: agent.KindText, Text: "Looking."},
+		{Kind: agent.KindTool, Tool: "Bash", ToolID: "b1", Input: map[string]any{"command": "ls"}},
+		{Kind: agent.KindToolResult, ToolID: "b1", Output: "a\nb"},
+		{Kind: agent.KindTool, Tool: "Task", ToolID: "t1", Input: map[string]any{"description": "check the logs", "prompt": "read them", "run_in_background": true}},
+		{Kind: agent.KindToolResult, ToolID: "t1", Output: "launched"},
+		{Kind: agent.KindText, Text: "sub says", Thread: "t1"},
+		{Kind: agent.KindTool, Tool: "Read", ToolID: "r1", Input: map[string]any{"file_path": "x"}, Thread: "t1"},
+		{Kind: agent.KindToolResult, ToolID: "r1", Output: "nope", IsError: true, Thread: "t1"},
+		{Kind: agent.KindAgentStatus, ToolID: "t1", Status: "completed"},
+		{Kind: agent.KindAgentStatus, ToolID: "b9", Status: "completed"},
+		{Kind: agent.KindText, Text: "Done."},
+		{Kind: agent.KindResult, Text: "Done."},
+	}}
+	m, _, bus := newManager(t, p)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+	if _, err := m.Send("a.test", "go", ""); err != nil {
+		t.Fatal(err)
+	}
+	ev := waitFor(t, ch, "agent.tool.result")
+	if ev.Data["id"] != "b1" || ev.Data["output"] != "a\nb" {
+		t.Fatalf("%v", ev.Data)
+	}
+	if ev := waitFor(t, ch, "agent.subagent"); ev.Data["id"] != "t1" || ev.Data["run"] != "completed" {
+		t.Fatalf("%v", ev.Data)
+	}
+	waitFor(t, ch, "agent.done")
+	c, _ := m.History("a.test")
+	tn := c.Turns[len(c.Turns)-1]
+	var kinds []string
+	for _, s := range tn.Steps {
+		k := s.Kind
+		if s.Tool != nil {
+			k += ":" + s.Tool.Name
+		}
+		kinds = append(kinds, k)
+	}
+	if strings.Join(kinds, " ") != "text tool:Bash tool:Task text" {
+		t.Fatalf("steps %v", kinds)
+	}
+	if b := tn.Steps[1].Tool; !b.Done || b.Output != "a\nb" {
+		t.Fatalf("bash %+v", b)
+	}
+	if task := tn.Steps[2].Tool; task.Run != "completed" {
+		t.Fatalf("task %+v", task)
+	}
+	if len(tn.Threads) != 1 {
+		t.Fatalf("threads %+v", tn.Threads)
+	}
+	th := tn.Threads[0]
+	if th.Description != "check the logs" || !th.Background || th.Run != "completed" || len(th.Steps) != 2 || !th.Steps[1].Tool.Error {
+		t.Fatalf("thread %+v", th)
+	}
+}

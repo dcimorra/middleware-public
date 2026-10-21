@@ -24,6 +24,11 @@ const (
 	KindResult = "result"
 	KindError  = "error"
 	KindCost   = "cost"
+	// KindToolResult is a tool's answer, matched to its call by ToolID.
+	KindToolResult = "tool_result"
+	// KindAgentStatus is a subagent changing state (Status), named by the
+	// id of the call that launched it.
+	KindAgentStatus = "agent_status"
 )
 
 // Event is one thing the agent did or said.
@@ -37,6 +42,15 @@ type Event struct {
 	// Thread is set on what a subagent said or did: the id of the tool
 	// call that started it. Empty is the main agent.
 	Thread string `json:"thread,omitempty"`
+	// ToolID names a tool call, so its result (and, for a subagent, its
+	// state) can be put on it when it comes back.
+	ToolID string `json:"tool_id,omitempty"`
+	// Output and IsError are a tool's answer (KindToolResult).
+	Output  string `json:"output,omitempty"`
+	IsError bool   `json:"is_error,omitempty"`
+	// Status is a subagent's state (KindAgentStatus): what the provider
+	// says, "completed", "failed", "killed"…
+	Status string `json:"status,omitempty"`
 }
 
 // Request is one turn.

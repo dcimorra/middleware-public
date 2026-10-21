@@ -55,11 +55,11 @@ func TestAFakeClaudeTranscriptBecomesEventsWithSessionAndCost(t *testing.T) {
 	for _, e := range evs {
 		kinds = append(kinds, e.Kind)
 	}
-	want := "text tool text text cost result"
+	want := "text tool tool_result text text cost result"
 	if got := strings.Join(kinds, " "); got != want {
 		t.Fatalf("kinds = %q, want %q\n%+v", got, want, evs)
 	}
-	if evs[2].Text != "a stray non-json warning" {
+	if evs[3].Text != "a stray non-json warning" {
 		t.Fatalf("the non-json line was not passed as text: %+v", evs[2])
 	}
 	last := evs[len(evs)-1]
@@ -161,5 +161,21 @@ func TestALentFolderIsClosedToWritingAndAdded(t *testing.T) {
 	args := strings.Join(New(Config{}).Args(agent.Request{Prompt: "x", Jail: j}, ""), " ")
 	if !strings.Contains(args, "--add-dir /s/b") {
 		t.Fatalf("args: %s", args)
+	}
+}
+
+func TestASubagentsResultAndStateAreRead(t *testing.T) {
+	p := &parser{}
+	evs, _ := p.Line(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tA","name":"Task","input":{"description":"look","run_in_background":true}}]}}`)
+	if len(evs) != 1 || evs[0].ToolID != "tA" || evs[0].Tool != "Task" {
+		t.Fatalf("%+v", evs)
+	}
+	evs, _ = p.Line(`{"type":"user","parent_tool_use_id":"tA","message":{"content":[{"type":"tool_result","tool_use_id":"t9","content":[{"type":"text","text":"line 1"},{"type":"text","text":"line 2"}],"is_error":true}]}}`)
+	if len(evs) != 1 || evs[0].Kind != agent.KindToolResult || evs[0].Output != "line 1\nline 2" || !evs[0].IsError || evs[0].Thread != "tA" {
+		t.Fatalf("%+v", evs)
+	}
+	evs, _ = p.Line(`{"type":"system","subtype":"task_notification","tool_use_id":"tA","status":"completed"}`)
+	if len(evs) != 1 || evs[0].Kind != agent.KindAgentStatus || evs[0].Status != "completed" || evs[0].ToolID != "tA" {
+		t.Fatalf("%+v", evs)
 	}
 }

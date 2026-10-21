@@ -8,13 +8,14 @@ import { h } from "./dom.js";
 // inline turns `code`, **bold** and [text](url) into nodes.
 function inline(text) {
   const out = [];
-  const re = /`([^`]+)`|\*\*([^*]+)\*\*|\[([^\]]+)\]\(([^)\s]+)\)/g;
+  const re = /`([^`]+)`|\*\*([^*]+)\*\*|\[([^\]]+)\]\(([^)\s]+)\)|(?<![\w*])\*([^*\s](?:[^*]*[^*\s])?)\*(?![\w*])/g;
   let last = 0;
   let m;
   while ((m = re.exec(text))) {
     if (m.index > last) out.push(text.slice(last, m.index));
     if (m[1] !== undefined) out.push(h("code", null, m[1]));
     else if (m[2] !== undefined) out.push(h("strong", null, m[2]));
+    else if (m[5] !== undefined) out.push(h("em", null, m[5]));
     else {
       const href = m[4];
       // Another document of this set opens here; anything else must be
@@ -34,7 +35,9 @@ const slug = (s) => s.toLowerCase().replace(/[`*]/g, "").replace(/[^a-z0-9]+/g, 
 
 // render returns a container with the document, and its headings for a
 // table of contents.
-export function render(md) {
+// breaks keeps single line breaks (a chat); documents are hard-wrapped
+// and join their lines.
+export function render(md, { breaks = false } = {}) {
   const root = h("div", { class: "md" });
   const toc = [];
   const lines = md.replace(/\r/g, "").split("\n");
@@ -68,6 +71,23 @@ export function render(md) {
         h("tbody", null, ...rows.map((r) => h("tr", null, ...r.map((c) => h("td", null, ...inline(c)))))))));
       continue;
     }
+    if (/^\s*\d+[.)]\s+/.test(l)) {
+      const items = [];
+      while (i < lines.length && (/^\s*\d+[.)]\s+/.test(lines[i]) || (/^\s{2,}\S/.test(lines[i]) && items.length))) {
+        if (/^\s*\d+[.)]\s+/.test(lines[i])) items.push(lines[i].replace(/^\s*\d+[.)]\s+/, ""));
+        else items[items.length - 1] += " " + lines[i].trim();
+        i++;
+      }
+      root.append(h("ol", null, ...items.map((t) => h("li", null, ...inline(t)))));
+      continue;
+    }
+    if (/^\s*>\s?/.test(l)) {
+      const quote = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) quote.push(lines[i++].replace(/^\s*>\s?/, ""));
+      root.append(h("blockquote", null, render(quote.join("\n"), { breaks }).el));
+      continue;
+    }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(l)) { root.append(h("hr")); i++; continue; }
     if (/^\s*[-*]\s+/.test(l)) {
       const items = [];
       while (i < lines.length && (/^\s*[-*]\s+/.test(lines[i]) || (/^\s{2,}\S/.test(lines[i]) && items.length))) {
@@ -80,8 +100,11 @@ export function render(md) {
     }
     if (l.trim() === "") { i++; continue; }
     const para = [];
-    while (i < lines.length && lines[i].trim() !== "" && !/^(#{1,4}\s|```|\s*[-*]\s+)/.test(lines[i]) && !isTableRow(lines[i])) para.push(lines[i++].trim());
-    root.append(h("p", null, ...inline(para.join(" "))));
+    while (i < lines.length && lines[i].trim() !== "" && !/^(#{1,4}\s|```|\s*[-*]\s+|\s*\d+[.)]\s+|\s*>)/.test(lines[i]) && !isTableRow(lines[i])) para.push(lines[i++].trim());
+    if (!breaks) { root.append(h("p", null, ...inline(para.join(" ")))); continue; }
+    const kids = [];
+    para.forEach((line, k) => { if (k) kids.push(h("br")); kids.push(...inline(line)); });
+    root.append(h("p", null, ...kids));
   }
   return { el: root, toc };
 }

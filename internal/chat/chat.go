@@ -26,6 +26,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dcimorra/middleware-public/internal/agent"
 	"github.com/dcimorra/middleware-public/internal/events"
@@ -52,6 +53,10 @@ type Turn struct {
 	// Threads are what subagents said, apart from the main answer: kept,
 	// readable, and out of the way of what the agent itself replied.
 	Threads []Thread `json:"threads,omitempty"`
+	// Steps are the turn as it happened, in order: what the agent said
+	// and each tool it used, with its answer. Text above is the words
+	// alone, for whoever only wants the reply.
+	Steps []Step `json:"steps,omitempty"`
 }
 
 // Thread is one subagent's part of a turn.
@@ -59,6 +64,79 @@ type Thread struct {
 	ID    string   `json:"id"`
 	Text  string   `json:"text,omitempty"`
 	Tools []string `json:"tools,omitempty"`
+	// Description and Prompt are what it was asked, as the call that
+	// launched it said; Run its state (RunRunning, RunCut, or what the
+	// provider said: "completed", "failed"…).
+	Description string `json:"description,omitempty"`
+	Prompt      string `json:"prompt,omitempty"`
+	Run         string `json:"run,omitempty"`
+	Background  bool   `json:"background,omitempty"`
+	Steps       []Step `json:"steps,omitempty"`
+}
+
+// Step is one thing in a turn: words, or a tool used.
+type Step struct {
+	Kind string   `json:"kind"` // "text" | "tool"
+	Text string   `json:"text,omitempty"`
+	Tool *ToolUse `json:"tool,omitempty"`
+}
+
+// ToolUse is one use of a tool, with its answer once it came back.
+type ToolUse struct {
+	ID    string         `json:"id,omitempty"`
+	Name  string         `json:"name"`
+	Input map[string]any `json:"input,omitempty"`
+	// Output is the answer, cut at maxToolText; Error says it failed.
+	Output string `json:"output,omitempty"`
+	Error  bool   `json:"error,omitempty"`
+	Done   bool   `json:"done,omitempty"`
+	// Run is set on a call that launched a subagent: its state, which is
+	// not Done (one in the background answers "launched" at once and
+	// goes on working).
+	Run string `json:"run,omitempty"`
+}
+
+// A subagent's states of the house's own; the rest are the provider's.
+const (
+	RunRunning = "running"
+	// RunCut is a subagent whose turn ended under it: without it, it would
+	// show as running for ever.
+	RunCut = "cut"
+)
+
+// maxToolText is how much of a tool's input string or output is kept: the
+// panel shows a fold, not a file.
+const maxToolText = 4000
+
+// isAgentTool says a call launches a subagent.
+func isAgentTool(name string) bool { return name == "Task" || name == "Agent" }
+
+func clipText(s string) string {
+	if len(s) <= maxToolText {
+		return s
+	}
+	cut := maxToolText
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
+
+// clipInput keeps a tool's input readable: long strings (a file written
+// whole) are cut, the rest kept as it came.
+func clipInput(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		if s, ok := v.(string); ok {
+			out[k] = clipText(s)
+		} else {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // Origin says who opened a conversation.
@@ -732,36 +810,118 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 		threads = append(threads, Thread{ID: id})
 		return &threads[len(threads)-1]
 	}
+	var steps []Step
+	// Where each tool call is, so its answer (and a subagent's state) is
+	// put on it: by thread ("" is the main one) and index. Pointers into
+	// a slice that grows would go stale.
+	type at struct {
+		thread string
+		i      int
+	}
+	calls := map[string]at{}
+	stepsOf := func(id string) *[]Step {
+		if id == "" {
+			return &steps
+		}
+		return &thread(id).Steps
+	}
+	toolOf := func(id string) *ToolUse {
+		w, ok := calls[id]
+		if !ok {
+			return nil
+		}
+		return (*stepsOf(w.thread))[w.i].Tool
+	}
 	for ev := range run.Events() {
 		all = append(all, ev)
 		if ev.SessionID != "" {
 			sessionID = ev.SessionID
 		}
-		if ev.Thread != "" && (ev.Kind == agent.KindText || ev.Kind == agent.KindTool) {
-			th := thread(ev.Thread)
-			if ev.Kind == agent.KindText {
+		switch ev.Kind {
+		case agent.KindText:
+			ss := stepsOf(ev.Thread)
+			*ss = append(*ss, Step{Kind: "text", Text: ev.Text})
+			if ev.Thread != "" {
+				th := thread(ev.Thread)
 				if th.Text != "" {
 					th.Text += "\n\n"
 				}
 				th.Text += ev.Text
 				m.progress("agent.text", name, "", map[string]any{"turn_id": turnID, "text": ev.Text, "thread": ev.Thread})
-			} else {
-				th.Tools = append(th.Tools, ev.Tool)
-				m.progress("agent.tool", name, "", map[string]any{"turn_id": turnID, "tool": ev.Tool, "input": ev.Input, "thread": ev.Thread})
+				continue
 			}
-			continue
-		}
-		switch ev.Kind {
-		case agent.KindText:
 			if text.Len() > 0 {
 				text.WriteString("\n\n")
 			}
 			text.WriteString(ev.Text)
 			m.progress("agent.text", name, "", map[string]any{"turn_id": turnID, "text": ev.Text})
 			ask(ev.Text)
+			continue
 		case agent.KindTool:
-			tools = append(tools, ev.Tool)
-			m.progress("agent.tool", name, "", map[string]any{"turn_id": turnID, "tool": ev.Tool, "input": ev.Input})
+			tu := &ToolUse{ID: ev.ToolID, Name: ev.Tool, Input: clipInput(ev.Input)}
+			data := map[string]any{"turn_id": turnID, "id": ev.ToolID, "tool": ev.Tool, "input": tu.Input}
+			if isAgentTool(ev.Tool) && ev.ToolID != "" {
+				tu.Run = RunRunning
+				th := thread(ev.ToolID)
+				th.Run = RunRunning
+				th.Description, _ = ev.Input["description"].(string)
+				if pr, ok := ev.Input["prompt"].(string); ok {
+					th.Prompt = clipText(pr)
+				}
+				th.Background, _ = ev.Input["run_in_background"].(bool)
+				data["run"] = RunRunning
+			}
+			ss := stepsOf(ev.Thread)
+			*ss = append(*ss, Step{Kind: "tool", Tool: tu})
+			if ev.ToolID != "" {
+				calls[ev.ToolID] = at{ev.Thread, len(*ss) - 1}
+			}
+			if ev.Thread != "" {
+				th := thread(ev.Thread)
+				th.Tools = append(th.Tools, ev.Tool)
+				data["thread"] = ev.Thread
+			} else {
+				tools = append(tools, ev.Tool)
+			}
+			m.progress("agent.tool", name, "", data)
+			continue
+		case agent.KindToolResult:
+			tu := toolOf(ev.ToolID)
+			if tu == nil {
+				continue
+			}
+			tu.Output, tu.Error, tu.Done = clipText(ev.Output), ev.IsError, true
+			data := map[string]any{"turn_id": turnID, "id": ev.ToolID, "output": tu.Output, "error": tu.Error}
+			if ev.Thread != "" {
+				data["thread"] = ev.Thread
+			}
+			if tu.Run != "" {
+				// A subagent in the foreground is done when its call
+				// answers; one in the background answers "launched" and
+				// goes on, so only a failure ends it here.
+				th := thread(ev.ToolID)
+				switch {
+				case ev.IsError:
+					tu.Run = "failed"
+				case !th.Background:
+					tu.Run = "completed"
+				}
+				th.Run = tu.Run
+				data["run"] = tu.Run
+			}
+			m.progress("agent.tool.result", name, "", data)
+			continue
+		case agent.KindAgentStatus:
+			tu := toolOf(ev.ToolID)
+			if tu == nil || tu.Run == "" {
+				continue // a background shell, not a subagent
+			}
+			tu.Run = ev.Status
+			thread(ev.ToolID).Run = ev.Status
+			m.progress("agent.subagent", name, "", map[string]any{"turn_id": turnID, "id": ev.ToolID, "run": ev.Status})
+			continue
+		}
+		switch ev.Kind {
 		case agent.KindCost:
 			if ev.Cost > cost {
 				cost = ev.Cost
@@ -771,8 +931,9 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 			if ev.Cost > cost {
 				cost = ev.Cost
 			}
-			if text.Len() == 0 {
+			if text.Len() == 0 && ev.Text != "" {
 				text.WriteString(ev.Text)
+				steps = append(steps, Step{Kind: "text", Text: ev.Text})
 				ask(ev.Text)
 			}
 		case agent.KindError:
@@ -806,11 +967,26 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 		m.emit("agent.jail_violation", name, "error", fmt.Sprintf("the agent referred to %d denied path(s)", len(v)), map[string]any{"turn_id": turnID, "paths": v})
 	}
 
+	// A subagent still "running" when its turn is over: one that ran to
+	// the end without saying so finished with it; one under a turn that
+	// failed or was stopped was cut.
+	for _, w := range calls {
+		tu := (*stepsOf(w.thread))[w.i].Tool
+		if tu.Run != RunRunning {
+			continue
+		}
+		tu.Run = "completed"
+		if errText != "" {
+			tu.Run = RunCut
+		}
+		thread(tu.ID).Run = tu.Run
+	}
+
 	c := m.load(name)
 	if sessionID != "" {
 		c.SessionID = sessionID
 	}
-	turn := Turn{ID: turnID, Role: "assistant", Text: text.String(), Cost: cost, At: time.Now(), SessionID: sessionID, Tools: tools, Questions: questions, Threads: threads}
+	turn := Turn{ID: turnID, Role: "assistant", Text: text.String(), Cost: cost, At: time.Now(), SessionID: sessionID, Tools: tools, Questions: questions, Threads: threads, Steps: steps}
 	if errText != "" {
 		turn.Role = "error"
 		if turn.Text == "" {

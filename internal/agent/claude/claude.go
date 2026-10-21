@@ -186,6 +186,9 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 	if p.cfg.APIKey != "" {
 		env["ANTHROPIC_API_KEY"] = p.cfg.APIKey
 	}
+	// In print mode the CLI ends a background subagent after ten minutes
+	// unless told not to wait with a ceiling; V1 lost long agents that way.
+	env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] = "0"
 	if p.cfg.ConfigDir != "" {
 		env["CLAUDE_CONFIG_DIR"] = p.cfg.ConfigDir
 	}
@@ -201,8 +204,9 @@ func (p *Provider) Adopt(ctx context.Context, pid int, stream string) agent.Run 
 }
 
 // parser reads stream-json: one JSON object per line with a "type" of
-// system (init, carries session_id), assistant (a message whose content
-// blocks are text or tool_use), user (tool results, ignored) and result
+// system (init, carries session_id; task_notification, a subagent's
+// state), assistant (a message whose content blocks are text or
+// tool_use), user (tool results, matched to their call by id) and result
 // (the end, with total_cost_usd). Anything that is not JSON is passed on
 // as text so a CLI that prints a warning before the stream is still read.
 type parser struct {
@@ -219,7 +223,10 @@ type line struct {
 	// ParentToolUseID marks a subagent's messages: the Task call that
 	// started it.
 	ParentToolUseID string `json:"parent_tool_use_id"`
-	Message         struct {
+	// A task_notification's call and state.
+	ToolUseID string `json:"tool_use_id"`
+	Status    string `json:"status"`
+	Message   struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 }
@@ -227,8 +234,38 @@ type line struct {
 type block struct {
 	Type  string         `json:"type"`
 	Text  string         `json:"text"`
+	ID    string         `json:"id"`
 	Name  string         `json:"name"`
 	Input map[string]any `json:"input"`
+	// A tool_result, in a "user" line.
+	ToolUseID string          `json:"tool_use_id"`
+	Content   json.RawMessage `json:"content"`
+	IsError   bool            `json:"is_error"`
+}
+
+// textOf reads a tool result's content: a string, or text blocks.
+func textOf(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) == nil {
+		var parts []string
+		for _, b := range blocks {
+			if b.Text != "" {
+				parts = append(parts, b.Text)
+			}
+		}
+		return strings.Join(parts, "\n")
+	}
+	return string(raw)
 }
 
 func (p *parser) Line(raw string) ([]agent.Event, bool) {
@@ -261,10 +298,31 @@ func (p *parser) Line(raw string) ([]agent.Event, bool) {
 					evs = append(evs, agent.Event{Kind: agent.KindText, Text: b.Text, SessionID: p.sessionID, Thread: l.ParentToolUseID})
 				}
 			case "tool_use":
-				evs = append(evs, agent.Event{Kind: agent.KindTool, Tool: b.Name, Input: b.Input, SessionID: p.sessionID, Thread: l.ParentToolUseID})
+				evs = append(evs, agent.Event{Kind: agent.KindTool, Tool: b.Name, ToolID: b.ID, Input: b.Input, SessionID: p.sessionID, Thread: l.ParentToolUseID})
 			}
 		}
 		return evs, false
+	case "user":
+		// What comes back to the agent: tool results, matched by id.
+		var blocks []block
+		if json.Unmarshal(l.Message.Content, &blocks) != nil {
+			return nil, false
+		}
+		var evs []agent.Event
+		for _, b := range blocks {
+			if b.Type == "tool_result" && b.ToolUseID != "" {
+				evs = append(evs, agent.Event{Kind: agent.KindToolResult, ToolID: b.ToolUseID, Output: textOf(b.Content), IsError: b.IsError, SessionID: p.sessionID, Thread: l.ParentToolUseID})
+			}
+		}
+		return evs, false
+	case "system":
+		// A subagent that ends (or fails, or is stopped) says so here,
+		// with the id of the call that launched it. Background shells send
+		// it too; the chat keeps only the ones that name a subagent.
+		if l.Subtype == "task_notification" && l.ToolUseID != "" && l.Status != "" {
+			return []agent.Event{{Kind: agent.KindAgentStatus, ToolID: l.ToolUseID, Status: l.Status, SessionID: p.sessionID}}, false
+		}
+		return nil, false
 	case "result":
 		evs := []agent.Event{{Kind: agent.KindCost, Cost: l.Cost, SessionID: p.sessionID}}
 		if l.IsError || (l.Subtype != "" && l.Subtype != "success") {

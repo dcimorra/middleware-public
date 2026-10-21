@@ -1,8 +1,10 @@
 // Chat with the agent that works inside this site's folder. Turns come
-// from GET /chat; while a turn runs, progress arrives on the event stream
-// as agent.* events with the domain as subject: text deltas, tool calls,
-// cost, end. The shapes are tolerant on purpose: the adapter decides what
-// it puts in data, and a field the panel does not know is just not shown.
+// from GET /chat with their steps (words and tools, in order); while a
+// turn runs, the same arrives on the event stream as agent.* events with
+// the domain as subject: agent.text, agent.tool when a tool starts,
+// agent.tool.result when it answers, agent.subagent when a subagent
+// changes state, and the end. What a subagent does goes to its own tab,
+// as in V1, out of the way of what the agent itself answers.
 
 import { icon } from "../lib/icons.js";
 import { h, clear, debounce } from "../lib/dom.js";
@@ -13,6 +15,7 @@ import { onEvent } from "../lib/stream.js";
 import { loading, errorBox } from "../components/page.js";
 import { confirm, open } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
+import { render as renderMd } from "../lib/markdown.js";
 
 // chatTab is a site's chat. For the house's own conversation, domain is
 // "middleware": no other conversations, no site manifest to write the
@@ -76,7 +79,11 @@ export function chatTab(domain) {
       loadTurns().then(showUploads);
     } catch (e) { toastError(e); }
   });
-  const el = h("div", { class: "chat" }, h("div", { class: "chat-head row" }, picker, newConv, h("span", { class: "grow" }), capacity), readonlyNote, turns, form);
+  // One tab per subagent of the last turn (or opened from an older one),
+  // beside the main conversation.
+  const tabs = h("div", { class: "chat-tabs", role: "tablist", hidden: true });
+  const views = h("div", { class: "chat-views" }, turns);
+  const el = h("div", { class: "chat" }, h("div", { class: "chat-head row" }, picker, newConv, h("span", { class: "grow" }), capacity), readonlyNote, tabs, views, form);
   let agents = [];
   let running = null; // {turnEl, textEl, textBuf}
   const subs = [];
@@ -107,22 +114,179 @@ export function chatTab(domain) {
     syncCapacity();
   }));
 
-  function threadEl(turn, id) {
-    turn.threads = turn.threads || new Map();
-    let th = turn.threads.get(id);
-    if (!th) {
-      const pre = h("pre", null, "");
-      const det = h("details", { class: "chat-thread" }, h("summary", null, t("chat.subagent")), pre);
-      turn.el.insertBefore(det, turn.textEl);
-      th = { det, pre };
-      turn.threads.set(id, th);
+  // --- steps -------------------------------------------------------------
+
+  // What each tool did, said as a person would: "Reads …/src/app.js".
+  function toolSummary(name, input) {
+    const s = (k) => (input && typeof input[k] === "string" ? input[k] : "");
+    const short = (p) => { const parts = p.split("/"); return parts.length <= 3 ? p : "…/" + parts.slice(-2).join("/"); };
+    const oneLine = (x, n) => { const l = x.replace(/\s+/g, " ").trim(); return l.length > n ? l.slice(0, n) + "…" : l; };
+    switch (name) {
+      case "Read": return t("chat.do.read", { path: short(s("file_path")) });
+      case "Write": return t("chat.do.write", { path: short(s("file_path")) });
+      case "Edit": case "MultiEdit": return t("chat.do.edit", { path: short(s("file_path")) });
+      case "NotebookEdit": return t("chat.do.edit", { path: short(s("notebook_path")) });
+      case "Bash": return t("chat.do.bash", { cmd: oneLine(s("command"), 120) });
+      case "BashOutput": return t("chat.do.bashOutput");
+      case "KillShell": case "KillBash": return t("chat.do.kill");
+      case "Glob": return t("chat.do.glob", { pattern: s("pattern") });
+      case "Grep": return t("chat.do.grep", { pattern: oneLine(s("pattern"), 60) });
+      case "WebFetch": return t("chat.do.fetch", { url: s("url") });
+      case "WebSearch": return t("chat.do.search", { query: oneLine(s("query"), 60) });
+      case "TodoWrite": return t("chat.do.todo");
+      case "Task": case "Agent": return t("chat.do.agent", { what: oneLine(s("description"), 60) });
+      case "Skill": return t("chat.do.skill", { skill: s("skill") || s("command") });
+      default: return t("chat.do.other", { name });
     }
-    return th;
+  }
+
+  // The body of a tool's fold: what it was given, the way it reads best,
+  // then what it answered.
+  function toolBody(tool) {
+    const input = tool.input || {};
+    const parts = [];
+    if (tool.name === "Bash" && input.command) parts.push(h("pre", { class: "cmd" }, "$ " + input.command));
+    else if ((tool.name === "Edit") && (input.old_string || input.new_string)) {
+      parts.push(h("pre", { class: "diff" },
+        ...String(input.old_string || "").split("\n").map((l) => h("span", { class: "del" }, "- " + l + "\n")),
+        ...String(input.new_string || "").split("\n").map((l) => h("span", { class: "add" }, "+ " + l + "\n"))));
+    } else if (tool.name === "TodoWrite" && Array.isArray(input.todos)) {
+      parts.push(h("ul", { class: "todos" }, ...input.todos.map((td) => h("li", { class: td.status }, (td.status === "completed" ? "☑ " : td.status === "in_progress" ? "◐ " : "☐ ") + (td.content || td.activeForm || "")))));
+    } else if (tool.name === "Write" && input.content) {
+      parts.push(h("pre", null, input.content));
+    } else if (Object.keys(input).length && !["Task", "Agent"].includes(tool.name)) {
+      parts.push(h("pre", null, JSON.stringify(input, null, 2)));
+    }
+    const out = h("pre", { class: "out" + (tool.error ? " err" : "") }, tool.output || "");
+    out.hidden = !tool.output;
+    parts.push(out);
+    return { parts, out };
+  }
+
+  const RUN_DONE = new Set(["completed", "done"]);
+  function runClass(run) {
+    if (!run || run === "running") return "live";
+    return RUN_DONE.has(run) ? "ok" : "bad";
+  }
+  function runLabel(run) {
+    const k = "chat.run." + (run || "running");
+    const s = t(k);
+    return s === k ? run : s;
+  }
+
+  // toolEls finds a tool's row by its call id, to put its answer on it.
+  let toolEls = new Map();
+  function toolStepEl(tool, threadData) {
+    const state = h("span", { class: "tool-state " + (tool.done ? (tool.error ? "err" : "ok") : "live"), "aria-hidden": "true" });
+    const summary = h("summary", null, state, h("span", { class: "tool-what" }, toolSummary(tool.name, tool.input)));
+    const body = toolBody(tool);
+    const det = h("details", { class: "chat-tool" }, summary, ...body.parts);
+    const row = { det, state, out: body.out, tool };
+    if (tool.run) {
+      const badge = h("span", { class: "badge run " + runClass(tool.run) }, runLabel(tool.run));
+      const see = h("button", { type: "button", class: "btn sm ghost" }, t("chat.seeAgent"));
+      see.addEventListener("click", (e) => {
+        e.preventDefault(); e.stopPropagation();
+        agentView(threadData || { id: tool.id, description: (tool.input || {}).description, prompt: (tool.input || {}).prompt, run: tool.run });
+        renderTabs();
+        showTab(tool.id);
+      });
+      summary.append(badge, see);
+      row.badge = badge;
+    }
+    if (tool.id) toolEls.set(tool.id, row);
+    return det;
+  }
+  function settleTool(id, d) {
+    const row = toolEls.get(id);
+    if (!row) return;
+    if (d.output !== undefined) { row.out.textContent = d.output; row.out.hidden = !d.output; }
+    row.out.classList.toggle("err", Boolean(d.error));
+    row.state.className = "tool-state " + (d.error ? "err" : "ok");
+    if (d.run && row.badge) { row.badge.className = "badge run " + runClass(d.run); row.badge.textContent = runLabel(d.run); }
+  }
+
+  function textStepEl(text) {
+    const md = renderMd(stripQuestions(text || ""), { breaks: true }).el;
+    md.classList.add("chat-md");
+    return md;
+  }
+
+  function stepsEl(steps, threads) {
+    const box = h("div", { class: "steps" });
+    const byId = new Map((threads || []).map((th) => [th.id, th]));
+    for (const st of steps || []) {
+      if (st.kind === "text") box.append(textStepEl(st.text));
+      else if (st.tool) box.append(toolStepEl(st.tool, byId.get(st.tool.id)));
+    }
+    return box;
+  }
+
+  // --- subagent tabs --------------------------------------------------------
+
+  let agentsUI = new Map();
+  let activeTab = "";
+  function agentView(th) {
+    let a = agentsUI.get(th.id);
+    if (a) {
+      if (th.description && !a.description) { a.description = th.description; a.title.textContent = th.description; }
+      if (th.run) setAgentRun(th.id, th.run);
+      return a;
+    }
+    const title = h("strong", null, th.description || t("chat.subagent"));
+    const badge = h("span", { class: "badge run " + runClass(th.run) }, runLabel(th.run));
+    const body = h("div", { class: "steps" });
+    const foot = h("div", { class: "small muted agent-foot" });
+    const view = h("div", { class: "chat-agent", hidden: true }, ...[
+      h("div", { class: "row" }, title, badge),
+      th.prompt ? h("details", { class: "chat-tool brief" }, h("summary", null, t("chat.brief")), textStepEl(th.prompt)) : null,
+      body, foot].filter(Boolean));
+    if (th.steps) for (const st of th.steps) body.append(st.kind === "text" ? textStepEl(st.text) : toolStepEl(st.tool));
+    views.append(view);
+    a = { id: th.id, description: th.description, run: th.run || "running", view, body, badge, title, foot };
+    agentsUI.set(th.id, a);
+    setAgentRun(th.id, a.run);
+    return a;
+  }
+  function setAgentRun(id, run) {
+    const a = agentsUI.get(id);
+    if (!a || !run) return;
+    a.run = run;
+    a.badge.className = "badge run " + runClass(run);
+    a.badge.textContent = runLabel(run);
+    a.foot.textContent = run === "running" ? t("chat.agentWorking") : t("chat.agentEnded", { state: runLabel(run) });
+    a.foot.classList.toggle("typing", run === "running");
+    renderTabs();
+  }
+  function renderTabs() {
+    tabs.hidden = agentsUI.size === 0;
+    if (tabs.hidden) return;
+    const live = [...agentsUI.values()].filter((a) => a.run === "running").length;
+    const tab = (id, label, cls) => {
+      const b = h("button", { type: "button", role: "tab", class: "chat-tab" + (activeTab === id ? " on" : ""), "aria-selected": String(activeTab === id) }, cls ? h("span", { class: "dot " + cls }) : null, label);
+      b.addEventListener("click", () => showTab(id));
+      return b;
+    };
+    clear(tabs).append(...[tab("", t("chat.mainTab")), ...[...agentsUI.values()].map((a) => tab(a.id, a.description || t("chat.subagent"), runClass(a.run))),
+      live ? h("span", { class: "small muted live-count" }, t("chat.agentsRunning", { n: live })) : null].filter(Boolean));
+  }
+  function showTab(id) {
+    if (id && !agentsUI.has(id)) id = "";
+    activeTab = id;
+    turns.hidden = id !== "";
+    for (const a of agentsUI.values()) a.view.hidden = a.id !== id;
+    renderTabs();
+  }
+  function resetAgents() {
+    for (const a of agentsUI.values()) a.view.remove();
+    agentsUI = new Map();
+    toolEls = new Map();
   }
 
   function turnEl(role, body, cost, at) {
     const who = h("div", { class: "who" }, role === "user" ? t("chat.you") : t("chat.agent"), at ? h("span", { class: "muted" }, new Date(at).toLocaleTimeString()) : null, cost ? h("span", { class: "cost" }, fmtCost(cost)) : null);
-    const textEl = h("div", { class: "text" }, role === "user" ? (body || "") : stripQuestions(body || ""));
+    const textEl = role === "user" ? h("div", { class: "text" }, body || "") : h("div", { class: "steps" });
+    if (role !== "user" && body) textEl.append(textStepEl(body));
     const el = h("div", { class: "turn " + role }, who, textEl);
     return { el, textEl, who };
   }
@@ -177,8 +341,10 @@ export function chatTab(domain) {
     for (const m of (a && a.models) || []) model.append(h("option", { value: m }, m));
   }
 
-  async function loadTurns() {
-    clear(turns).append(loading());
+  // quiet re-reads without the spinner: after a turn ends, the turn is
+  // already on screen and only its final state changes.
+  async function loadTurns(quiet) {
+    if (!quiet) clear(turns).append(loading());
     held = [];
     try {
       const conv = await api.get(cur.path);
@@ -187,12 +353,18 @@ export function chatTab(domain) {
       fillModels();
       if (conv.model) model.value = conv.model;
       const list = conv.turns || [];
+      const keepTab = activeTab;
+      resetAgents();
       list.forEach((tn, i) => {
-        const tu = turnEl(tn.role === "user" ? "user" : "agent", tn.text, tn.cost, tn.at);
-        for (const th of tn.threads || []) {
-          const pre = h("pre", null, (th.text || "") + (th.tools && th.tools.length ? "\n[" + th.tools.join("] [") + "]" : ""));
-          tu.el.insertBefore(h("details", { class: "chat-thread" }, h("summary", null, t("chat.subagent")), pre), tu.textEl);
-        }
+        const role = tn.role === "user" ? "user" : "agent";
+        // Turns from before steps were kept show their words alone.
+        const hasSteps = role !== "user" && (tn.steps || []).length;
+        const tu = turnEl(role, hasSteps ? "" : tn.text, tn.cost, tn.at);
+        if (hasSteps) tu.textEl.replaceWith(stepsEl(tn.steps, tn.threads));
+        if (tn.role === "error" && hasSteps) tu.el.append(h("div", { class: "level-error" }, tn.text.split("\n\n").pop()));
+        // The last turn's subagents get their tabs at once; older ones open
+        // from their row.
+        if (role !== "user" && i >= list.length - 2) for (const th of tn.threads || []) if (th.run) agentView(th);
         // Only the last turn's questions are still open; earlier ones
         // were answered by whatever came after them.
         if (i === list.length - 1 && tn.role !== "user" && !conv.running) for (const q of tn.questions || []) tu.el.append(questionEl(q));
@@ -203,6 +375,7 @@ export function chatTab(domain) {
       // with the tab closed) is drawn where it is, then followed live.
       running = null;
       seen = { turn: "", seq: 0 };
+      showTab(keepTab);
       if (conv.running) {
         begin();
         for (const lv of conv.live || []) handle({ type: lv.type, subject: cur.name, data: lv.data });
@@ -224,9 +397,10 @@ export function chatTab(domain) {
 
   function begin() {
     const tu = turnEl("agent", "");
-    tu.textEl.classList.add("typing");
+    const working = h("div", { class: "small muted working typing" }, t("chat.working"));
+    tu.el.append(working);
     turns.append(tu.el);
-    running = { ...tu, buf: "", tools: new Map() };
+    running = { ...tu, working };
     stop.hidden = false;
     send.textContent = t("chat.queue");
     status.textContent = t("chat.working");
@@ -234,7 +408,7 @@ export function chatTab(domain) {
   }
   function end(ev) {
     if (!running) return;
-    running.textEl.classList.remove("typing");
+    running.working.remove();
     const cost = ev && ev.data && (ev.data.cost ?? ev.data.cost_usd ?? ev.data.usd);
     if (cost !== undefined) running.who.append(h("span", { class: "cost" }, fmtCost(cost)));
     running = null;
@@ -276,56 +450,41 @@ export function chatTab(domain) {
     // conversation was being read): the saved turn says it all.
     if (!running && /^agent\.(done|end|error|stopped|turn\.ended)$/.test(ev.type)) { loadTurns(); return; }
     if (!running) begin();
-    if (d.thread && (ev.type === "agent.text" || ev.type.startsWith("agent.tool"))) {
-      // A subagent's words and tools go in their own fold, out of the way
-      // of what the agent itself is answering.
-      const th = threadEl(running, d.thread);
-      th.pre.textContent += ev.type === "agent.text" ? (th.pre.textContent ? "\n\n" : "") + (d.text || "") : `\n[${d.tool || "tool"}]`;
-      return;
-    }
+    // Where it goes: the subagent's tab, or the turn.
+    const into = () => (d.thread ? agentView({ id: d.thread }).body : running.textEl);
     if (ev.type === "agent.text" || ev.type === "agent.delta") {
       const piece = d.delta ?? d.text ?? ev.message ?? "";
-      running.buf += piece;
-      running.textEl.textContent = stripQuestions(running.buf);
+      if (piece) into().append(textStepEl(piece));
       scroll();
-    } else if (ev.type.startsWith("agent.tool")) {
-      const id = d.id || d.tool_id || d.name || ev.time;
-      let det = running.tools.get(id);
-      if (!det) {
-        det = h("details", null, h("summary", null, t("chat.tool", { name: d.name || d.tool || "tool" })), h("pre", null, ""));
-        running.tools.set(id, det);
-        // The row goes after the text streamed so far, and what the agent
-        // says next starts a fresh paragraph below it, in the order it
-        // happened.
-        running.textEl.classList.remove("typing");
-        if (!running.textEl.textContent) running.textEl.remove();
-        const next = h("div", { class: "text typing" });
-        running.el.append(det, next);
-        running.textEl = next;
-        running.buf = "";
+    } else if (ev.type === "agent.tool") {
+      const tool = { id: d.id, name: d.tool || d.name || "tool", input: d.input, run: d.run };
+      into().append(toolStepEl(tool));
+      if (d.run) {
+        const inp = d.input || {};
+        agentView({ id: d.id, description: inp.description, prompt: inp.prompt, run: d.run });
+        renderTabs();
       }
-      const pre = det.querySelector("pre");
-      const input = d.input !== undefined ? JSON.stringify(d.input, null, 2) : "";
-      const output = d.output !== undefined ? (typeof d.output === "string" ? d.output : JSON.stringify(d.output, null, 2)) : "";
-      if (ev.type.includes("result") || output) pre.textContent = (input ? input + "\n\n" : "") + output;
-      else if (input) pre.textContent = input;
-      else if (ev.message) pre.textContent = ev.message;
+      scroll();
+    } else if (ev.type === "agent.tool.result") {
+      settleTool(d.id, d);
+      if (d.run) setAgentRun(d.id, d.run);
+    } else if (ev.type === "agent.subagent") {
+      settleTool(d.id, { run: d.run });
+      setAgentRun(d.id, d.run);
     } else if (ev.type === "agent.question") {
       // After the text that carried it, before whatever the agent says next.
-      running.textEl.classList.remove("typing");
-      if (!running.textEl.textContent) running.textEl.remove();
-      const next = h("div", { class: "text typing" });
-      running.el.append(questionEl(d), next);
-      running.textEl = next;
-      running.buf = "";
+      running.textEl.append(questionEl(d));
       scroll();
     } else if (ev.type === "agent.cost") {
       running.who.append(h("span", { class: "cost" }, fmtCost(d.cost ?? d.usd ?? ev.message)));
     } else if (ev.type === "agent.end" || ev.type === "agent.done" || ev.type === "agent.turn.ended" || ev.type === "agent.stopped") {
       end(ev);
+      // The saved turn has every subagent's last state.
+      loadTurns(true);
     } else if (ev.type === "agent.error") {
       running.el.append(h("div", { class: "level-error" }, ev.message || d.error || t("chat.failed")));
       end(null);
+      if (d.turn_id) loadTurns(true);
     }
   }
 

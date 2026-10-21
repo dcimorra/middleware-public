@@ -248,7 +248,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
 .field > label, .field > .label { font-size: 12.5px; font-weight: 500; color: var(--text-2); }
 .field .hint, .hint { font-size: 12px; color: var(--text-3); }
 .card h3 { margin: 18px 0 8px; }
-.cards > * + * { margin-top: 12px; }
+.cards > * + *, .page-body > * + * { margin-top: 12px; }
 .field .err { font-size: 12px; color: var(--bad); }
 input[type="text"], input[type="password"], input[type="search"], input[type="number"], input[type="url"], input[type="email"],
 select, textarea {
@@ -484,14 +484,55 @@ dialog form.dlg { display: flex; flex-direction: column; max-height: calc(100vh 
 .turn .who { font-size: 11.5px; color: var(--text-3); margin-bottom: 4px; display: flex; gap: 8px; }
 .turn .who .cost { margin-left: auto; font-variant-numeric: tabular-nums; }
 .turn .text { white-space: pre-wrap; }
-.turn details { margin: 6px 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
-.turn summary { padding: 6px 10px; cursor: pointer; font-family: var(--mono); font-size: 12px; color: var(--text-2); }
-.turn details pre { margin: 0; padding: 8px 10px; border-top: 1px solid var(--border); max-height: 300px; overflow: auto; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.turn details, .chat-agent details { margin: 6px 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.turn summary, .chat-agent summary { padding: 6px 10px; cursor: pointer; font-family: var(--mono); font-size: 12px; color: var(--text-2); }
+.turn details pre, .chat-agent details pre { margin: 0; padding: 8px 10px; border-top: 1px solid var(--border); max-height: 300px; overflow: auto; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .chat-form { display: grid; gap: 8px; grid-template-columns: 1fr; position: sticky; bottom: 0; background: var(--bg); padding-top: 8px; }
 .chat-form textarea { min-height: 64px; }
 .chat-form .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .chat-form select { width: auto; }
 .typing::after { content: "▍"; animation: blink 1s steps(2) infinite; color: var(--text-3); }
+/* The turn as it happened: words rendered, each tool a row whose dot
+   says running, done or failed, with its input and answer folded. */
+.turn .steps { display: flex; flex-direction: column; gap: 4px; }
+.chat-md { max-width: none; line-height: 1.5; }
+.chat-md > :last-child { margin-bottom: 0; }
+.chat-md p, .chat-md ul, .chat-md ol { margin: 0 0 8px; }
+.chat-md ul, .chat-md ol { padding-left: 22px; }
+.chat-md h2, .chat-md h3, .chat-md h4, .chat-md h5 { font-size: 15px; margin: 10px 0 6px; }
+.chat-md pre { margin: 0 0 8px; max-height: 360px; overflow: auto; }
+.chat-md blockquote { margin: 0 0 8px; padding-left: 10px; border-left: 3px solid var(--border); color: var(--text-2); }
+.chat-tool { margin: 2px 0 !important; }
+.chat-tool > summary { display: flex; align-items: center; gap: 8px; list-style: none; }
+.chat-tool > summary::-webkit-details-marker { display: none; }
+.chat-tool .tool-what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-tool[open] .tool-what { white-space: normal; }
+.tool-state { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--text-3); }
+.tool-state.ok { background: var(--ok); }
+.tool-state.err { background: var(--bad); }
+.tool-state.live { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+.chat-tool pre.cmd { color: var(--text); }
+.chat-tool pre.out.err { color: var(--bad); }
+.chat-tool pre.diff .del { color: var(--bad); }
+.chat-tool pre.diff .add { color: var(--ok); }
+.chat-tool ul.todos { margin: 0; padding: 8px 12px; list-style: none; border-top: 1px solid var(--border); font-size: 13px; }
+.chat-tool ul.todos li.completed { color: var(--text-3); text-decoration: line-through; }
+.badge.run.live { background: var(--accent-soft); }
+.badge.run.ok { background: var(--ok-soft); color: var(--ok); }
+.badge.run.bad { color: var(--bad); }
+.turn .working { margin-top: 4px; }
+.chat-tabs { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-bottom: 8px; }
+.chat-tab { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); font-size: 12.5px; cursor: pointer; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
+.chat-tab.on { background: var(--accent-soft); color: var(--text); border-color: var(--accent); }
+.chat-tab .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.chat-tab .dot.live { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
+.chat-tab .dot.ok { background: var(--ok); }
+.chat-tab .dot.bad { background: var(--bad); }
+.chat-tabs .live-count { margin-left: auto; }
+.chat-views { flex: 1; display: flex; flex-direction: column; }
+.chat-agent { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: var(--radius-lg); background: var(--surface-2); }
+.chat-agent .steps { display: flex; flex-direction: column; gap: 4px; }
 @keyframes blink { 50% { opacity: 0; } }
 
 /* ---------- events ---------- */
