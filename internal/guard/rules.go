@@ -171,9 +171,13 @@ func foreignSite(v View, path string) string {
 	}
 	rest := path[i+len(prefix):]
 	domain := rest
-	if j := strings.IndexAny(rest, "/ :"); j >= 0 {
+	if j := strings.IndexAny(rest, "/ :\n\t'\"`),;"); j >= 0 {
 		domain = rest[:j]
 	}
+	// A path at the end of a sentence carries its full stop: "the site's
+	// folder: /srv/middleware/sites/a.example. The whole…" named
+	// "a.example." and killed a.example's own agent as an intruder.
+	domain = strings.TrimRight(domain, ".")
 	if domain == "" || domain == v.Site.Domain || !strings.Contains(domain, ".") {
 		return ""
 	}

@@ -471,3 +471,16 @@ func TestAnAgentTurnIsNotJudgedForTheFoldersItsPromptNames(t *testing.T) {
 		t.Fatalf("killed %v, incidents %+v: want only the process that is no turn's", got, incs)
 	}
 }
+
+func TestASitesOwnPathAtTheEndOfASentenceIsNotAnotherSite(t *testing.T) {
+	h := newHouse(t)
+	a := h.site("a.example", 100, 33001)
+	v := View{Site: SiteInfo{Domain: "a.example", Dir: a.Dir}, SitesDir: filepath.Join(h.root, "sites")}
+	own := "Your working directory is the site's folder: " + filepath.Join(h.root, "sites", "a.example") + ". The whole project lives there."
+	if got := foreignSite(v, own); got != "" {
+		t.Fatalf("its own folder named %q", got)
+	}
+	if got := foreignSite(v, "cat "+filepath.Join(h.root, "sites", "b.example")+"."); got != "b.example" {
+		t.Fatalf("another site's folder named %q", got)
+	}
+}
