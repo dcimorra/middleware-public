@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/dcimorra/middleware-public/internal/installer"
+	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/settings"
 )
 
@@ -36,6 +37,7 @@ func installParams(fs *flag.FlagSet, args []string) (installer.Params, error) {
 	p.Version = Version
 	installFlags(fs, &p)
 	noHelper := fs.Bool("no-helper", false, "do not install the privileged helper (firewall, vpn and sysctl stay unavailable)")
+	fs.StringVar(&p.Domain, "domain", os.Getenv("MIDDLEWARE_DOMAIN"), "the panel's domain (asked when there is a terminal; MIDDLEWARE_DOMAIN works too)")
 	if err := fs.Parse(args); err != nil {
 		return p, err
 	}
@@ -80,9 +82,27 @@ func installCmd(args []string) error {
 	if p.User == "root" {
 		return errors.New("refusing to install for root: run as the user that will operate the panel; sudo is used where needed")
 	}
+	// The panel's name, asked here because install.sh is where a new
+	// server starts (it hands us the terminal even when piped from curl).
+	// Without one the panel is loopback only and the first sign-in needs
+	// an SSH tunnel, which is the step a new operator does not know.
+	if p.Domain == "" && isTerminal(os.Stdin) {
+		if s, err := settings.Load(p.Root); err != nil || s.PanelDomain == "" {
+			fmt.Print("Domain for the panel, e.g. panel.example.com (point its DNS at this server).\nEmpty keeps it on this machine only, reached through an SSH tunnel: ")
+			line, _ := stdin().ReadString('\n')
+			p.Domain = strings.ToLower(strings.TrimSpace(line))
+		}
+	}
+	if p.Domain != "" && !manifest.ValidDomain(strings.TrimSuffix(p.Domain, ".")) {
+		return fmt.Errorf("%q is not a domain name", p.Domain)
+	}
 	in := installer.New(p)
 	in.NoStart = *noStart
-	fmt.Printf("middleware %s install\n  user   %s\n  group  %s\n  root   %s\n  binary %s\n  helper %v\n\n", Version, p.User, p.Group, p.Root, p.Binary, p.Helper)
+	panel := p.Domain
+	if panel == "" {
+		panel = "none (loopback only)"
+	}
+	fmt.Printf("middleware %s install\n  user   %s\n  group  %s\n  root   %s\n  binary %s\n  helper %v\n  panel  %s\n\n", Version, p.User, p.Group, p.Root, p.Binary, p.Helper, panel)
 	if !*yes && !confirm("Continue? Steps that need root will ask for your sudo password. [y/N] ") {
 		return errors.New("cancelled")
 	}
@@ -124,9 +144,25 @@ func doctorCmd(args []string) error {
 	return nil
 }
 
+// stdin is one reader for the whole run: two prompts each with a reader
+// of its own would lose the second answer in the first one's buffer.
+var stdinReader *bufio.Reader
+
+func stdin() *bufio.Reader {
+	if stdinReader == nil {
+		stdinReader = bufio.NewReader(os.Stdin)
+	}
+	return stdinReader
+}
+
+func isTerminal(f *os.File) bool {
+	st, err := f.Stat()
+	return err == nil && st.Mode()&os.ModeCharDevice != 0
+}
+
 func confirm(prompt string) bool {
 	fmt.Print(prompt)
-	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	line, _ := stdin().ReadString('\n')
 	line = strings.ToLower(strings.TrimSpace(line))
 	return line == "y" || line == "yes"
 }

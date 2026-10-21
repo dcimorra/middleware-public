@@ -60,7 +60,7 @@ func New(root string) (*App, error) {
 	})
 	a := &App{Root: root, Settings: s, Bus: bus, Engine: eng}
 	a.Proxy = proxy.New(eng.Lookup)
-	a.Proxy.PanelDomain = s.PanelDomain
+	a.Proxy.SetPanelDomain(s.PanelDomain)
 	a.Handler = a.Proxy
 	return a, nil
 }

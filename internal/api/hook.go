@@ -52,7 +52,7 @@ func NewHook(a *app.App, version string) *Hook {
 			// What can be applied live is applied; the listener and the
 			// port range need a restart and the panel says so.
 			a.Settings = s
-			a.Proxy.PanelDomain = s.PanelDomain
+			a.Proxy.SetPanelDomain(s.PanelDomain)
 			return nil
 		},
 	})

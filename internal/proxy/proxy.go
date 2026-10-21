@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/edge"
@@ -32,9 +33,22 @@ type Lookup func(host string) (engine.Snapshot, bool)
 type Handler struct {
 	lookup Lookup
 	// Panel, when set, answers the panel domain and the loopback host.
-	Panel       http.Handler
-	PanelDomain string
-	transport   http.RoundTripper
+	Panel     http.Handler
+	panel     atomic.Pointer[string]
+	transport http.RoundTripper
+}
+
+// SetPanelDomain changes the name the panel answers on, at once: the
+// panel's Settings and `middleware setup --domain` change it while the
+// process runs, and every piece that asks reads this one.
+func (h *Handler) SetPanelDomain(d string) { h.panel.Store(&d) }
+
+// PanelDomain is the name the panel answers on, or "".
+func (h *Handler) PanelDomain() string {
+	if p := h.panel.Load(); p != nil {
+		return *p
+	}
+	return ""
 }
 
 // New builds the router.
@@ -62,7 +76,7 @@ func Host(r *http.Request) string {
 // ServeHTTP implements http.Handler.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host := Host(r)
-	if h.Panel != nil && (host == h.PanelDomain || host == "localhost" || host == "127.0.0.1") {
+	if h.Panel != nil && ((host != "" && host == h.PanelDomain()) || host == "localhost" || host == "127.0.0.1") {
 		h.Panel.ServeHTTP(w, r)
 		return
 	}

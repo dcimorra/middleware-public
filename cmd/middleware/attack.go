@@ -39,7 +39,7 @@ func buildAttack(a *app.App) app.Hook {
 		// Only the panel's own name: a request to localhost comes from
 		// this machine, and that is the way back in when everything else
 		// is behind the challenge.
-		Panel: func(host string) bool { return host != "" && host == a.Proxy.PanelDomain },
+		Panel: func(host string) bool { return host != "" && host == a.Proxy.PanelDomain() },
 		Lookup: func(host string) (attack.Site, bool) {
 			sn, ok := a.Engine.Lookup(host)
 			if !ok || sn.Manifest == nil {

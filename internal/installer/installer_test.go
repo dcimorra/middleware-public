@@ -280,11 +280,24 @@ func TestInstallEndsWithTheOneTimeCodeWhenNoOperatorExists(t *testing.T) {
 		t.Fatalf("install: %v\n%s", err, out)
 	}
 	s := out.String()
-	if !strings.Contains(s, "one-time code: 123456") || !strings.Contains(s, "Panel: http://127.0.0.1:46100") {
-		t.Fatalf("missing code or panel URL:\n%s", s)
+	if !strings.Contains(s, "one-time code: 123456") {
+		t.Fatalf("missing the code:\n%s", s)
 	}
 	if strings.Index(s, "✓ operator") > strings.Index(s, "123456") {
 		t.Fatalf("the code must come after the step lines:\n%s", s)
+	}
+}
+
+func TestADomainGivenAtInstallReachesSetupEvenWithAnOperator(t *testing.T) {
+	in, rec, out := testInstaller(t)
+	in.Params.Domain = "panel.example.com"
+	in.OperatorExists = func(string) bool { return true }
+	rec.Set(in.Params.Binary+" setup --root "+in.Params.Root+" --domain panel.example.com", "Open https://panel.example.com/ and sign in.", nil)
+	if _, err := in.Install(); err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+	if !strings.Contains(out.String(), "https://panel.example.com/") {
+		t.Fatalf("setup --domain did not run:\n%s", out)
 	}
 }
 

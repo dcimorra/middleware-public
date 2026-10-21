@@ -165,10 +165,14 @@ middleware doctor      # one line per check; exit 1 if any fails
 middleware setup       # if the installer did not run it (prints the one-time code)
 ```
 
-The panel is at `http://127.0.0.1:46100`. It is loopback only until an
-inbound door is open; from your machine, `ssh -L 46100:127.0.0.1:46100 host`
-and open the same URL. Then enable `inbound-tunnel` or `inbound-ports` in the
-panel (see [modules.md](modules.md)) and give the panel a domain in Settings.
+The installer asks for the panel's domain (or takes `--domain`, or
+`MIDDLEWARE_DOMAIN`). With one, it opens the ports door (80 and 443) and the
+first sign-in is at `https://<domain>` once its DNS points at the server; the
+certificate is obtained on its own. `middleware setup --domain <name>` does
+the same later.
+
+Without a domain the panel is at `http://127.0.0.1:46100`, loopback only;
+from your machine, `ssh -L 46100:127.0.0.1:46100 host` and open the same URL.
 
 If `doctor` says the helper socket is not reachable with a permission error,
 you have not logged in again since the installer added you to the

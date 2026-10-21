@@ -63,9 +63,10 @@ func buildInbound(a *app.App) app.Hook {
 	store := certs.New(certDir, acmeIssuer)
 	store.ALPN = alpn
 	store.Bus = a.Bus
-	panel := a.Settings.PanelDomain
 	store.Allowed = func(domain string) bool {
-		if panel != "" && domain == panel {
+		// Read on every request: the panel's name can change while the
+		// process runs, and its certificate must follow.
+		if panel := a.Proxy.PanelDomain(); panel != "" && domain == panel {
 			return true
 		}
 		// Every name a site answers to, aliases and its www. included,
@@ -74,6 +75,7 @@ func buildInbound(a *app.App) app.Hook {
 		return ok
 	}
 	inboundHook = inbound.New(a.Root, store, solver)
+	inboundHook.PanelDomainNow = a.Proxy.PanelDomain
 	// The VPN door: open while the VPN module is on, VPN-only sites served
 	// nowhere else, narrowed to devices by their address in the tunnel.
 	inboundHook.VPNAddress = func() (netip.Addr, bool) {

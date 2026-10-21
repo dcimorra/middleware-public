@@ -26,6 +26,10 @@ type Params struct {
 	Binary string
 	// Listen is the loopback address the socket unit binds.
 	Listen string
+	// Domain is the panel's name, asked at install: with it the operator
+	// signs in at https://<domain> from the start, instead of through an
+	// SSH tunnel to a loopback port. Empty keeps the panel loopback only.
+	Domain string
 	// RunDir holds the helper socket; created by tmpfiles.d on boot.
 	RunDir string
 	// HelperSocket is the helper's unix socket path.

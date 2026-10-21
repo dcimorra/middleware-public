@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/dcimorra/middleware-public/internal/inbound"
+	"github.com/dcimorra/middleware-public/internal/settings"
 	"net"
 	"net/http"
 	"os"
@@ -61,7 +64,13 @@ func realServer(t *testing.T) (root string, cl *Client) {
 	root = t.TempDir()
 	os.MkdirAll(filepath.Join(root, "sites"), 0o755)
 	bus := events.New("")
-	srv := api.New(api.Options{Root: root, Version: "test", Auth: auth.New(root, bus), Sites: sites.New(root, nil, bus), Bus: bus})
+	cur := settings.Defaults()
+	srv := api.New(api.Options{Root: root, Version: "test", Auth: auth.New(root, bus), Sites: sites.New(root, nil, bus), Bus: bus,
+		Settings: func() settings.Settings { return cur },
+		SaveSettings: func(s settings.Settings) error {
+			cur = s
+			return settings.Save(root, s)
+		}})
 	srv.Heartbeat = 50 * time.Millisecond
 	sock := api.SocketPath(root)
 	ln, err := api.ListenSocket(sock)
@@ -256,5 +265,49 @@ func TestFlagsMayFollowPositionalArguments(t *testing.T) {
 	out, err = run(t, cl, "site", "show", "x.test", "--json")
 	if err != nil || !strings.HasPrefix(out, "{") {
 		t.Fatalf("show --json after the domain: %q %v", out, err)
+	}
+}
+
+func TestSetupWithADomainGivesThePanelItsNameAndOpensTheDoor(t *testing.T) {
+	// Through a running supervisor: the settings change where it reads
+	// them, not only on disk.
+	root, cl := realServer(t)
+	out, err := run(t, cl, "setup", "--root", root, "--domain", "Panel.Example.com")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var st map[string]any
+	if err := cl.Do("GET", "/api/v1/settings", nil, &st); err != nil || st["panel_domain"] != "panel.example.com" {
+		t.Fatalf("settings: %v %v", st, err)
+	}
+	doors, _ := inbound.LoadState(root)
+	if !doors.Ports.Open {
+		t.Fatal("the ports door was not opened")
+	}
+	if !strings.Contains(out, "Setup code:") || !strings.Contains(out, "https://panel.example.com/") || !strings.Contains(out, "DNS:") {
+		t.Fatalf("output:\n%s", out)
+	}
+	// With the operator there, only the name: no new code lying around.
+	auth.New(root, nil).SetPassword("password-1")
+	out, _ = run(t, cl, "setup", "--root", root, "--domain", "panel2.example.com")
+	if strings.Contains(out, "Setup code:") || !strings.Contains(out, "https://panel2.example.com/") {
+		t.Fatalf("with an operator:\n%s", out)
+	}
+	if _, err := run(t, cl, "setup", "--root", root, "--domain", "not a domain"); err == nil {
+		t.Fatal("a bad name was accepted")
+	}
+}
+
+func TestSetupWithADomainAndNoSupervisorWritesTheFiles(t *testing.T) {
+	root := t.TempDir()
+	var out bytes.Buffer
+	e := &Env{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &out, Connect: func(string) (*Client, error) { return nil, errors.New("no socket") }}
+	if err := e.Run("setup", []string{"--root", root, "--domain", "panel.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := settings.Load(root)
+	doors, _ := inbound.LoadState(root)
+	if st.PanelDomain != "panel.example.com" || !doors.Ports.Open {
+		t.Fatalf("settings %q, ports open %v", st.PanelDomain, doors.Ports.Open)
 	}
 }

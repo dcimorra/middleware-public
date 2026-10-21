@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -26,6 +27,7 @@ import (
 
 // Usage is what `middleware help` adds for these commands.
 const Usage = `  setup        print a one-time code to create the operator in the panel
+               (--domain panel.example.com: give the panel its name and open 80/443)
                (--password: set the password from the terminal instead)
   site         list | show | add | rm | restart | stop | start | hold | unhold | logs | deploy
   events       recent events (-f to follow)
@@ -122,6 +124,7 @@ func (e *Env) setup(args []string) error {
 	var c common
 	c.bind(fs)
 	direct := fs.Bool("password", false, "set the operator password now, from the terminal")
+	domain := fs.String("domain", "", "the panel's domain: set it and open 80/443 so the first sign-in is at https://<domain>")
 	if _, err := parse(fs, args); err != nil {
 		return err
 	}
@@ -130,6 +133,20 @@ func (e *Env) setup(args []string) error {
 		return fmt.Errorf("root %s: %w", root, err)
 	}
 	store := auth.New(root, events.New(""))
+	if *domain != "" {
+		if err := e.setPanelDomain(root, *domain); err != nil {
+			return fmt.Errorf("domain: %w", err)
+		}
+		if store.HasOperator() && !*direct {
+			// The operator exists: the name was all that was asked for,
+			// and a new setup code would be one more secret lying around.
+			fmt.Fprintf(e.Stdout, "Open https://%s/ and sign in.\n", strings.ToLower(strings.TrimSpace(*domain)))
+			return nil
+		}
+		if !c.json {
+			fmt.Fprintln(e.Stdout)
+		}
+	}
 	if *direct {
 		pw, err := e.readPassword("New operator password: ")
 		if err != nil {
@@ -167,7 +184,17 @@ func (e *Env) setup(args []string) error {
 		where = "https://" + st.PanelDomain + "/"
 	}
 	fmt.Fprintf(e.Stdout, "Setup code: %s\n\nOpen %s and enter it with the password you choose.\nThe code works once; run `middleware setup` again for a new one,\nor `middleware setup --password` to set the password here.\n", code, where)
+	if st.PanelDomain == "" {
+		fmt.Fprintf(e.Stdout, "\nThe panel has no domain yet, so it listens on this machine only. From your\ncomputer: ssh -L %s:%s <this-server>, then open the URL above. Or give it\none now: middleware setup --domain panel.example.com\n", portOf(st.Listen), st.Listen)
+	}
 	return nil
+}
+
+func portOf(listen string) string {
+	if _, p, err := net.SplitHostPort(listen); err == nil {
+		return p
+	}
+	return "46100"
 }
 
 // readPassword reads a line without echo when stdin is a terminal. The

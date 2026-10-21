@@ -35,6 +35,9 @@ type Hook struct {
 	// PanelDomain always answers, whichever door it comes in by. Run takes
 	// it from the app's settings when empty.
 	PanelDomain string
+	// PanelDomainNow, when set, is asked instead of PanelDomain: the
+	// panel's name read live, as the proxy holds it.
+	PanelDomainNow func() string
 	// Sites lists the domains this installation serves. Run plugs the
 	// engine in when nil.
 	Sites func() []string
@@ -108,8 +111,16 @@ func doorOf(r *http.Request) Door {
 	return Tunnel
 }
 
+func (h *Hook) panelDomain() string {
+	if h.PanelDomainNow != nil {
+		return h.PanelDomainNow()
+	}
+	return h.PanelDomain
+}
+
 func (h *Hook) isPanel(host string) bool {
-	return host == "localhost" || host == "127.0.0.1" || host == "::1" || (h.PanelDomain != "" && host == h.PanelDomain)
+	p := h.panelDomain()
+	return host == "localhost" || host == "127.0.0.1" || host == "::1" || (p != "" && host == p)
 }
 
 // Wrap implements app.Hook. Order matters and is the point of the hook:
@@ -583,7 +594,7 @@ func (h *Hook) domains(st State) []string {
 			add(d)
 		}
 	}
-	add(h.PanelDomain)
+	add(h.panelDomain())
 	for _, d := range st.sortedDomains() {
 		add(d)
 	}
@@ -595,7 +606,7 @@ func (h *Hook) domains(st State) []string {
 }
 
 func (h *Hook) knownSite(domain string) bool {
-	if domain == h.PanelDomain {
+	if p := h.panelDomain(); p != "" && domain == p {
 		return true
 	}
 	if h.Sites == nil {

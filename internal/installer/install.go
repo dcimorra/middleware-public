@@ -172,7 +172,9 @@ func (in *Installer) Install() (Report, error) {
 	}
 	rep, err := in.runSteps(steps)
 	if in.setupOutput != "" {
-		fmt.Fprintf(in.Out, "\n%s\n\nPanel: http://%s\n", in.setupOutput, in.Params.Listen)
+		// setup's own lines say where the panel is: https://<domain>, or
+		// the loopback address and the SSH tunnel to reach it.
+		fmt.Fprintf(in.Out, "\n%s", in.setupOutput)
 	}
 	return rep, err
 }
@@ -524,16 +526,24 @@ func (in *Installer) stepStart(restart bool) (bool, string, error) {
 // stepSetup runs `middleware setup` once, so the install ends with the
 // one-time code on screen instead of a second command to remember.
 func (in *Installer) stepSetup() (bool, string, error) {
-	if in.OperatorExists(in.Params.Root) {
+	exists := in.OperatorExists(in.Params.Root)
+	if exists && in.Params.Domain == "" {
 		return false, "exists", nil
 	}
 	if in.NoStart {
 		return false, fmt.Sprintf("none yet: run `%s setup --root %s` after starting", in.Params.Binary, in.Params.Root), nil
 	}
-	out, err := in.Exec.Run(in.Params.Binary, "setup", "--root", in.Params.Root)
+	args := []string{"setup", "--root", in.Params.Root}
+	if in.Params.Domain != "" {
+		args = append(args, "--domain", in.Params.Domain)
+	}
+	out, err := in.Exec.Run(in.Params.Binary, args...)
 	if err != nil {
 		return false, fmt.Sprintf("none yet: run `%s setup --root %s` to create one (%v)", in.Params.Binary, in.Params.Root, err), nil
 	}
 	in.setupOutput = out
+	if exists {
+		return true, "the panel's domain is " + in.Params.Domain, nil
+	}
 	return true, "created; the one-time code is below", nil
 }
