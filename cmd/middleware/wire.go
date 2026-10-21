@@ -183,6 +183,9 @@ func buildWire(a *app.App) app.Hook {
 		a.Proxy.Unrouted = proxy.NewUnrouted()
 	}
 	srv.RegisterUnrouted(a.Proxy.Unrouted)
+	if theVitals != nil {
+		srv.RegisterVitals(theVitals)
+	}
 	if theSeen != nil {
 		srv.RegisterSeen(theSeen)
 	}

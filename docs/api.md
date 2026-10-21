@@ -234,6 +234,7 @@ device is gone (404, 410) gets it forgotten.
 | GET | `/system` | → `{version, root, uptime, listen, panel_domain, load, memory, disk, go}` |
 | GET | `/settings` | → settings |
 | PUT | `/settings` | settings → settings |
+| GET | `/system/vitals` | → `{now, history: [{at, cpu, cores, iowait, load1, mem_used, mem_total, mem_pct, swap_used, swap_total, disk_used, disk_total, disk_pct}], episodes: [{from, to, reason, peak_cpu, avg_cpu, peak_mem, iowait_max, blamed: [{cmd, site, times, cpu}], shots}], lines}`; a sample every 5 s, an hour kept; `?history=0` leaves the hour out |
 | POST | `/system/restart` | → `{ok}` (SIGTERM to self; systemd restarts) |
 | GET | `/system/update` | → `{current, latest, available, checked_at, error, auto, installing, can_install, why}` (`why`: `not_release` or `no_helper`); `?check=1` asks GitHub (an answer under an hour old is reused) |
 | POST | `/system/update/check` | → the same, asking GitHub now |

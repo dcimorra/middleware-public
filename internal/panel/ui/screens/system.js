@@ -3,6 +3,7 @@
 // stale number on this screen is what an operator comes here to check.
 
 import { icon } from "../lib/icons.js";
+import { vitalsCard } from "./system-vitals.js";
 import { h, clear, append, fmtBytes, fmtDuration } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
@@ -19,7 +20,8 @@ export function systemScreen() {
   const procs = h("div", { class: "card pad0" });
   const portsCard = h("div", { class: "card" });
   const updateCard = h("div", { class: "card" });
-  p.body.append(stats, info, updateCard, procs, portsCard);
+  const vitals = vitalsCard();
+  p.body.append(stats, vitals.el, info, updateCard, procs, portsCard);
   const subs = [];
   let timer = null;
 
@@ -146,5 +148,5 @@ export function systemScreen() {
   subs.push(onEvent("middleware.", all));
   subs.push(onEvent("update.", () => renderUpdate(false).catch(() => {})));
   subs.push(onEvent("instance.", () => { renderProcs().catch(() => {}); renderPorts().catch(() => {}); }));
-  return { el: p.el, destroy() { clearInterval(timer); subs.forEach((u) => u()); } };
+  return { el: p.el, destroy() { clearInterval(timer); vitals.destroy(); subs.forEach((u) => u()); } };
 }
