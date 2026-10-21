@@ -170,7 +170,12 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) (any, erro
 		if err != nil {
 			return true
 		}
-		if _, err := fmt.Fprintf(w, "id: %s\nevent: %s\ndata: %s\n\n", e.Time.Format(time.RFC3339Nano), e.Type, data); err != nil {
+		// No "event:" line: a browser's EventSource hands named events
+		// only to a listener for that very name, never to onmessage, and
+		// the panel listens to every type. With the type as the event's
+		// name the panel received nothing live, ever; the type is in the
+		// JSON.
+		if _, err := fmt.Fprintf(w, "id: %s\ndata: %s\n\n", e.Time.Format(time.RFC3339Nano), data); err != nil {
 			return false
 		}
 		last = e.Time

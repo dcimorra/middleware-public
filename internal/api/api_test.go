@@ -386,15 +386,33 @@ func TestTheStreamDeliversAnEventAndCatchesUpWithSince(t *testing.T) {
 			}
 		}
 	}
-	wait("event: old.event")
+	// Unnamed frames: a browser's EventSource gives onmessage only those.
+	// With "event: <type>" the panel heard nothing live.
+	waitData := func(typ string) string {
+		t.Helper()
+		for {
+			if l := wait("data: "); strings.Contains(l, `"type":"`+typ+`"`) {
+				return l
+			}
+		}
+	}
+	waitData("old.event")
 	f.bus.Emit(events.Event{Type: "live.event", Subject: "b.test", Message: "hello"})
-	if l := wait("event: "); l != "event: live.event" {
+	if l := waitData("live.event"); !strings.Contains(l, `"message":"hello"`) {
 		t.Fatalf("live: %s", l)
 	}
-	if l := wait("data: "); !strings.Contains(l, `"message":"hello"`) {
-		t.Fatalf("data: %s", l)
-	}
 	wait(": ping")
+	for {
+		select {
+		case l := <-lines:
+			if strings.HasPrefix(l, "event:") {
+				t.Fatalf("a named frame: %s", l)
+			}
+			continue
+		default:
+		}
+		break
+	}
 
 	resp2, body := f.call("GET", "/api/v1/events?type=live.", nil)
 	if resp2.StatusCode != 200 || !strings.Contains(text(body), "live.event") || strings.Contains(text(body), "old.event") {
