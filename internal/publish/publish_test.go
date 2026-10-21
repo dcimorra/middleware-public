@@ -333,4 +333,19 @@ func TestAVPNOnlySiteIsNeverPublishedAndOneThatBecomesItIsTakenDown(t *testing.T
 	if !strings.Contains(f.dns.log(), "unpublish a.example.com") {
 		t.Fatalf("its record was not removed:\n%s", f.dns.log())
 	}
+	// Out of the VPN: published again, on the door it was on, by itself.
+	vpnOnly = false
+	f.p.Reconcile(ctx)
+	if door, ok := f.p.Published("a.example.com"); !ok || door == "" {
+		t.Fatal("a site that left the VPN was not published again")
+	}
+	written := 0
+	for _, l := range strings.Split(f.dns.log(), "\n") {
+		if strings.HasPrefix(l, "publish a.example.com") {
+			written++
+		}
+	}
+	if written != 2 {
+		t.Fatalf("its record was not written again (want 2 writes):\n%s", f.dns.log())
+	}
 }

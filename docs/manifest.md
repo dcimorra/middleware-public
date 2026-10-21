@@ -292,7 +292,7 @@ process.
   80 and 443, open while the VPN is up) and through no other, where it gets
   the same page as a name nobody serves, whatever the headers say. It is
   never published, and a published site that becomes VPN-only is taken
-  down. `vpn.devices` narrows it to those peers, by their address in the
+  down; when it leaves the VPN it is published again on the door it was on. `vpn.devices` narrows it to those peers, by their address in the
   tunnel, which WireGuard makes trustworthy. The VPN's own resolver, which
   every device's config points at, answers the house's names with the
   server's address in the tunnel and no AAAA, and forwards every other

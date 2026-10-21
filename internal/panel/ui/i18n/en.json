@@ -695,7 +695,7 @@
   "vpn.onlyDevices": "Only these devices",
   "vpn.onlyDevicesHint": "None ticked is every device of the VPN.",
   "vpn.wholeQ": "Keep all of {domain} inside the VPN?",
-  "vpn.wholeBody": "It stops being published: its DNS records and tunnel route are taken down, and from outside the VPN it does not exist.",
+  "vpn.wholeBody": "It stops being published: its DNS records and tunnel route are taken down, and from outside the VPN it does not exist. When it leaves the VPN it is published again on the door it was on.",
   "vpn.siteSaved": "Saved",
   "unrouted.title": "Names without a site",
   "unrouted.hint": "Names that reached this house and no site serves. Through the tunnel it is usually a rule that outlived its site or a DNS record left behind; through the ports, mostly scanners trying a Host. Kept in memory since the last start.",

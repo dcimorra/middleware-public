@@ -113,6 +113,12 @@ type Record struct {
 type Intent struct {
 	Door  inbound.Door `json:"door"`
 	Since time.Time    `json:"since"`
+	// Suspended: the site went inside the VPN. Its public names are taken
+	// down but the intent and its door are kept, so that leaving the VPN
+	// publishes it again where it was. Forgetting the intent (as an
+	// unpublish does) left a site that came out of the VPN with no record
+	// anywhere, and nothing that would ever write one.
+	Suspended bool `json:"suspended,omitempty"`
 }
 
 type file struct {
@@ -309,7 +315,7 @@ func (p *Publisher) Published(site string) (inbound.Door, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	in, ok := p.f.Sites[site]
-	return in.Door, ok
+	return in.Door, ok && !in.Suspended
 }
 
 // HostsOf is every name site answers to now.
@@ -347,12 +353,27 @@ func (p *Publisher) Reconcile(ctx context.Context) {
 			return
 		}
 		p.mu.Lock()
-		_, intends := p.f.Sites[s]
-		p.mu.Unlock()
-		if intends && p.opts.VPNOnly != nil && p.opts.VPNOnly(s) {
-			p.emit("publish.vpn_only", s, "warn", "the site is VPN-only now: taking its public names down", nil)
-			p.Unpublish(ctx, s)
-			continue
+		in, intends := p.f.Sites[s]
+		vpn := p.opts.VPNOnly != nil && p.opts.VPNOnly(s)
+		switch {
+		case intends && vpn && !in.Suspended:
+			in.Suspended = true
+			p.f.Sites[s] = in
+			_ = p.saveLocked()
+			p.mu.Unlock()
+			p.emit("publish.vpn_only", s, "warn", "the site is VPN-only now: its public names are taken down until it leaves the VPN", nil)
+		case intends && !vpn && in.Suspended:
+			// Out of the VPN: back on the door it was on.
+			in.Suspended = false
+			p.f.Sites[s] = in
+			for _, h := range p.hostsOf(s) {
+				p.f.Names[h] = &Record{Site: s, Door: in.Door, State: StatePending}
+			}
+			_ = p.saveLocked()
+			p.mu.Unlock()
+			p.emit("publish.requested", s, "", "out of the VPN: published again on the "+string(in.Door)+" door", nil)
+		default:
+			p.mu.Unlock()
 		}
 		p.work.Lock()
 		p.reconcileSiteLocked(ctx, s)
@@ -374,6 +395,11 @@ func (p *Publisher) reconcileSiteLocked(ctx context.Context, site string) []inbo
 	}
 	p.mu.Lock()
 	intent, published := p.f.Sites[site]
+	if intent.Suspended {
+		// Kept, not published: its names are retired below.
+		published = false
+		exists = true
+	}
 	if published && !exists {
 		p.mu.Unlock()
 		if !p.orphans[site] {
