@@ -14,95 +14,79 @@ import (
 	"github.com/dcimorra/middleware-public/internal/nodes"
 )
 
-// nodeTokenName names the token minted for a linked node, so the tokens
-// list says what each one is for.
-const nodeTokenName = "node: "
-
-// RegisterNodes mounts the links between installations: who this node is,
-// the others it is linked to, the invitation that links two, a summary of
-// each for the dashboard and the door through which the panel of one
-// works on another.
-func (s *Server) RegisterNodes(st *nodes.Store) {
+// RegisterNodes mounts the mesh: this node and the others of its network,
+// the invitation that brings a machine in, a summary of each for the
+// dashboard and the door through which this panel works on another node.
+func (s *Server) RegisterNodes(m *nodes.Mesh) {
 	s.mu.Lock()
-	s.nodes = st
+	s.mesh = m
 	s.mu.Unlock()
-	s.Handle("GET", Prefix+"/nodes", "This node and the nodes linked to it (never their tokens)", s.nodesList)
+	s.Handle("GET", Prefix+"/nodes", "This node, its network and the other nodes, with what the tunnel says of each", s.nodesList)
 	s.Handle("PUT", Prefix+"/nodes/self", "Rename this node", s.nodesRename)
-	s.Handle("POST", Prefix+"/nodes/invite", "Make a single-use code, valid fifteen minutes, for another node to link with this one", s.nodesInvite)
-	s.Handle("POST", Prefix+"/nodes", "Link with the node that made an invitation code", s.nodesLink)
-	s.Handle("POST", Prefix+"/nodes/join", "The other half of a link: a node presents an invitation and its token, and gets one back", s.nodesJoin)
-	s.Public("POST", Prefix+"/nodes/join")
-	s.Handle("POST", Prefix+"/nodes/leave", "A linked node says it unlinked: its token here is revoked", s.nodesLeave)
-	s.Handle("DELETE", Prefix+"/nodes/{id}", "Unlink a node, on both sides when it can be reached", s.nodesUnlink)
+	s.Handle("POST", Prefix+"/nodes/invite", "Make a single-use code, valid fifteen minutes, for another machine to join; creates the network the first time", s.nodesInvite)
+	s.Handle("POST", Prefix+"/nodes/join", "Join the network an invitation code was made in", s.nodesJoin)
+	s.Handle("POST", Prefix+"/nodes/leave", "Take this node out of its network", s.nodesLeave)
+	s.Handle("DELETE", Prefix+"/nodes/{id}", "Remove a node from the network, for every node", s.nodesExpel)
 	s.Handle("GET", Prefix+"/nodes/overview", "Every node's summary, this one first, asked in parallel; an unreachable node says why", s.nodesOverview)
 	s.Handle("GET", Prefix+"/node/summary", "What the dashboard shows of this node: machine, sites, conversations, recent trouble", s.nodeSummary)
-	for _, m := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
-		s.Handle(m, Prefix+"/nodes/{id}/api/{path...}", "The API of a linked node, through this one: what the panel uses to work on another machine", s.nodesProxy)
+	for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
+		s.Handle(method, Prefix+"/nodes/{id}/api/{path...}", "The API of another node, through the mesh: what the panel uses to work on another machine", s.nodesProxy)
 	}
 }
 
-func (s *Server) nodeStore() (*nodes.Store, error) {
+func (s *Server) meshOf() (*nodes.Mesh, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.nodes == nil {
+	if s.mesh == nil {
 		return nil, Errorf(http.StatusNotImplemented, "nodes are not available")
 	}
-	return s.nodes, nil
+	return s.mesh, nil
 }
 
-// fromNode is the linked node a caller is, if it is one.
-func (s *Server) fromNode(c auth.Caller) (nodes.Peer, bool) {
-	if c.Via != auth.ViaToken {
-		return nodes.Peer{}, false
-	}
-	s.mu.Lock()
-	st := s.nodes
-	s.mu.Unlock()
-	if st == nil {
-		return nodes.Peer{}, false
-	}
-	return st.ByToken(c.TokenID)
+// fromNode says whether the caller is another node of the mesh.
+func (s *Server) fromNode(c auth.Caller) (string, bool) {
+	return c.Token, c.Via == auth.ViaNode
 }
 
-// nodeMay is what a linked node may ask of this one: everything an
-// operator can, except the links themselves and the operator's
-// credentials. A node that can link others, mint tokens or add a passkey
-// could hand this machine to a third without anyone here deciding it,
-// and a chain of proxies would hide who is at the far end.
+// nodeMay is what another node may ask of this one: everything an operator
+// can, except the network itself and the operator's credentials, which are
+// decided at each machine's own panel. A request that came through the
+// mesh cannot go on through it either: the node at the far end of a chain
+// would be hidden from the one that answers.
 func nodeMay(pattern string) bool {
 	_, path, _ := strings.Cut(pattern, " ")
-	switch pattern {
-	case "POST " + Prefix + "/nodes/leave", "GET " + Prefix + "/auth/me":
+	if pattern == "GET "+Prefix+"/auth/me" || pattern == "GET "+Prefix+"/node/summary" {
 		return true
 	}
 	return !strings.HasPrefix(path, Prefix+"/nodes") && !strings.HasPrefix(path, Prefix+"/auth/")
 }
 
-type nodeView struct {
-	ID    string    `json:"id"`
-	Name  string    `json:"name"`
-	URL   string    `json:"url,omitempty"`
-	Added time.Time `json:"added,omitzero"`
-	Self  bool      `json:"self,omitempty"`
+func meshErr(err error) error {
+	switch {
+	case errors.Is(err, nodes.ErrNotFound):
+		return Errorf(http.StatusNotFound, "%v", err)
+	case errors.Is(err, nodes.ErrNoHelper):
+		return Errorf(http.StatusServiceUnavailable, "%v", err)
+	case errors.Is(err, nodes.ErrInNetwork), errors.Is(err, nodes.ErrNoNetwork):
+		return Errorf(http.StatusConflict, "%v", err)
+	case errors.Is(err, nodes.ErrBadInvite), errors.Is(err, nodes.ErrBadName), errors.Is(err, nodes.ErrNoEndpoint), errors.Is(err, nodes.ErrBadEndpoint):
+		return Errorf(http.StatusBadRequest, "%v", err)
+	}
+	return Errorf(http.StatusBadGateway, "%v", err)
 }
 
 func (s *Server) nodesList(w http.ResponseWriter, r *http.Request) (any, error) {
-	st, err := s.nodeStore()
+	m, err := s.meshOf()
 	if err != nil {
 		return nil, err
 	}
-	self := st.Self()
-	out := map[string]any{"self": nodeView{ID: self.ID, Name: self.Name, Self: true}}
-	peers := []nodeView{}
-	for _, p := range st.Peers() {
-		peers = append(peers, nodeView{ID: p.ID, Name: p.Name, URL: p.URL, Added: p.Added})
-	}
-	out["peers"] = peers
-	return out, nil
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	return m.Info(ctx), nil
 }
 
 func (s *Server) nodesRename(w http.ResponseWriter, r *http.Request) (any, error) {
-	st, err := s.nodeStore()
+	m, err := s.meshOf()
 	if err != nil {
 		return nil, err
 	}
@@ -112,209 +96,95 @@ func (s *Server) nodesRename(w http.ResponseWriter, r *http.Request) (any, error
 	if err := ReadJSON(r, &body); err != nil {
 		return nil, err
 	}
-	if err := st.SetName(body.Name); err != nil {
-		return nil, Errorf(http.StatusBadRequest, "%v", err)
+	if err := m.SetName(body.Name); err != nil {
+		return nil, meshErr(err)
 	}
-	return st.Self(), nil
+	return m.Self(), nil
 }
 
 func (s *Server) nodesInvite(w http.ResponseWriter, r *http.Request) (any, error) {
-	st, err := s.nodeStore()
+	m, err := s.meshOf()
 	if err != nil {
 		return nil, err
 	}
 	var body struct {
-		// URL is where the other node reaches this one; the panel sends
-		// the address it is open at, which is right unless the other
-		// machine must come in another way (the VPN's address).
-		URL string `json:"url"`
+		// Endpoint is this machine's public ip:port, needed only when the
+		// invitation creates the network.
+		Endpoint string `json:"endpoint"`
 	}
 	if err := ReadJSON(r, &body); err != nil {
 		return nil, err
 	}
-	code, exp, err := st.NewInvite(nodes.BaseURL(body.URL))
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	code, exp, err := m.Invite(ctx, body.Endpoint)
 	if err != nil {
-		return nil, Errorf(http.StatusBadRequest, "%v", err)
+		return nil, meshErr(err)
 	}
-	s.opts.Bus.Emit(events.Event{Type: "node.invited", Actor: "operator", Message: "an invitation to link a node was made", Data: map[string]any{"expires": exp}})
+	s.opts.Bus.Emit(events.Event{Type: "node.invited", Actor: "operator", Message: "an invitation to join the network was made", Data: map[string]any{"expires": exp}})
 	return map[string]any{"code": code, "expires": exp}, nil
 }
 
-// joinRequest is what the linking node sends to the inviting one.
-type joinRequest struct {
-	Secret string `json:"secret"`
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	URL    string `json:"url"`
-	Token  string `json:"token"`
-}
-
-type joinAnswer struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Token string `json:"token"`
-}
-
-// nodesLink is the half of a link done where the code is pasted: mint the
-// token the other node will use here, present it with the code, and keep
-// the one that comes back. Whatever fails after the token is minted
-// revokes it, so a failed attempt leaves no key behind.
-func (s *Server) nodesLink(w http.ResponseWriter, r *http.Request) (any, error) {
-	st, err := s.nodeStore()
-	if err != nil {
-		return nil, err
-	}
-	as, err := s.authStore()
+func (s *Server) nodesJoin(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := s.meshOf()
 	if err != nil {
 		return nil, err
 	}
 	var body struct {
-		Code string `json:"code"`
-		// URL is where the other node reaches this one.
-		URL string `json:"url"`
+		Code     string `json:"code"`
+		Endpoint string `json:"endpoint"`
 	}
 	if err := ReadJSON(r, &body); err != nil {
 		return nil, err
 	}
-	inv, err := st.Decode(body.Code)
-	if err != nil {
-		return nil, Errorf(http.StatusBadRequest, "%v", err)
-	}
-	selfURL := nodes.BaseURL(body.URL)
-	if err := nodes.CheckURL(selfURL); err != nil {
-		return nil, Errorf(http.StatusBadRequest, "%v", err)
-	}
-	pub, secret, err := as.CreateToken(nodeTokenName + inv.Name)
-	if err != nil {
-		return nil, err
-	}
-	self := st.Self()
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	// The tunnel's first handshake and the retries take their time; the
+	// tab's request is not what decides it.
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	var ans joinAnswer
-	err = nodes.Call(ctx, inv.URL, "", "POST", "/nodes/join", joinRequest{Secret: inv.Secret, ID: self.ID, Name: self.Name, URL: selfURL, Token: secret}, &ans)
-	if err == nil && (ans.Token == "" || ans.ID != inv.ID) {
-		err = errors.New("the other node answered, but not as the one that made the code")
-	}
+	inviter, err := m.Join(ctx, body.Code, body.Endpoint)
 	if err != nil {
-		_ = as.DeleteToken(pub.ID)
-		return nil, Errorf(http.StatusBadGateway, "linking with %s: %v", inv.URL, err)
+		return nil, meshErr(err)
 	}
-	old, had, err := st.Add(nodes.Peer{ID: ans.ID, Name: ans.Name, URL: inv.URL, Token: ans.Token, TokenID: pub.ID})
-	if err != nil {
-		_ = as.DeleteToken(pub.ID)
-		return nil, err
-	}
-	if had {
-		_ = as.DeleteToken(old.TokenID)
-	}
-	s.opts.Bus.Emit(events.Event{Type: "node.linked", Actor: "operator", Subject: ans.Name, Message: "linked with node " + ans.Name + " (" + inv.URL + ")"})
-	return nodeView{ID: ans.ID, Name: ans.Name, URL: inv.URL}, nil
-}
-
-func (s *Server) nodesJoin(w http.ResponseWriter, r *http.Request) (any, error) {
-	st, err := s.nodeStore()
-	if err != nil {
-		return nil, err
-	}
-	as, err := s.authStore()
-	if err != nil {
-		return nil, err
-	}
-	var body joinRequest
-	if err := ReadJSON(r, &body); err != nil {
-		return nil, err
-	}
-	// The secret first, before anything about the request is believed:
-	// without it this route is a 401 to anyone and says nothing else.
-	if body.Secret == "" || !st.Spend(body.Secret) {
-		return nil, Errorf(http.StatusUnauthorized, "%v", nodes.ErrBadInvite)
-	}
-	if body.ID == "" || body.ID == st.Self().ID || body.Token == "" {
-		return nil, Errorf(http.StatusBadRequest, "the joining node did not say who it is")
-	}
-	url := nodes.BaseURL(body.URL)
-	pub, secret, err := as.CreateToken(nodeTokenName + body.Name)
-	if err != nil {
-		return nil, err
-	}
-	old, had, err := st.Add(nodes.Peer{ID: body.ID, Name: body.Name, URL: url, Token: body.Token, TokenID: pub.ID})
-	if err != nil {
-		_ = as.DeleteToken(pub.ID)
-		return nil, Errorf(http.StatusBadRequest, "%v", err)
-	}
-	if had {
-		_ = as.DeleteToken(old.TokenID)
-	}
-	self := st.Self()
-	s.opts.Bus.Emit(events.Event{Type: "node.linked", Actor: "node", Subject: body.Name, Message: "node " + body.Name + " (" + url + ") linked with an invitation"})
-	return joinAnswer{ID: self.ID, Name: self.Name, Token: secret}, nil
+	return map[string]any{"ok": true, "inviter": inviter.Name, "members": len(m.Members())}, nil
 }
 
 func (s *Server) nodesLeave(w http.ResponseWriter, r *http.Request) (any, error) {
-	st, err := s.nodeStore()
+	m, err := s.meshOf()
 	if err != nil {
 		return nil, err
 	}
-	p, ok := s.fromNode(auth.FromContext(r.Context()))
-	if !ok {
-		return nil, Errorf(http.StatusForbidden, "only a linked node can leave")
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	if err := m.Leave(ctx); err != nil {
+		return nil, meshErr(err)
 	}
-	if _, err := st.Remove(p.ID); err != nil {
-		return nil, err
-	}
-	if as, err := s.authStore(); err == nil {
-		_ = as.DeleteToken(p.TokenID)
-	}
-	s.opts.Bus.Emit(events.Event{Type: "node.unlinked", Actor: "node", Subject: p.Name, Message: "node " + p.Name + " unlinked itself"})
 	return OK, nil
 }
 
-func (s *Server) nodesUnlink(w http.ResponseWriter, r *http.Request) (any, error) {
-	st, err := s.nodeStore()
+func (s *Server) nodesExpel(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := s.meshOf()
 	if err != nil {
 		return nil, err
 	}
-	p, ok := st.Peer(r.PathValue("id"))
-	if !ok {
-		return nil, nodes.ErrNotFound
-	}
-	// The other side first, while its token still works here and there;
-	// unreachable is no reason to keep the link: its token here is
-	// revoked either way, which is what closes this machine to it.
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	remote := nodes.Call(ctx, p.URL, p.Token, "POST", "/nodes/leave", map[string]any{}, nil)
-	if _, err := st.Remove(p.ID); err != nil {
-		return nil, err
+	x, err := m.Expel(ctx, r.PathValue("id"))
+	if err != nil {
+		return nil, meshErr(err)
 	}
-	if as, err := s.authStore(); err == nil {
-		_ = as.DeleteToken(p.TokenID)
-	}
-	out := map[string]any{"ok": true}
-	msg := "unlinked node " + p.Name
-	if remote != nil {
-		out["remote_error"] = remote.Error()
-		msg += " (the other side could not be told: " + remote.Error() + ")"
-	}
-	s.opts.Bus.Emit(events.Event{Type: "node.unlinked", Actor: "operator", Subject: p.Name, Message: msg})
-	return out, nil
+	return map[string]any{"ok": true, "name": x.Name}, nil
 }
 
 func (s *Server) nodesProxy(w http.ResponseWriter, r *http.Request) (any, error) {
-	st, err := s.nodeStore()
+	m, err := s.meshOf()
 	if err != nil {
 		return nil, err
 	}
-	p, ok := st.Peer(r.PathValue("id"))
+	x, ok := m.Member(r.PathValue("id"))
 	if !ok {
-		return nil, nodes.ErrNotFound
+		return nil, Errorf(http.StatusNotFound, "%v", nodes.ErrNotFound)
 	}
-	h, err := nodes.Proxy(p, r.PathValue("path"))
-	if err != nil {
-		return nil, err
-	}
-	h.ServeHTTP(w, r)
+	m.Proxy(x, r.PathValue("path")).ServeHTTP(w, r)
 	return Handled, nil
 }
 
@@ -356,8 +226,8 @@ func (s *Server) nodeSummary(w http.ResponseWriter, r *http.Request) (any, error
 		"started":  s.opts.Started,
 		"hostname": hostname(),
 	}
-	if st, err := s.nodeStore(); err == nil {
-		self := st.Self()
+	if m, err := s.meshOf(); err == nil {
+		self := m.Self()
 		out["id"], out["name"] = self.ID, self.Name
 	}
 	if s.opts.Sites != nil {
@@ -414,7 +284,8 @@ func (s *Server) nodeSummary(w http.ResponseWriter, r *http.Request) (any, error
 type NodeCard struct {
 	ID        string         `json:"id"`
 	Name      string         `json:"name"`
-	URL       string         `json:"url,omitempty"`
+	IP        string         `json:"ip,omitempty"`
+	Version   string         `json:"version,omitempty"`
 	Self      bool           `json:"self,omitempty"`
 	OK        bool           `json:"ok"`
 	Error     string         `json:"error,omitempty"`
@@ -423,36 +294,32 @@ type NodeCard struct {
 }
 
 func (s *Server) nodesOverview(w http.ResponseWriter, r *http.Request) (any, error) {
-	st, err := s.nodeStore()
+	m, err := s.meshOf()
 	if err != nil {
 		return nil, err
 	}
-	self := st.Self()
-	peers := st.Peers()
-	cards := make([]NodeCard, len(peers)+1)
+	self := m.Self()
+	members := m.Members()
+	cards := make([]NodeCard, len(members)+1)
 	mine, _ := s.nodeSummary(w, r)
 	cards[0] = NodeCard{ID: self.ID, Name: self.Name, Self: true, OK: true, Summary: mine.(map[string]any)}
 	var wg sync.WaitGroup
-	for i, p := range peers {
+	for i, x := range members {
 		wg.Add(1)
-		go func(i int, p nodes.Peer) {
+		go func(i int, x nodes.Member) {
 			defer wg.Done()
 			ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 			defer cancel()
-			c := NodeCard{ID: p.ID, Name: p.Name, URL: p.URL}
+			c := NodeCard{ID: x.ID, Name: x.Name, IP: x.IP.String(), Version: x.Version}
 			start := time.Now()
 			var sum map[string]any
-			if err := nodes.Call(ctx, p.URL, p.Token, "GET", "/node/summary", nil, &sum); err != nil {
+			if err := m.Call(ctx, x, "GET", "/node/summary", nil, &sum); err != nil {
 				c.Error = err.Error()
 			} else {
 				c.OK, c.Summary, c.LatencyMS = true, sum, time.Since(start).Milliseconds()
-				if name, _ := sum["name"].(string); name != "" && name != p.Name {
-					st.Rename(p.ID, name)
-					c.Name = name
-				}
 			}
 			cards[i+1] = c
-		}(i, p)
+		}(i, x)
 	}
 	wg.Wait()
 	return cards, nil

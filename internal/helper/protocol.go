@@ -51,11 +51,12 @@ const (
 	OpVPNStatus       = "vpn.status"
 	OpSysctlReserve   = "sysctl.reserve_ports"
 	OpUpdateInstall   = "update.install"
+	OpMeshFirewall    = "mesh.firewall"
 )
 
 // Ops lists every operation the helper answers, for the usage text and for
 // tests that make sure nothing was added without a handler.
-var Ops = []string{OpPing, OpFirewallApply, OpFirewallBlock, OpFirewallUnblock, OpFirewallStatus, OpVPNApply, OpVPNUp, OpVPNDown, OpVPNStatus, OpSysctlReserve, OpUpdateInstall}
+var Ops = []string{OpPing, OpFirewallApply, OpFirewallBlock, OpFirewallUnblock, OpFirewallStatus, OpVPNApply, OpVPNUp, OpVPNDown, OpVPNStatus, OpSysctlReserve, OpUpdateInstall, OpMeshFirewall}
 
 // FirewallPolicy is the input of firewall.apply.
 type FirewallPolicy struct {
@@ -68,6 +69,15 @@ type FirewallPolicy struct {
 	VPNOnly      bool   `json:"vpn_only,omitempty"`
 	VPNInterface string `json:"vpn_interface,omitempty"`
 	PanelPorts   []int  `json:"panel_ports,omitempty"`
+}
+
+// MeshFirewallArgs is the input of mesh.firewall: the interface between
+// the nodes admits the nodes' API port and nothing else. Down removes it.
+type MeshFirewallArgs struct {
+	Interface  string `json:"interface"`
+	APIPort    int    `json:"api_port"`
+	ListenPort int    `json:"listen_port"`
+	Down       bool   `json:"down,omitempty"`
 }
 
 // BlockArgs is the input of firewall.block.

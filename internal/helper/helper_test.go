@@ -453,3 +453,21 @@ func TestAMemberOfTheGroupAsASecondaryOneIsAllowed(t *testing.T) {
 		t.Fatal("a stranger was let in")
 	}
 }
+
+func TestTheMeshInterfaceAdmitsOnlyTheNodesAPI(t *testing.T) {
+	out, err := RenderMeshRuleset(MeshFirewallArgs{Interface: "mwmesh", APIPort: 46101, ListenPort: 51821})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`iifname "mwmesh" tcp dport 46101 accept`, `iifname "mwmesh" drop`, "udp dport 51821 accept", "table inet middleware_mesh"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in\n%s", want, out)
+		}
+	}
+	if strings.Index(out, "tcp dport 46101 accept") > strings.Index(out, `"mwmesh" drop`) {
+		t.Fatal("the drop comes before the API")
+	}
+	if _, err := RenderMeshRuleset(MeshFirewallArgs{Interface: "bad name", APIPort: 1, ListenPort: 1}); err == nil {
+		t.Fatal("a bad interface name passed")
+	}
+}

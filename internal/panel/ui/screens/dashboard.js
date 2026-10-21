@@ -52,7 +52,7 @@ function stat(value, label, kind) {
   return h("div", { class: "dash-stat " + (kind || "") }, h("strong", null, String(value)), h("span", null, label));
 }
 
-function nodeCard(node, actions) {
+function nodeCard(node, actions, member, myVersion) {
   const s = node.summary || {};
   const head = h("div", { class: "dash-node-head" },
     h("span", { class: "dot " + (node.ok ? "ok" : "bad") }),
@@ -66,9 +66,16 @@ function nodeCard(node, actions) {
   if (s.hostname) meta.push(s.hostname);
   if (s.version) meta.push(s.version);
   if (s.started) meta.push(t("dash.up", { ago: fmtAgo(s.started, t) }));
+  if (node.ip) meta.push(node.ip);
   if (node.latency_ms) meta.push(`${node.latency_ms} ms`);
-  if (node.url) meta.push(node.url);
   card.append(h("p", { class: "small muted dash-meta" }, meta.join(" · ")));
+  if (member) {
+    const hs = member.handshake && !member.handshake.startsWith("0001") ? member.handshake : "";
+    card.append(h("p", { class: "small dash-tunnel" }, h("span", { class: "dot " + (member.online ? "ok" : "bad") }),
+      hs ? t("dash.tunnelSeen", { ago: fmtAgo(hs, t) }) : t("dash.tunnelNever"),
+      member.endpoint ? h("span", { class: "muted" }, " · " + member.endpoint) : h("span", { class: "muted" }, " · " + t("dash.behindNAT"))));
+  }
+  if (s.version && myVersion && s.version !== myVersion) card.append(notice("warn", t("dash.otherVersion", { v: s.version, mine: myVersion })));
   if (!node.ok) {
     card.append(notice("bad", h("strong", null, t("dash.unreachable")), " ", h("span", { class: "small" }, node.error || "")));
     return card;
@@ -128,17 +135,26 @@ function nodeCard(node, actions) {
 }
 
 export function dashboardScreen() {
-  const linkBtn = h("button", { type: "button", class: "btn" }, icon("link"), t("dash.link"));
+  const joinBtn = h("button", { type: "button", class: "btn" }, icon("link"), t("dash.join"));
   const inviteBtn = h("button", { type: "button", class: "btn primary" }, icon("plus"), t("dash.invite"));
-  const p = page({ title: t("nav.dashboard"), icon: "layout", sub: t("dash.sub"), actions: [linkBtn, inviteBtn] });
+  const p = page({ title: t("nav.dashboard"), icon: "layout", sub: t("dash.sub"), actions: [joinBtn, inviteBtn] });
+  const banner = h("div");
   const totals = h("div", { class: "dash-totals" });
   const grid = h("div", { class: "dash-grid" }, loading());
-  const help = h("div", { class: "card" }, h("h2", null, t("dash.howTitle")), h("p", { class: "small muted" }, t("dash.how1")), h("p", { class: "small muted" }, t("dash.how2")));
-  p.body.append(totals, grid, help);
+  const help = h("div", { class: "card" }, h("h2", null, t("dash.howTitle")), h("p", { class: "small muted" }, t("dash.how1")), h("p", { class: "small muted" }, t("dash.how2")), h("p", { class: "small muted" }, t("dash.how3")));
+  p.body.append(banner, totals, grid, help);
   let cards = [];
+  let info = null;
   let alive = true;
 
   function paint() {
+    clear(banner);
+    if (info && !info.network) {
+      banner.append(notice("", h("strong", null, t("dash.alone")), " ", t("dash.aloneHint")));
+    } else if (info && info.error) {
+      banner.append(notice("bad", h("strong", null, t("dash.meshError")), " ", info.error));
+    }
+    joinBtn.hidden = Boolean(info && info.network);
     clear(totals);
     const ok = cards.filter((c) => c.ok);
     const sum = (f) => ok.reduce((n, c) => n + (f(c.summary || {}) || 0), 0);
@@ -149,26 +165,28 @@ export function dashboardScreen() {
       stat(sum((s) => s.chats && s.chats.working), t("dash.working")),
       stat(sum((s) => s.chats && (s.chats.asking || []).length), t("dash.asking"), sum((s) => s.chats && (s.chats.asking || []).length) ? "warn" : ""));
     clear(grid);
+    const byID = new Map(((info && info.members) || []).map((m) => [m.id, m]));
+    const mine = cards[0] && cards[0].summary && cards[0].summary.version;
     for (const c of cards) {
       const acts = [h("button", { type: "button", class: "btn sm", title: t("dash.openHint"), onClick: () => go(c, "/sites") }, icon("external"), t("dash.open"))];
-      if (c.self) acts.push(h("button", { type: "button", class: "btn sm", onClick: () => rename(c) }, icon("edit"), t("dash.rename")));
-      else acts.push(h("button", { type: "button", class: "btn sm danger", onClick: () => unlink(c) }, t("dash.unlink")));
-      grid.append(nodeCard(c, acts));
+      if (c.self) {
+        acts.push(h("button", { type: "button", class: "btn sm", onClick: () => rename(c) }, icon("edit"), t("dash.rename")));
+        if (info && info.network) acts.push(h("button", { type: "button", class: "btn sm danger", onClick: leave }, t("dash.leave")));
+      } else {
+        acts.push(h("button", { type: "button", class: "btn sm danger", onClick: () => expel(c) }, t("dash.expel")));
+      }
+      grid.append(nodeCard(c, acts, byID.get(c.id), mine));
     }
   }
 
   async function load() {
     try {
-      cards = await api.get("/nodes/overview", { node: "" });
+      [cards, info] = await Promise.all([api.get("/nodes/overview", { node: "" }), api.get("/nodes", { node: "" })]);
+      store.set("nodes", info);
       paint();
     } catch (e) {
       if (!cards.length) clear(grid).append(errorBox(e));
     }
-  }
-
-  async function refreshNodes() {
-    try { store.set("nodes", await api.get("/nodes", { node: "" })); } catch { /* the selector keeps what it had */ }
-    await load();
   }
 
   async function rename(c) {
@@ -179,54 +197,71 @@ export function dashboardScreen() {
       buttons: [{ label: t("common.cancel"), value: null }, { label: t("common.save"), submit: true, primary: true }],
       onSubmit: async () => { await api.put("/nodes/self", { name: name.value }, { node: "" }); return true; },
     });
-    if (done) refreshNodes();
+    if (done) load();
   }
 
-  async function unlink(c) {
-    const ok = await confirm({ title: t("dash.unlinkQ", { name: c.name }), body: t("dash.unlinkBody"), confirmLabel: t("dash.unlink"), danger: true });
+  async function expel(c) {
+    const ok = await confirm({ title: t("dash.expelQ", { name: c.name }), body: t("dash.expelBody"), confirmLabel: t("dash.expel"), danger: true });
     if (!ok) return;
     try {
-      const r = await api.del(`/nodes/${encodeURIComponent(c.id)}`, { node: "" });
-      toast(r.remote_error ? t("dash.unlinkedLocal", { error: r.remote_error }) : t("dash.unlinked", { name: c.name }), r.remote_error ? "warn" : "ok");
+      await api.del(`/nodes/${encodeURIComponent(c.id)}`, { node: "" });
+      toast(t("dash.expelled", { name: c.name }), "ok");
       if (currentNode() === c.id) setCurrentNode("");
-      refreshNodes();
+      load();
+    } catch (e) { toastError(e); }
+  }
+
+  async function leave() {
+    const ok = await confirm({ title: t("dash.leaveQ"), body: t("dash.leaveBody"), confirmLabel: t("dash.leave"), danger: true });
+    if (!ok) return;
+    try {
+      await api.post("/nodes/leave", {}, { node: "" });
+      setCurrentNode("");
+      toast(t("dash.left"), "ok");
+      load();
     } catch (e) { toastError(e); }
   }
 
   inviteBtn.addEventListener("click", async () => {
-    const url = h("input", { type: "url", value: location.origin, autocomplete: "off", spellcheck: "false" });
+    const creating = !(info && info.network);
+    const endpoint = h("input", { type: "text", value: (info && info.suggested_endpoint) || "", placeholder: "203.0.113.10:51821", autocomplete: "off", spellcheck: "false" });
     const out = h("div", { class: "stack-sm" });
     await open({
-      title: t("dash.inviteTitle"),
+      title: t(creating ? "dash.createTitle" : "dash.inviteTitle"),
       wide: true,
-      body: [h("p", { class: "dim" }, t("dash.inviteBody")), field(t("dash.selfURL"), url, t("dash.selfURLHint")), out],
+      body: [
+        h("p", { class: "dim" }, t(creating ? "dash.createBody" : "dash.inviteBody")),
+        creating ? field(t("dash.endpoint"), endpoint, t("dash.endpointHint")) : null,
+        out,
+      ],
       buttons: [{ label: t("common.close"), value: null }, { label: t("dash.makeCode"), submit: true, primary: true }],
       onSubmit: async () => {
-        const r = await api.post("/nodes/invite", { url: url.value }, { node: "" });
+        const r = await api.post("/nodes/invite", { endpoint: creating ? endpoint.value : "" }, { node: "" });
         const box = h("textarea", { class: "mono code-box", rows: "4", readonly: true }, r.code);
         const cp = h("button", { type: "button", class: "btn sm" }, icon("copy"), t("common.copy"));
         cp.addEventListener("click", async () => { if (await copy(r.code)) toast(t("common.copied"), "ok"); });
         clear(out).append(box, h("div", { class: "row" }, cp, h("span", { class: "small muted" }, t("dash.codeExpires", { at: new Date(r.expires).toLocaleTimeString() }))));
         box.select();
+        load();
         return false;
       },
     });
   });
 
-  linkBtn.addEventListener("click", async () => {
-    const code = h("textarea", { class: "mono code-box", rows: "4", placeholder: "mwnode_…", spellcheck: "false", required: true });
-    const url = h("input", { type: "url", value: location.origin, autocomplete: "off", spellcheck: "false" });
+  joinBtn.addEventListener("click", async () => {
+    const code = h("textarea", { class: "mono code-box", rows: "4", placeholder: "mwmesh_…", spellcheck: "false", required: true });
+    const endpoint = h("input", { type: "text", value: (info && info.suggested_endpoint) || "", placeholder: "203.0.113.11:51821", autocomplete: "off", spellcheck: "false" });
     const made = await open({
-      title: t("dash.linkTitle"),
+      title: t("dash.joinTitle"),
       wide: true,
-      body: [h("p", { class: "dim" }, t("dash.linkBody")), field(t("dash.code"), code), field(t("dash.selfURL"), url, t("dash.selfURLHint"))],
-      buttons: [{ label: t("common.cancel"), value: null }, { label: t("dash.link"), submit: true, primary: true }],
+      body: [h("p", { class: "dim" }, t("dash.joinBody")), field(t("dash.code"), code), field(t("dash.endpoint"), endpoint, t("dash.joinEndpointHint"))],
+      buttons: [{ label: t("common.cancel"), value: null }, { label: t("dash.join"), submit: true, primary: true }],
       onSubmit: async (_f, showError) => {
         if (!code.value.trim()) { showError(t("dash.codeNeeded")); return false; }
-        return api.post("/nodes", { code: code.value.trim(), url: url.value }, { node: "" });
+        return api.post("/nodes/join", { code: code.value.trim(), endpoint: endpoint.value.trim() }, { node: "" });
       },
     });
-    if (made) { toast(t("dash.linked", { name: made.name }), "ok"); refreshNodes(); }
+    if (made) { toast(t("dash.joined", { name: made.inviter }), "ok"); load(); }
   });
 
   load();

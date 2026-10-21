@@ -198,6 +198,25 @@ If `doctor` says the helper socket is not reachable with a permission error,
 you have not logged in again since the installer added you to the
 `middleware` group.
 
+## Several machines
+
+Installations join one network from the panel's Dashboard: one makes an
+invitation code, the other pastes it, and from then on every node sees
+and manages every other (see [architecture](architecture.md#linked-nodes)).
+They talk only through a WireGuard mesh, so each machine needs:
+
+- **UDP 51821 open** to the other machines, in its own firewall and in the
+  provider's (an IONOS, Hetzner or AWS firewall rule, as UDP, not TCP). A
+  machine behind NAT can leave it closed and join with an empty address:
+  it then always calls out first.
+- The helper service (`middleware install` sets it up): the interface and
+  its firewall are root's business.
+
+Nothing else of the machine's traffic goes through the mesh, and through
+it each node reaches only the others' middleware (TCP 46101 on the mesh
+address). To try several installations on one machine without root, start
+them with `MIDDLEWARE_MESH_LOOPBACK=1`: no tunnel, addresses on loopback.
+
 ## Updating
 
 ```sh

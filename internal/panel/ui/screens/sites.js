@@ -129,8 +129,8 @@ export function sitesScreen({ query }) {
     // Where it is made: the node being viewed unless another is chosen.
     const nodes_ = store.get("nodes");
     const where = h("select", null);
-    if (nodes_ && (nodes_.peers || []).length) {
-      where.append(h("option", { value: "" }, t("nodes.thisOne", { name: nodes_.self.name })), ...nodes_.peers.map((x) => h("option", { value: x.id }, x.name)));
+    if (nodes_ && (nodes_.members || []).length) {
+      where.append(h("option", { value: "" }, t("nodes.thisOne", { name: nodes_.self.name })), ...nodes_.members.map((x) => h("option", { value: x.id }, x.name)));
       where.value = currentNode();
     }
     let published = false;
@@ -254,14 +254,14 @@ export function sitesScreen({ query }) {
   // rest are read every twenty seconds through this node.
   function nodeList() {
     const n = store.get("nodes");
-    if (!n || !(n.peers || []).length) return [];
+    if (!n || !(n.members || []).length) return [];
     const list = currentNode() ? [{ id: "", name: n.self.name }] : [];
-    for (const peer of n.peers) if (peer.id !== currentNode()) list.push(peer);
+    for (const peer of n.members) if (peer.id !== currentNode()) list.push(peer);
     return list;
   }
   function paintHere() {
     const n = store.get("nodes");
-    const peers = (n && n.peers) || [];
+    const peers = (n && n.members) || [];
     here.hidden = peers.length === 0;
     if (here.hidden) return;
     const name = currentNode() ? (peers.find((x) => x.id === currentNode()) || {}).name : n.self.name;

@@ -149,7 +149,7 @@ async function readNodes() {
 }
 function paintNodes() {
   const n = store.get("nodes");
-  const peers = (n && n.peers) || [];
+  const peers = (n && n.members) || [];
   if (currentNode() && n && !peers.some((p) => p.id === currentNode())) setCurrentNode("");
   nodePick.hidden = peers.length === 0;
   clear(nodeSelect);

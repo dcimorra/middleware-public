@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -135,6 +137,7 @@ type wireHook struct {
 	auditor   *audit.Auditor
 	fixer     *autofix.Fixer
 	updater   *update.Updater
+	mesh      *nodes.Mesh
 }
 
 func buildWire(a *app.App) app.Hook {
@@ -192,11 +195,10 @@ func buildWire(a *app.App) app.Hook {
 	}
 	w.updater = buildUpdater(a)
 	srv.RegisterUpdate(w.updater)
-	host, _ := os.Hostname()
-	if st, err := nodes.Open(filepath.Join(dataDir(a), "nodes"), host); err != nil {
-		a.Bus.Emit(events.Event{Type: "nodes.error", Actor: "engine", Level: "error", Message: "linked nodes are unavailable: " + err.Error()})
-	} else {
-		srv.RegisterNodes(st)
+	w.mesh = buildMesh(a, srv)
+	if w.mesh != nil {
+		srv.RegisterNodes(w.mesh)
+		w.mesh.Serve(srv)
 	}
 	w.shots = shots.New(shots.Options{
 		Root:    a.Root,
@@ -384,6 +386,9 @@ func (w *wireHook) Run(ctx context.Context, a *app.App) error {
 	}
 	if w.publisher != nil {
 		go w.publisher.Run(ctx)
+	}
+	if w.mesh != nil {
+		go w.mesh.Run(ctx)
 	}
 	if w.shots != nil {
 		go w.shots.Run(ctx)
@@ -776,4 +781,53 @@ func wireSiteDoor(a *app.App, srv *api.Server, set *moduleSet) {
 func fileExists(p string) bool {
 	st, err := os.Stat(p)
 	return err == nil && !st.IsDir()
+}
+
+// buildMesh opens the node's membership in the mesh. The links of the
+// first design (alpha.14: two tokens over the public panel) are undone
+// here once: their tokens revoked and their file removed, so nothing keeps
+// opening this machine to a node that is now expected to come through the
+// tunnel.
+func buildMesh(a *app.App, srv *api.Server) *nodes.Mesh {
+	host, _ := os.Hostname()
+	root := a.Root
+	var network nodes.Network = nodes.HelperNetwork{Client: helper.Dial("")}
+	var subnet netip.Prefix
+	// For trying several installations on one machine without root: no
+	// tunnel, addresses on loopback. Never on a real network.
+	if os.Getenv("MIDDLEWARE_MESH_LOOPBACK") == "1" {
+		network, subnet = nodes.LoopbackNetwork{}, netip.MustParsePrefix("127.77.0.0/16")
+	}
+	m, err := nodes.Open(nodes.Options{
+		Dir:      filepath.Join(dataDir(a), "nodes"),
+		Hostname: host,
+		Version:  Version,
+		Net:      network,
+		Subnet:   subnet,
+		Bus:      a.Bus,
+		PublicIP: func(ctx context.Context) (string, error) {
+			if st, err := inbound.LoadState(root); err == nil && st.PublicIP != "" {
+				return st.PublicIP, nil
+			}
+			return publish.DetectPublicIP(ctx)
+		},
+	})
+	if err != nil {
+		a.Bus.Emit(events.Event{Type: "nodes.error", Actor: "engine", Level: "error", Message: "the nodes' mesh is unavailable: " + err.Error()})
+		return nil
+	}
+	var legacy []struct {
+		Name    string `json:"name"`
+		TokenID string `json:"token_id"`
+	}
+	if raw, err := os.ReadFile(m.LegacyPath()); err == nil && json.Unmarshal(raw, &legacy) == nil {
+		if store := srv.Auth(); store != nil {
+			for _, l := range legacy {
+				_ = store.DeleteToken(l.TokenID)
+			}
+		}
+		_ = os.Remove(m.LegacyPath())
+		a.Bus.Emit(events.Event{Type: "nodes.legacy_removed", Actor: "engine", Level: "warn", Message: fmt.Sprintf("%d node links over the public panel were undone: nodes now join through the WireGuard mesh", len(legacy))})
+	}
+	return m
 }

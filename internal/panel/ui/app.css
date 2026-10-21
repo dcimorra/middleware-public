@@ -720,3 +720,4 @@ svg.dash-spark .mem { stroke: var(--warn); stroke-dasharray: 3 2; }
 .node-title { display: flex; align-items: center; gap: 8px; font-size: 16px; margin: 0; }
 .node-title[hidden] { display: none; }
 .node-others:empty { display: none; }
+.dash-tunnel { display: flex; align-items: center; gap: 6px; margin: -6px 0 0; flex-wrap: wrap; }

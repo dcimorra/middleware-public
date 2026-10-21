@@ -108,6 +108,7 @@ func (s *Server) init() {
 			OpVPNStatus:       s.vpnStatus,
 			OpSysctlReserve:   s.sysctlReservePorts,
 			OpUpdateInstall:   s.updateInstall,
+			OpMeshFirewall:    s.meshFirewall,
 		}
 	})
 }

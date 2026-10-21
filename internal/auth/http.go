@@ -20,6 +20,9 @@ const (
 	ViaCookie Via = "cookie"
 	ViaToken  Via = "token"
 	ViaSocket Via = "socket"
+	// ViaNode is another node of the mesh, recognised by its tunnel address
+	// and the network's secret on the mesh door; Token carries its name.
+	ViaNode Via = "node"
 )
 
 // Caller is who is making the request, as resolved by Middleware.

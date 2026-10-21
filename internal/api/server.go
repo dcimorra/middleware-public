@@ -124,13 +124,16 @@ type Server struct {
 	onSettings []func(settings.Settings)
 	// nodes, when set, are the installations linked to this one
 	// (RegisterNodes sets it); summaries are the parts of /node/summary.
-	nodes     *nodes.Store
+	mesh      *nodes.Mesh
 	summaries map[string]Summarizer
 }
 
 // Deployer is an alternative way to deploy a site, set with SetDeployer.
 // It returns handled false to leave the request to the sites manager.
 type Deployer func(domain string) (result any, handled bool, err error)
+
+// Auth is the operator's credentials store the server answers with.
+func (s *Server) Auth() *auth.Store { return s.opts.Auth }
 
 // Sites is the sites manager the server works on.
 func (s *Server) Sites() *sites.Manager { return s.opts.Sites }
@@ -269,7 +272,11 @@ func (s *Server) Panel() http.Handler {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	caller := auth.Caller{Via: auth.ViaSocket}
-	if s.opts.Auth != nil {
+	if m, ok := nodes.MemberFrom(r.Context()); ok {
+		// Set only by the mesh door, after it checked the tunnel address
+		// and the secret; nothing a browser or the panel sends makes it.
+		caller = auth.Caller{Via: auth.ViaNode, Token: m.Name}
+	} else if s.opts.Auth != nil {
 		caller = s.opts.Auth.Resolve(r)
 	} else if !auth.IsSocket(r.Context()) {
 		caller = auth.Caller{}
@@ -294,8 +301,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, Errorf(http.StatusForbidden, "this token's scopes (%s) do not open %s", strings.Join(caller.Scopes, ", "), pattern))
 		return
 	}
-	if p, ok := s.fromNode(caller); ok && !nodeMay(pattern) {
-		s.writeError(w, r, Errorf(http.StatusForbidden, "node %s may not use %s: links and credentials are decided on each machine", p.Name, pattern))
+	if name, ok := s.fromNode(caller); ok && !nodeMay(pattern) {
+		s.writeError(w, r, Errorf(http.StatusForbidden, "node %s may not use %s: the network and the credentials are decided at each machine's own panel", name, pattern))
 		return
 	}
 	if caller.Via == auth.ViaCookie && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {

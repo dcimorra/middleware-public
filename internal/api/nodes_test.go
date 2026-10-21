@@ -2,178 +2,183 @@ package api
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
+	"net"
 	"net/http"
+	"net/netip"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/helper"
 	"github.com/dcimorra/middleware-public/internal/nodes"
+	"github.com/dcimorra/middleware-public/internal/wireguard"
 )
 
-func nodeFixture(t *testing.T, name string) *fixture {
-	t.Helper()
-	f := newFixture(t).withToken()
-	st, err := nodes.Open(filepath.Join(f.root, "data", "nodes"), name)
+// meshNet stands in for the kernel's interface; the mesh door and every
+// call between the nodes are real HTTP on loopback addresses.
+type meshNet struct {
+	mu sync.Mutex
+	up bool
+}
+
+func (f *meshNet) Apply(context.Context, wireguard.ServerConfig, bool) error {
+	f.mu.Lock()
+	f.up = true
+	f.mu.Unlock()
+	return nil
+}
+func (f *meshNet) Down(context.Context) error { return nil }
+func (f *meshNet) Firewall(context.Context, helper.MeshFirewallArgs) error {
+	return nil
+}
+func (f *meshNet) Status(context.Context) (helper.VPNStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return helper.VPNStatus{Up: f.up}, nil
+}
+
+func meshPort(t *testing.T) int {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.srv.RegisterNodes(st)
-	return f
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
 }
 
-// Two real servers: one makes a code, the other pastes it, and from then
-// on the first's panel creates a site on the second and reads its events
-// through the hop, as the panel does.
-func TestTwoNodesLinkAndOneWorksOnTheOther(t *testing.T) {
-	a, b := nodeFixture(t, "alpha"), nodeFixture(t, "beta")
+func nodeFixture(t *testing.T, name string, port int) (*fixture, *nodes.Mesh) {
+	t.Helper()
+	f := newFixture(t).withToken()
+	m, err := nodes.Open(nodes.Options{Dir: filepath.Join(f.root, "data", "nodes"), Hostname: name, Version: "test", Net: &meshNet{}, Subnet: netip.MustParsePrefix("127.77.0.0/16"), APIPort: port})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.srv.RegisterNodes(m)
+	m.Serve(f.srv)
+	t.Cleanup(func() { _ = m.Leave(context.Background()) })
+	return f, m
+}
 
-	res, inv := b.call("POST", "/api/v1/nodes/invite", map[string]string{"url": b.http.URL})
+// Three nodes through their own APIs, as the panel does it: alpha invites
+// beta, beta invites gamma, and alpha's panel works on gamma without
+// anyone having linked the two.
+func TestThreeNodesJoinedTwoByTwoAllSeeEachOther(t *testing.T) {
+	port := meshPort(t)
+	a, am := nodeFixture(t, "alpha", port)
+	b, bm := nodeFixture(t, "beta", port)
+	c, cm := nodeFixture(t, "gamma", port)
+
+	res, inv := a.call("POST", "/api/v1/nodes/invite", map[string]string{"endpoint": "198.51.100.1:51821"})
 	if res.StatusCode != 200 {
 		t.Fatalf("invite: %d %s", res.StatusCode, text(inv))
 	}
-	code, _ := inv["code"].(string)
-	res, linked := a.call("POST", "/api/v1/nodes", map[string]string{"code": code, "url": a.http.URL})
-	if res.StatusCode != 200 || linked["name"] != "beta" {
-		t.Fatalf("link: %d %s", res.StatusCode, text(linked))
+	if res, out := b.call("POST", "/api/v1/nodes/join", map[string]string{"code": inv["code"].(string)}); res.StatusCode != 200 {
+		t.Fatalf("join: %d %s", res.StatusCode, text(out))
 	}
-	betaID, _ := linked["id"].(string)
-
-	// The code is spent.
-	if res, out := a.call("POST", "/api/v1/nodes", map[string]string{"code": code, "url": a.http.URL}); res.StatusCode == 200 {
-		t.Fatalf("a code worked twice: %s", text(out))
+	_, inv2 := b.call("POST", "/api/v1/nodes/invite", map[string]string{})
+	if res, out := c.call("POST", "/api/v1/nodes/join", map[string]string{"code": inv2["code"].(string)}); res.StatusCode != 200 {
+		t.Fatalf("join 2: %d %s", res.StatusCode, text(out))
 	}
+	am.Gossip(context.Background())
+	bm.Gossip(context.Background())
 
-	// Both sides know each other.
-	_, bl := b.call("GET", "/api/v1/nodes", nil)
-	if !strings.Contains(text(bl), `"name": "alpha"`) {
-		t.Fatalf("beta does not know alpha: %s", text(bl))
+	var cards []NodeCard
+	getJSON(t, a, "/api/v1/nodes/overview", &cards)
+	if len(cards) != 3 {
+		t.Fatalf("alpha's overview: %+v", cards)
 	}
+	for _, card := range cards {
+		if !card.OK {
+			t.Fatalf("%s: %s", card.Name, card.Error)
+		}
+	}
+	gammaID := cm.Self().ID
 
-	// The stream of the other node, through this one, carries its events.
-	req, _ := http.NewRequest("GET", a.http.URL+"/api/v1/nodes/"+betaID+"/api/events/stream", nil)
+	// gamma's stream, read from alpha's panel, carries what gamma does.
+	req, _ := http.NewRequest("GET", a.http.URL+"/api/v1/nodes/"+gammaID+"/api/events/stream", nil)
 	req.Header.Set("Authorization", "Bearer "+a.token)
 	stream, err := http.DefaultClient.Do(req)
 	if err != nil || stream.StatusCode != 200 {
 		t.Fatalf("stream: %v %v", err, stream)
 	}
 	defer stream.Body.Close()
-	got := make(chan string, 1)
+	got := make(chan bool, 1)
 	go func() {
 		sc := bufio.NewScanner(stream.Body)
 		for sc.Scan() {
-			if strings.Contains(sc.Text(), "made-on-beta") {
-				got <- sc.Text()
+			if strings.Contains(sc.Text(), "made-on-gamma") {
+				got <- true
 				return
 			}
 		}
 	}()
 	time.Sleep(100 * time.Millisecond)
-
-	res, site := a.call("POST", "/api/v1/nodes/"+betaID+"/api/sites", map[string]any{"domain": "made-on-beta.example", "template": "static", "publish": false})
+	res, site := a.call("POST", "/api/v1/nodes/"+gammaID+"/api/sites", map[string]any{"domain": "made-on-gamma.example", "template": "static", "publish": false})
 	if res.StatusCode != 201 {
-		t.Fatalf("create through the hop: %d %s", res.StatusCode, text(site))
+		t.Fatalf("create through the mesh: %d %s", res.StatusCode, text(site))
 	}
-	if res, _ := b.call("GET", "/api/v1/sites/made-on-beta.example", nil); res.StatusCode != 200 {
-		t.Fatal("the site is not on beta")
+	if res, _ := c.call("GET", "/api/v1/sites/made-on-gamma.example", nil); res.StatusCode != 200 {
+		t.Fatal("the site is not on gamma")
 	}
-	if res, _ := a.call("GET", "/api/v1/sites/made-on-beta.example", nil); res.StatusCode != 404 {
+	if res, _ := a.call("GET", "/api/v1/sites/made-on-gamma.example", nil); res.StatusCode != 404 {
 		t.Fatal("the site landed on alpha")
 	}
 	select {
 	case <-got:
 	case <-time.After(3 * time.Second):
-		t.Fatal("beta's event did not come through the stream")
+		t.Fatal("gamma's event did not come through the mesh")
 	}
 
-	// The overview has both, with beta's sites counted.
-	res, _ = a.call("GET", "/api/v1/nodes/overview", nil)
-	if res.StatusCode != 200 {
-		t.Fatal("overview")
-	}
-	var cards []NodeCard
-	getJSON(t, a, "/api/v1/nodes/overview", &cards)
-	if len(cards) != 2 || !cards[0].Self || !cards[1].OK {
-		t.Fatalf("overview: %+v", cards)
-	}
-
-	// A node's token is not the operator's: no links, no credentials.
-	peerTok := tokenOf(t, b, "alpha")
-	for _, p := range []string{"/api/v1/auth/tokens", "/api/v1/nodes", "/api/v1/nodes/" + betaID + "/api/sites"} {
-		req, _ := http.NewRequest("GET", a.http.URL+p, nil)
-		req.Header.Set("Authorization", "Bearer "+peerTok)
-		r, _ := http.DefaultClient.Do(req)
-		if r.StatusCode != http.StatusForbidden {
-			t.Fatalf("a node reached %s: %d", p, r.StatusCode)
+	// Another node is an operator for sites, not for the network or the
+	// credentials of this one.
+	gm, _ := am.Member(gammaID)
+	for _, p := range []string{"/auth/tokens", "/nodes", "/nodes/" + bm.Self().ID + "/api/sites"} {
+		err := am.Call(context.Background(), gm, "GET", p, nil, nil)
+		var re *nodes.RemoteError
+		if !asRemote(err, &re) || re.Status != http.StatusForbidden {
+			t.Fatalf("a node reached %s on another: %v", p, err)
 		}
-		r.Body.Close()
 	}
 
-	// Unlinking undoes both sides and revokes both tokens.
-	if res, out := a.call("DELETE", "/api/v1/nodes/"+betaID, nil); res.StatusCode != 200 || out["remote_error"] != nil {
-		t.Fatalf("unlink: %s", text(out))
+	// beta removes gamma; alpha learns it in a round, gamma is out.
+	if res, out := b.call("DELETE", "/api/v1/nodes/"+gammaID, nil); res.StatusCode != 200 {
+		t.Fatalf("expel: %s", text(out))
 	}
-	_, bl = b.call("GET", "/api/v1/nodes", nil)
-	if strings.Contains(text(bl), "alpha") {
-		t.Fatalf("beta still knows alpha: %s", text(bl))
+	am.Gossip(context.Background())
+	if _, ok := am.Member(gammaID); ok {
+		t.Fatal("alpha still has gamma")
 	}
-	toks, _ := a.store.Tokens()
-	for _, tk := range toks {
-		if strings.HasPrefix(tk.Name, nodeTokenName) {
-			t.Fatalf("a node token survived: %+v", tk)
-		}
+	time.Sleep(200 * time.Millisecond)
+	if cm.InNetwork() {
+		t.Fatal("gamma does not know it was removed")
+	}
+	if res, out := a.call("GET", "/api/v1/nodes/"+gammaID+"/api/sites", nil); res.StatusCode != 404 {
+		t.Fatalf("the proxy still reaches gamma: %d %s", res.StatusCode, text(out))
 	}
 }
 
-func TestAWrongInvitationIsAFlat401(t *testing.T) {
-	b := nodeFixture(t, "beta")
-	b.token = ""
-	res, _ := b.call("POST", "/api/v1/nodes/join", map[string]string{"secret": "nope", "id": "x", "name": "x", "url": "https://x.example", "token": "t"})
-	if res.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("%d", res.StatusCode)
+func TestAJoinWithoutHelperOrCodeSaysWhy(t *testing.T) {
+	f := newFixture(t).withToken()
+	m, err := nodes.Open(nodes.Options{Dir: t.TempDir(), Hostname: "x"})
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-// A link undone on the other side must not log the operator out here.
-func TestARevokedLinkIsABadGatewayNotALogout(t *testing.T) {
-	a, b := nodeFixture(t, "alpha"), nodeFixture(t, "beta")
-	_, inv := b.call("POST", "/api/v1/nodes/invite", map[string]string{"url": b.http.URL})
-	_, linked := a.call("POST", "/api/v1/nodes", map[string]string{"code": inv["code"].(string), "url": a.http.URL})
-	id := linked["id"].(string)
-	toks, _ := b.store.Tokens()
-	for _, tk := range toks {
-		if strings.HasPrefix(tk.Name, nodeTokenName) {
-			_ = b.store.DeleteToken(tk.ID)
-		}
-	}
-	res, out := a.call("GET", "/api/v1/nodes/"+id+"/api/sites", nil)
-	if res.StatusCode != http.StatusBadGateway || !strings.Contains(text(out), "refused") {
+	f.srv.RegisterNodes(m)
+	if res, out := f.call("POST", "/api/v1/nodes/invite", map[string]string{"endpoint": "198.51.100.1:51821"}); res.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("%d %s", res.StatusCode, text(out))
 	}
 }
 
-func TestOnlyPrivateAddressesMayBePlainHTTP(t *testing.T) {
-	for u, ok := range map[string]bool{
-		"https://panel.example": true, "http://10.77.0.1:8080": true, "http://127.0.0.1:1": true,
-		"http://panel.example": false, "http://8.8.8.8": false, "ftp://x": false, "https://x.example/path": false,
-	} {
-		if got := nodes.CheckURL(u) == nil; got != ok {
-			t.Errorf("%s: %v", u, got)
-		}
+func asRemote(err error, re **nodes.RemoteError) bool {
+	r, ok := err.(*nodes.RemoteError)
+	if ok {
+		*re = r
 	}
-}
-
-func tokenOf(t *testing.T, f *fixture, peer string) string {
-	t.Helper()
-	st := f.srv.nodes
-	for _, p := range st.Peers() {
-		if p.Name == peer {
-			return p.Token
-		}
-	}
-	t.Fatalf("no peer %s", peer)
-	return ""
+	return ok
 }
 
 func getJSON(t *testing.T, f *fixture, path string, v any) {

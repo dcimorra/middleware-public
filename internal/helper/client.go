@@ -159,3 +159,8 @@ func (c *Client) VPNStatus(ctx context.Context, iface string) (VPNStatus, error)
 func (c *Client) ReservePorts(ctx context.Context, from, to int) error {
 	return c.Call(ctx, OpSysctlReserve, ReservePortsArgs{From: from, To: to}, nil)
 }
+
+// MeshFirewall loads (or with Down removes) the rules of the nodes' mesh.
+func (c *Client) MeshFirewall(ctx context.Context, a MeshFirewallArgs) error {
+	return c.Call(ctx, OpMeshFirewall, a, nil)
+}
