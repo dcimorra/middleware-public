@@ -17,16 +17,23 @@ import (
 	"github.com/dcimorra/middleware-public/internal/settings"
 )
 
-// setPanelDomain gives the panel its name and opens the ports door (80 and
-// 443, with a certificate the house obtains for that name), so the first
-// sign-in can be at https://<domain> and not through an SSH tunnel. The
-// settings go through the running supervisor when there is one, because
-// it reads its settings once at start; without one, into the file it will
-// read. The door's file is read live either way.
-func (e *Env) setPanelDomain(root, domain string) error {
+// setPanelDomain gives the panel its name and puts it on a door: ports
+// (80 and 443, with a certificate the house obtains for that name) or
+// tunnel (a Cloudflare tunnel, with no port open). Neither is required:
+// the door chosen is also where new sites go. The settings go through the
+// running supervisor when there is one, because it reads its settings
+// once at start; without one, into the file it will read. The door's file
+// is read live either way.
+func (e *Env) setPanelDomain(root, domain string, door inbound.Door) error {
 	domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
 	if !manifest.ValidDomain(domain) {
 		return fmt.Errorf("%q is not a domain name", domain)
+	}
+	if door == "" {
+		door = inbound.Ports
+	}
+	if _, err := inbound.ParsePublicDoor(string(door)); err != nil {
+		return err
 	}
 	// The installer starts the service just before this: give its socket
 	// a moment, or the settings would go to a file the running process
@@ -64,15 +71,48 @@ func (e *Env) setPanelDomain(root, domain string) error {
 	if err != nil {
 		return err
 	}
-	if !doors.Ports.Open {
+	// Only the chosen door is opened: a house reached through the tunnel
+	// has no reason to listen on 80 and 443, nor the other way round.
+	if door == inbound.Ports {
 		doors.Ports.Open = true
-		if err := inbound.SaveState(root, doors); err != nil {
-			return err
+	} else {
+		doors.Tunnel.Open = true
+	}
+	doors.NewSites = door
+	if err := inbound.SaveState(root, doors); err != nil {
+		return err
+	}
+	if door == inbound.Ports {
+		fmt.Fprintf(e.Stdout, "Panel domain: %s, on the ports door (80 and 443).\n", domain)
+	} else {
+		fmt.Fprintf(e.Stdout, "Panel domain: %s, on the tunnel door (no port opened).\n", domain)
+	}
+	if !running {
+		if fileExists(filepath.Join(root, "data", "api.sock")) {
+			fmt.Fprintln(e.Stdout, "The service did not answer: restart it (systemctl restart middleware) for the domain to apply.")
+		}
+	} else {
+		// Publishing is the same as for a site: a DNS record (and a
+		// tunnel route) when the cloudflare module is on, and a line
+		// saying what to do by hand when it is not.
+		var out struct {
+			Lines []inbound.Line `json:"lines"`
+		}
+		if err := cl.Do("POST", "/api/v1/inbound/move", map[string]any{"domains": []string{domain}, "to": door}, &out); err != nil {
+			fmt.Fprintf(e.Stdout, "Publish: %v\n", err)
+		}
+		for _, l := range out.Lines {
+			fmt.Fprintf(e.Stdout, "[%s] %s\n", l.Status, l.Text)
 		}
 	}
-	fmt.Fprintf(e.Stdout, "Panel domain: %s; the ports door (80 and 443) is open.\n", domain)
-	if !running && fileExists(filepath.Join(root, "data", "api.sock")) {
-		fmt.Fprintln(e.Stdout, "The service did not answer: restart it (systemctl restart middleware) for the domain to apply.")
+	if door == inbound.Tunnel {
+		st, _ := settings.Load(root)
+		listen := st.Listen
+		if listen == "" {
+			listen = "127.0.0.1:46100"
+		}
+		fmt.Fprintf(e.Stdout, "The tunnel needs the cloudflare module, with tunnel_id set to this server's tunnel. Until then, reach the panel from your computer with ssh -L %s:%s <this-server>, open http://%s/ and enable it under Modules.\n", portOf(listen), listen, listen)
+		return nil
 	}
 	fmt.Fprintln(e.Stdout, dnsLine(domain))
 	return nil

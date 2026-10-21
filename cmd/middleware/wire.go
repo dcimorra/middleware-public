@@ -582,7 +582,17 @@ func buildPublisher(a *app.App, set *moduleSet) *publish.Publisher {
 			}
 			return dns
 		},
-		Hosts: a.Engine.Hosts,
+		// The panel's name is published like a site's, so the operator
+		// chooses its door (tunnel or 80/443) and neither is required.
+		Hosts: func() map[string]string {
+			hosts := a.Engine.Hosts()
+			if d := a.Proxy.PanelDomain(); d != "" {
+				if _, taken := hosts[d]; !taken {
+					hosts[d] = publish.PanelOwner
+				}
+			}
+			return hosts
+		},
 		VPNOnly: func(site string) bool {
 			sn, ok := a.Engine.Lookup(site)
 			return ok && sn.Manifest != nil && sn.Manifest.VPN != nil

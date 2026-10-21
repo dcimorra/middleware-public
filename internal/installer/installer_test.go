@@ -290,9 +290,9 @@ func TestInstallEndsWithTheOneTimeCodeWhenNoOperatorExists(t *testing.T) {
 
 func TestADomainGivenAtInstallReachesSetupEvenWithAnOperator(t *testing.T) {
 	in, rec, out := testInstaller(t)
-	in.Params.Domain = "panel.example.com"
+	in.Params.Domain, in.Params.Door = "panel.example.com", "tunnel"
 	in.OperatorExists = func(string) bool { return true }
-	rec.Set(in.Params.Binary+" setup --root "+in.Params.Root+" --domain panel.example.com", "Open https://panel.example.com/ and sign in.", nil)
+	rec.Set(in.Params.Binary+" setup --root "+in.Params.Root+" --domain panel.example.com --door tunnel", "Open https://panel.example.com/ and sign in.", nil)
 	if _, err := in.Install(); err != nil {
 		t.Fatalf("install: %v\n%s", err, out)
 	}

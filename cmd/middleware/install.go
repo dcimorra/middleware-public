@@ -38,6 +38,7 @@ func installParams(fs *flag.FlagSet, args []string) (installer.Params, error) {
 	installFlags(fs, &p)
 	noHelper := fs.Bool("no-helper", false, "do not install the privileged helper (firewall, vpn and sysctl stay unavailable)")
 	fs.StringVar(&p.Domain, "domain", os.Getenv("MIDDLEWARE_DOMAIN"), "the panel's domain (asked when there is a terminal; MIDDLEWARE_DOMAIN works too)")
+	fs.StringVar(&p.Door, "door", os.Getenv("MIDDLEWARE_DOOR"), "how the panel's domain is reached: ports (80/443) or tunnel (asked when there is a terminal; MIDDLEWARE_DOOR works too)")
 	if err := fs.Parse(args); err != nil {
 		return p, err
 	}
@@ -91,15 +92,30 @@ func installCmd(args []string) error {
 			fmt.Print("Domain for the panel, e.g. panel.example.com (point its DNS at this server).\nEmpty keeps it on this machine only, reached through an SSH tunnel: ")
 			line, _ := stdin().ReadString('\n')
 			p.Domain = strings.ToLower(strings.TrimSpace(line))
+			// Neither door is required: a server behind a NAT may have
+			// no 80/443, and one without Cloudflare no tunnel.
+			if p.Domain != "" && p.Door == "" {
+				fmt.Print("How is it reached? 1) ports 80/443, with a certificate of its own  2) a Cloudflare tunnel [1]: ")
+				line, _ := stdin().ReadString('\n')
+				if a := strings.TrimSpace(strings.ToLower(line)); a == "2" || a == "tunnel" {
+					p.Door = "tunnel"
+				}
+			}
 		}
+	}
+	if p.Door == "" {
+		p.Door = "ports"
+	}
+	if p.Door != "ports" && p.Door != "tunnel" {
+		return fmt.Errorf("door %q: want ports or tunnel", p.Door)
 	}
 	if p.Domain != "" && !manifest.ValidDomain(strings.TrimSuffix(p.Domain, ".")) {
 		return fmt.Errorf("%q is not a domain name", p.Domain)
 	}
 	in := installer.New(p)
 	in.NoStart = *noStart
-	panel := p.Domain
-	if panel == "" {
+	panel := p.Domain + " (" + p.Door + ")"
+	if p.Domain == "" {
 		panel = "none (loopback only)"
 	}
 	fmt.Printf("middleware %s install\n  user   %s\n  group  %s\n  root   %s\n  binary %s\n  helper %v\n  panel  %s\n\n", Version, p.User, p.Group, p.Root, p.Binary, p.Helper, panel)

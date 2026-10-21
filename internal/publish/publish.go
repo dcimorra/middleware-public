@@ -38,6 +38,11 @@ import (
 	"github.com/dcimorra/middleware-public/internal/inbound"
 )
 
+// PanelOwner is the owner the panel's own name is published under: not a
+// domain and not a project name (neither starts with "@"), so it cannot
+// be taken by a site.
+const PanelOwner = "@panel"
+
 // DNS is the provider of records and tunnel routes: the cloudflare module.
 type DNS interface {
 	// Covers says whether the provider manages the zone a name is in.

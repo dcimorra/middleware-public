@@ -30,6 +30,8 @@ type Params struct {
 	// signs in at https://<domain> from the start, instead of through an
 	// SSH tunnel to a loopback port. Empty keeps the panel loopback only.
 	Domain string
+	// Door is how that name is reached: "ports" (80/443) or "tunnel".
+	Door string
 	// RunDir holds the helper socket; created by tmpfiles.d on boot.
 	RunDir string
 	// HelperSocket is the helper's unix socket path.

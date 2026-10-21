@@ -307,7 +307,26 @@ func TestSetupWithADomainAndNoSupervisorWritesTheFiles(t *testing.T) {
 	}
 	st, _ := settings.Load(root)
 	doors, _ := inbound.LoadState(root)
-	if st.PanelDomain != "panel.example.com" || !doors.Ports.Open {
-		t.Fatalf("settings %q, ports open %v", st.PanelDomain, doors.Ports.Open)
+	if st.PanelDomain != "panel.example.com" || !doors.Ports.Open || doors.NewSites != inbound.Ports {
+		t.Fatalf("settings %q, ports open %v, new sites %q", st.PanelDomain, doors.Ports.Open, doors.NewSites)
+	}
+}
+
+func TestThePanelOnTheTunnelDoorOpensNoPort(t *testing.T) {
+	root := t.TempDir()
+	var out bytes.Buffer
+	e := &Env{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &out, Connect: func(string) (*Client, error) { return nil, errors.New("no socket") }}
+	if err := e.Run("setup", []string{"--root", root, "--domain", "panel.example.com", "--door", "tunnel"}); err != nil {
+		t.Fatal(err)
+	}
+	doors, _ := inbound.LoadState(root)
+	if doors.Ports.Open || !doors.Tunnel.Open || doors.NewSites != inbound.Tunnel {
+		t.Fatalf("doors: ports %v, tunnel %v, new sites %q", doors.Ports.Open, doors.Tunnel.Open, doors.NewSites)
+	}
+	if !strings.Contains(out.String(), "ssh -L") || strings.Contains(out.String(), "DNS:") {
+		t.Fatalf("output:\n%s", out.String())
+	}
+	if err := e.Run("setup", []string{"--root", root, "--domain", "panel.example.com", "--door", "local"}); err == nil {
+		t.Fatal("the local door was accepted for the panel")
 	}
 }

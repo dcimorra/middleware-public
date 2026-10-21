@@ -166,10 +166,21 @@ middleware setup       # if the installer did not run it (prints the one-time co
 ```
 
 The installer asks for the panel's domain (or takes `--domain`, or
-`MIDDLEWARE_DOMAIN`). With one, it opens the ports door (80 and 443) and the
-first sign-in is at `https://<domain>` once its DNS points at the server; the
-certificate is obtained on its own. `middleware setup --domain <name>` does
-the same later.
+`MIDDLEWARE_DOMAIN`) and then how it is reached (`--door ports|tunnel`, or
+`MIDDLEWARE_DOOR`; ports by default). Neither door is required, and only
+the chosen one is opened; new sites go through it too.
+
+- **ports**: 80 and 443. The first sign-in is at `https://<domain>` once
+  its DNS points at the server; the certificate is obtained on its own.
+- **tunnel**: no port is opened. The name is reached through a Cloudflare
+  tunnel, which needs the cloudflare module with `tunnel_id` set to this
+  server's tunnel (one is never picked by itself: an account can hold
+  other servers' tunnels). Until then, sign in through SSH as below.
+
+With the cloudflare module on, the panel's name is published like a
+site's: its DNS record, and its tunnel route on the tunnel door. Without
+it, the name is marked to point by hand. `middleware setup --domain <name>
+--door <door>` does the same later, and the Inbound screen moves it.
 
 Without a domain the panel is at `http://127.0.0.1:46100`, loopback only;
 from your machine, `ssh -L 46100:127.0.0.1:46100 host` and open the same URL.

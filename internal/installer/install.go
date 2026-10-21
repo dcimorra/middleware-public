@@ -536,6 +536,9 @@ func (in *Installer) stepSetup() (bool, string, error) {
 	args := []string{"setup", "--root", in.Params.Root}
 	if in.Params.Domain != "" {
 		args = append(args, "--domain", in.Params.Domain)
+		if in.Params.Door != "" {
+			args = append(args, "--door", in.Params.Door)
+		}
 	}
 	out, err := in.Exec.Run(in.Params.Binary, args...)
 	if err != nil {

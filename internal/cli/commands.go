@@ -22,12 +22,13 @@ import (
 	"github.com/dcimorra/middleware-public/internal/auth"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/settings"
+	"github.com/dcimorra/middleware-public/internal/inbound"
 	"github.com/dcimorra/middleware-public/internal/sites"
 )
 
 // Usage is what `middleware help` adds for these commands.
 const Usage = `  setup        print a one-time code to create the operator in the panel
-               (--domain panel.example.com: give the panel its name and open 80/443)
+               (--domain panel.example.com [--door ports|tunnel]: the panel's name and door)
                (--password: set the password from the terminal instead)
   site         list | show | add | rm | restart | stop | start | hold | unhold | logs | deploy
   events       recent events (-f to follow)
@@ -124,7 +125,8 @@ func (e *Env) setup(args []string) error {
 	var c common
 	c.bind(fs)
 	direct := fs.Bool("password", false, "set the operator password now, from the terminal")
-	domain := fs.String("domain", "", "the panel's domain: set it and open 80/443 so the first sign-in is at https://<domain>")
+	domain := fs.String("domain", "", "the panel's domain, so the first sign-in is at https://<domain>")
+	door := fs.String("door", "ports", "how the panel's domain is reached: ports (80/443) or tunnel (cloudflare); new sites follow it")
 	if _, err := parse(fs, args); err != nil {
 		return err
 	}
@@ -134,7 +136,7 @@ func (e *Env) setup(args []string) error {
 	}
 	store := auth.New(root, events.New(""))
 	if *domain != "" {
-		if err := e.setPanelDomain(root, *domain); err != nil {
+		if err := e.setPanelDomain(root, *domain, inbound.Door(*door)); err != nil {
 			return fmt.Errorf("domain: %w", err)
 		}
 		if store.HasOperator() && !*direct {
