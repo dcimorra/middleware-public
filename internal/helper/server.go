@@ -10,7 +10,9 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +50,8 @@ type Server struct {
 	WireguardDir string
 	SysctlDir    string
 	SysNetDir    string
+	// GroupsOf lists a user's groups; nil reads the system's (tests set it).
+	GroupsOf func(uid uint32) []int
 	// Binary is the executable update.install replaces; empty is this
 	// one. Arch overrides the release's architecture, and Exit how the
 	// helper ends after an update (tests).
@@ -230,7 +234,40 @@ func (s *Server) allowed(p Peer) bool {
 	if s.AllowGID >= 0 && int(p.GID) == s.AllowGID {
 		return true
 	}
+	// The group as a secondary one: the operator's own shell (`middleware
+	// vpn status`) has it that way, and SO_PEERCRED gives the primary only.
+	// Only the user's membership is read, never anything the peer says.
+	if s.AllowGID >= 0 {
+		groupsOf := s.GroupsOf
+		if groupsOf == nil {
+			groupsOf = userGroups
+		}
+		for _, g := range groupsOf(p.UID) {
+			if g == s.AllowGID {
+				return true
+			}
+		}
+	}
 	return false
+}
+
+// userGroups are the groups the system lists the user in.
+func userGroups(uid uint32) []int {
+	u, err := user.LookupId(strconv.FormatUint(uint64(uid), 10))
+	if err != nil {
+		return nil
+	}
+	ids, err := u.GroupIds()
+	if err != nil {
+		return nil
+	}
+	var out []int
+	for _, id := range ids {
+		if n, err := strconv.Atoi(id); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // Handle runs one request for an already authenticated peer. It is the

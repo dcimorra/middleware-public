@@ -119,7 +119,10 @@ func TestAPeerWithTheWrongUIDIsRefusedBeforeAnyOperation(t *testing.T) {
 	if _, err := h.cli.Ping(context.Background()); err != nil {
 		t.Fatalf("root always passes: %v", err)
 	}
-	byGroup := newTestHelper(t, func(s *Server) { s.AllowUID = -1; s.AllowGID = 1000 })
+	byGroup := newTestHelper(t, func(s *Server) {
+		s.AllowUID, s.AllowGID = -1, 1000
+		s.GroupsOf = func(uid uint32) []int { return []int{int(uid) + 1} }
+	})
 	byGroup.setPeer(Peer{UID: 1001, GID: 1000})
 	if _, err := byGroup.cli.Ping(context.Background()); err != nil {
 		t.Fatalf("gid match should pass: %v", err)
@@ -431,5 +434,22 @@ func TestTheRulesetParsesWithRealNft(t *testing.T) {
 	e := &SystemExec{}
 	if _, err := e.Run(context.Background(), "nft", []string{"-c", "-f", "-"}, script); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The operator's shell has the group as a secondary one; SO_PEERCRED says
+// only the primary. Membership is read from the system, by uid.
+func TestAMemberOfTheGroupAsASecondaryOneIsAllowed(t *testing.T) {
+	s := &Server{AllowUID: -1, AllowGID: 993, GroupsOf: func(uid uint32) []int {
+		if uid == 1000 {
+			return []int{1000, 993}
+		}
+		return []int{int(uid)}
+	}}
+	if !s.allowed(Peer{UID: 1000, GID: 1000}) {
+		t.Fatal("a member by a secondary group was refused")
+	}
+	if s.allowed(Peer{UID: 1001, GID: 1001}) {
+		t.Fatal("a stranger was let in")
 	}
 }
