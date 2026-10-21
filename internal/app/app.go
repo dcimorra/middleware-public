@@ -96,11 +96,23 @@ func (a *App) Run(ctx context.Context) error {
 	}()
 	a.Bus.Emit(events.Event{Type: "middleware.started", Actor: "engine", Data: map[string]any{"listen": ln.Addr().String()}})
 	log.Printf("listening on %s, root %s", ln.Addr(), a.Root)
-	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	err = srv.Serve(ln)
+	// Hooks that keep something in memory write it now, before Run
+	// returns: a goroutine left to do it on ctx.Done raced the process's
+	// exit (and a test's cleanup of its root).
+	for _, hook := range a.Hooks {
+		if s, ok := hook.(Stopper); ok {
+			s.Stop()
+		}
+	}
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
 }
+
+// Stopper is a hook with something to write when the process stops.
+type Stopper interface{ Stop() }
 
 func (a *App) listener() (net.Listener, error) {
 	if os.Getenv("LISTEN_FDS") == "1" {

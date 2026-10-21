@@ -25,30 +25,36 @@ func init() {
 
 func buildSeen(a *app.App) app.Hook {
 	theSeen = seen.New(filepath.Join(dataDir(a), "seen"))
-	return hook{
-		wrap: func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if sn, ok := a.Engine.Lookup(proxy.Host(r)); ok && sn.Domain != "" {
-					theSeen.Note(sn.Domain, edge.Country(r), r.UserAgent())
-				}
-				next.ServeHTTP(w, r)
-			})
-		},
-		// Run must return: the loop goes on its own.
-		run: func(ctx context.Context) { go flushLoop(ctx) },
-	}
+	return seenHook{a: a}
 }
 
-func flushLoop(ctx context.Context) {
-	t := time.NewTicker(time.Minute)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			theSeen.Flush()
-			return
-		case <-t.C:
-			theSeen.Flush()
+// seenHook counts, flushes every minute, and once more when the process
+// stops (app.Stopper).
+type seenHook struct{ a *app.App }
+
+func (h seenHook) Wrap(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if sn, ok := h.a.Engine.Lookup(proxy.Host(r)); ok && sn.Domain != "" {
+			theSeen.Note(sn.Domain, edge.Country(r), r.UserAgent())
 		}
-	}
+		next.ServeHTTP(w, r)
+	})
 }
+
+func (h seenHook) Run(ctx context.Context, _ *app.App) error {
+	go func() {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				theSeen.Flush()
+			}
+		}
+	}()
+	return nil
+}
+
+func (h seenHook) Stop() { theSeen.Flush() }
