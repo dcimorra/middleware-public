@@ -21,8 +21,8 @@ import (
 
 	"github.com/dcimorra/middleware-public/internal/auth"
 	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/settings"
 	"github.com/dcimorra/middleware-public/internal/inbound"
+	"github.com/dcimorra/middleware-public/internal/settings"
 	"github.com/dcimorra/middleware-public/internal/sites"
 )
 
