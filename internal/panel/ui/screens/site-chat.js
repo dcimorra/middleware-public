@@ -179,6 +179,7 @@ export function chatTab(domain) {
 
   async function loadTurns() {
     clear(turns).append(loading());
+    held = [];
     try {
       const conv = await api.get(cur.path);
       clear(turns);
@@ -198,9 +199,25 @@ export function chatTab(domain) {
         turns.append(tu.el);
       });
       if (!(conv.turns || []).length) turns.append(h("div", { class: "empty" }, h("strong", null, t("chat.emptyTitle")), t(house ? "chat.emptyHintHouse" : "chat.emptyHint")));
+      // A turn still running (it does not depend on this tab: it goes on
+      // with the tab closed) is drawn where it is, then followed live.
+      running = null;
+      seen = { turn: "", seq: 0 };
+      if (conv.running) {
+        begin();
+        for (const lv of conv.live || []) handle({ type: lv.type, subject: cur.name, data: lv.data });
+      } else {
+        stop.hidden = true;
+        send.textContent = t("chat.send");
+        status.textContent = "";
+      }
       scroll();
     } catch (e) {
       clear(turns).append(errorBox(e));
+    } finally {
+      const late = held || [];
+      held = null;
+      late.forEach(handle);
     }
   }
   function scroll() { turns.lastElementChild && turns.lastElementChild.scrollIntoView({ block: "end" }); }
@@ -228,10 +245,36 @@ export function chatTab(domain) {
 
   // Events: agent.text (delta), agent.tool / agent.tool.result, agent.cost,
   // agent.end / agent.error / agent.stopped.
+  // Events sent while the stream was down are not sent again: on coming
+  // back, the conversation is read afresh rather than left showing a
+  // turn as running that ended meanwhile.
+  let wasLive = store.get("streamState") === "live";
+  subs.push(store.subscribe("streamState", (st) => {
+    if (st === "live" && !wasLive) loadTurns();
+    wasLive = st === "live";
+  }));
+  // While the conversation is being read, events wait: drawn now they
+  // would land in turns that the read is about to replace.
+  let held = null;
   subs.push(onEvent("agent.", (ev) => {
-    if (ev.subject !== cur.name || ev.type === "agent.capacity") return;
+    if (ev.subject !== cur.name) return;
+    if (held) held.push(ev); else handle(ev);
+  }));
+  // seen is the last progress event drawn of the running turn: the ones
+  // read from the conversation on opening it can arrive again on the
+  // stream, and must not be drawn twice.
+  let seen = { turn: "", seq: 0 };
+  function handle(ev) {
+    if (ev.type === "agent.capacity") return;
     const d = ev.data || {};
+    if (d.seq) {
+      if (d.turn_id === seen.turn && d.seq <= seen.seq) return;
+      seen = { turn: d.turn_id, seq: d.seq };
+    }
     if (ev.type === "agent.start" || ev.type === "agent.turn.started") { if (!running) begin(); return; }
+    // The end of a turn this tab was not drawing (it ended while the
+    // conversation was being read): the saved turn says it all.
+    if (!running && /^agent\.(done|end|error|stopped|turn\.ended)$/.test(ev.type)) { loadTurns(); return; }
     if (!running) begin();
     if (d.thread && (ev.type === "agent.text" || ev.type.startsWith("agent.tool"))) {
       // A subagent's words and tools go in their own fold, out of the way
@@ -284,7 +327,7 @@ export function chatTab(domain) {
       running.el.append(h("div", { class: "level-error" }, ev.message || d.error || t("chat.failed")));
       end(null);
     }
-  }));
+  }
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();

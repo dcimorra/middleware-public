@@ -374,3 +374,32 @@ func TestResetForgetsTheSessionAndUnknownDomainsAreRefused(t *testing.T) {
 		t.Fatal("empty message accepted")
 	}
 }
+
+func TestARunningTurnShowsWhatItDidSoFarToWhoeverOpensItLater(t *testing.T) {
+	hold := make(chan struct{})
+	p := &fakeProvider{key: "fake", hold: hold, script: []agent.Event{
+		{Kind: agent.KindText, Text: "working"},
+		{Kind: agent.KindTool, Tool: "Bash"},
+		{Kind: agent.KindResult, Text: "ok"},
+	}}
+	m, _, bus := newManager(t, p)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+	if _, err := m.Send("a.test", "one", ""); err != nil {
+		t.Fatal(err)
+	}
+	ev := waitFor(t, ch, "agent.tool")
+	if ev.Data["seq"] != 2 {
+		t.Fatalf("the stream's event has no seq: %v", ev.Data)
+	}
+	// A panel reloaded now: it reads the conversation, not the stream.
+	c, _ := m.History("a.test")
+	if !c.Running || len(c.Live) != 2 || c.Live[0].Type != "agent.text" || c.Live[0].Data["text"] != "working" || c.Live[1].Seq != 2 {
+		t.Fatalf("running %v, live %+v", c.Running, c.Live)
+	}
+	close(hold)
+	waitFor(t, ch, "agent.done")
+	if c, _ := m.History("a.test"); c.Running || len(c.Live) != 0 || c.Turns[len(c.Turns)-1].Text != "working" {
+		t.Fatalf("after the end: %+v", c)
+	}
+}

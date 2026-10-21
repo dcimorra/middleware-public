@@ -395,8 +395,8 @@ worker. The house will not serialize them for you.
 ## 5. Long work from a turn
 
 When this turn ends, **everything it spawned is killed as a process group**,
-and above that there is a hard limit of two hours per turn. A build, an
-`npm ci`, a migration, a long import: none of it may hang from the turn.
+and the operator may stop a turn at any moment. A build, an `npm ci`, a
+migration, a long import: none of it may hang from the turn.
 
 ```sh
 setsid nohup npm run build >/tmp/shop-build.log 2>&1 </dev/null &

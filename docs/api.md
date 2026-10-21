@@ -377,7 +377,7 @@ through the manifest; these routes are what the panel reads beside them.
 | --- | --- | --- |
 | GET | `/agents` | → `{providers: [{provider, available, where, models: []}], capacity}` (`where` is the binary's path, or why it cannot run) |
 | GET | `/agents/capacity` | → `{used, max, reserved_for_house, providers: {claude: {used, max}}, running: [{domain, provider, started, turn_id}]}`; a provider's `max` of 0 means no cap of its own |
-| GET | `/sites/{domain}/chat` | → `{domain, provider, model, session_id, running, turns: [{id, role, text, cost, at, tools, questions: [{question, options, recommended}]}]}` |
+| GET | `/sites/{domain}/chat` | → `{domain, provider, model, session_id, running, live, turns: [{id, role, text, cost, at, tools, questions: [{question, options, recommended}]}]}`; while a turn runs, `live: [{seq, type, data}]` is what it showed so far, the same events the stream sent (whose `data.seq` matches), so a client that opens it late draws it where it is. A turn does not depend on any client and has no time limit; it ends on its own or with `/stop` |
 | POST | `/sites/{domain}/chat` | `{text, model?}` → `{turn_id}`; progress on `/events/stream` as `agent.*`; 409 while a turn runs in this conversation; 429 when the house, or the provider, has no free slot (the message says how many of how many; `agent.capacity` is emitted with the numbers) |
 | POST | `/sites/{domain}/chat/stop` | → `{ok}`; 409 when nothing runs |
 | DELETE | `/sites/{domain}/chat` | → `{ok}` (new conversation) |

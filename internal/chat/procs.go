@@ -21,9 +21,11 @@ import (
 // up because it runs in a container and does not see them.
 const MarkVar = "MIDDLEWARE_CHAT_ID"
 
-// TurnLimit cuts a turn that runs this long. An agent stuck in a loop of
-// tool calls would otherwise hold a slot of the house's capacity forever.
-var TurnLimit = 2 * time.Hour
+// TurnLimit cuts a turn that runs this long; zero, the default, never
+// cuts one. A two-hour cut lost the long jobs operators leave running
+// overnight; a turn stuck in a loop is stopped from the panel, and what it
+// left running is listed under its processes either way.
+var TurnLimit time.Duration
 
 // Proc is a process a conversation left running.
 type Proc struct {

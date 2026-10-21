@@ -91,6 +91,8 @@ type Conversation struct {
 	Turns     []Turn `json:"turns"`
 	// Running is not stored: it is filled by History from the manager.
 	Running bool `json:"running,omitempty"`
+	// Live is the running turn so far, filled by History too.
+	Live []Live `json:"live,omitempty"`
 }
 
 // Options configure a Manager.
@@ -135,6 +137,65 @@ type running struct {
 	// queued are messages sent while the turn ran, kept for the next.
 	queued      []string
 	queuedModel string
+	// live is what the turn showed so far, so a panel that reloads (or
+	// opens later, on another device) sees the turn where it is and not
+	// an empty bubble until it ends.
+	live []Live
+}
+
+// Live is one progress event of a running turn, as the stream sent it.
+// Seq lets a panel that read them drop the same events arriving again on
+// the stream.
+type Live struct {
+	Seq  int            `json:"seq"`
+	Type string         `json:"type"`
+	Data map[string]any `json:"data"`
+}
+
+// maxLive bounds what a turn keeps in memory: each piece is a whole
+// message or tool call, not a token, so a long turn stays far below it.
+const maxLive = 5000
+
+// progress emits a progress event of a running turn and keeps it for
+// History.
+func (m *Manager) progress(typ, name, msg string, data map[string]any) {
+	m.mu.Lock()
+	if r := m.running[name]; r != nil {
+		data["seq"] = len(r.live) + 1
+		if len(r.live) < maxLive {
+			r.live = append(r.live, Live{Seq: len(r.live) + 1, Type: typ, Data: data})
+		}
+	}
+	m.mu.Unlock()
+	m.emit(typ, name, "", msg, data)
+}
+
+// AgentPIDs are the agent CLIs of the turns running now. The guard asks
+// for them so it does not judge an agent as a site process: an agent's
+// prompt names other sites' folders (the ones it is denied), and the
+// guard killed every turn a second in for "working in another site's
+// folder". The jail is what bounds an agent.
+func (m *Manager) AgentPIDs() []int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []int
+	for _, r := range m.running {
+		if pr, ok := r.run.(interface{ PID() int }); ok && pr.PID() > 1 {
+			out = append(out, pr.PID())
+		}
+	}
+	return out
+}
+
+// withLimit is the turn's context: cut at TurnLimit when there is one.
+func withLimit(started time.Time) (context.Context, context.CancelFunc, time.Time) {
+	if TurnLimit <= 0 {
+		ctx, cancel := context.WithCancel(context.Background())
+		return ctx, cancel, time.Time{}
+	}
+	deadline := started.Add(TurnLimit)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	return ctx, cancel, deadline
 }
 
 // Name is a conversation's name: the domain for the panel's, and
@@ -413,7 +474,10 @@ func (m *Manager) History(domain string) (Conversation, error) {
 		}
 	}
 	m.mu.Lock()
-	_, c.Running = m.running[domain]
+	if r, ok := m.running[domain]; ok {
+		c.Running = true
+		c.Live = append([]Live(nil), r.live...)
+	}
 	m.mu.Unlock()
 	return c, nil
 }
@@ -556,8 +620,7 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 	// apart made a turn cut at its limit look, now and then, like one that
 	// ended on its own without a result.
 	started := time.Now()
-	deadline := started.Add(TurnLimit)
-	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	ctx, cancel, deadline := withLimit(started)
 	m.running[name] = &running{turnID: turnID, provider: s.Provider, origin: c.Origin, model: model, started: started, deadline: deadline, cancel: cancel, done: make(chan struct{})}
 	m.mu.Unlock()
 
@@ -635,11 +698,11 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel context.CancelFunc) {
 	defer cancel()
 	domain, _ := split(name)
-	started, origin, model := time.Now(), "", s.Model
-	deadline := started.Add(TurnLimit)
+	origin, model := "", s.Model
+	var deadline time.Time
 	m.mu.Lock()
 	if r := m.running[name]; r != nil {
-		started, origin, model, deadline = r.started, r.origin, r.model, r.deadline
+		origin, model, deadline = r.origin, r.model, r.deadline
 	}
 	m.mu.Unlock()
 	var all []agent.Event
@@ -656,7 +719,7 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 	ask := func(piece string) {
 		for _, q := range ParseQuestions(piece) {
 			questions = append(questions, q)
-			m.emit("agent.question", name, "", q.Question, map[string]any{"turn_id": turnID, "question": q.Question, "options": q.Options, "recommended": q.Recommended})
+			m.progress("agent.question", name, q.Question, map[string]any{"turn_id": turnID, "question": q.Question, "options": q.Options, "recommended": q.Recommended})
 		}
 	}
 	var threads []Thread
@@ -681,10 +744,10 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 					th.Text += "\n\n"
 				}
 				th.Text += ev.Text
-				m.emit("agent.text", name, "", "", map[string]any{"turn_id": turnID, "text": ev.Text, "thread": ev.Thread})
+				m.progress("agent.text", name, "", map[string]any{"turn_id": turnID, "text": ev.Text, "thread": ev.Thread})
 			} else {
 				th.Tools = append(th.Tools, ev.Tool)
-				m.emit("agent.tool", name, "", "", map[string]any{"turn_id": turnID, "tool": ev.Tool, "input": ev.Input, "thread": ev.Thread})
+				m.progress("agent.tool", name, "", map[string]any{"turn_id": turnID, "tool": ev.Tool, "input": ev.Input, "thread": ev.Thread})
 			}
 			continue
 		}
@@ -694,11 +757,11 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 				text.WriteString("\n\n")
 			}
 			text.WriteString(ev.Text)
-			m.emit("agent.text", name, "", "", map[string]any{"turn_id": turnID, "text": ev.Text})
+			m.progress("agent.text", name, "", map[string]any{"turn_id": turnID, "text": ev.Text})
 			ask(ev.Text)
 		case agent.KindTool:
 			tools = append(tools, ev.Tool)
-			m.emit("agent.tool", name, "", "", map[string]any{"turn_id": turnID, "tool": ev.Tool, "input": ev.Input})
+			m.progress("agent.tool", name, "", map[string]any{"turn_id": turnID, "tool": ev.Tool, "input": ev.Input})
 		case agent.KindCost:
 			if ev.Cost > cost {
 				cost = ev.Cost
@@ -723,7 +786,7 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 	if !ended && errText == "" {
 		errText = "the agent ended without a result"
 	}
-	if !time.Now().Before(deadline) {
+	if !deadline.IsZero() && !time.Now().Before(deadline) {
 		errText = fmt.Sprintf("the turn ran for %s and was cut off; what it left running is listed under its processes", TurnLimit)
 		m.emit("agent.turn_limit", name, "error", errText, map[string]any{"turn_id": turnID})
 	}
@@ -954,10 +1017,10 @@ func (m *Manager) Recover(ctx context.Context) {
 			continue
 		}
 		s.Model = rf.Model
-		cctx, cancel := context.WithDeadline(context.Background(), rf.Started.Add(TurnLimit))
+		cctx, cancel, deadline := withLimit(rf.Started)
 		run := adopter.Adopt(cctx, rf.PID, rf.Stream)
 		m.mu.Lock()
-		m.running[rf.Name] = &running{turnID: rf.TurnID, provider: rf.Provider, origin: rf.Origin, model: rf.Model, started: rf.Started, deadline: rf.Started.Add(TurnLimit), cancel: cancel, done: make(chan struct{}), run: run}
+		m.running[rf.Name] = &running{turnID: rf.TurnID, provider: rf.Provider, origin: rf.Origin, model: rf.Model, started: rf.Started, deadline: deadline, cancel: cancel, done: make(chan struct{}), run: run}
 		m.mu.Unlock()
 		m.emit("agent.adopted", rf.Name, "", "a turn from before the restart, picked up", map[string]any{"turn_id": rf.TurnID, "pid": rf.PID})
 		go m.follow(rf.Name, rf.TurnID, s, run, cancel)
