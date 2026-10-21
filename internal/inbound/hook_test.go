@@ -1,6 +1,7 @@
 package inbound_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"io"
@@ -637,5 +638,73 @@ func TestThePortsDoorAndTheVPNShareThePortsWithoutLockingEachOtherOut(t *testing
 	resp.Body.Close()
 	if resp.StatusCode != 200 || !strings.Contains(string(b), "site=vpn.test") {
 		t.Fatalf("at the VPN's address: %d %s", resp.StatusCode, b)
+	}
+}
+
+// prefixed gives back the bytes the VPN door read before relaying.
+type prefixed struct {
+	net.Conn
+	r io.Reader
+}
+
+func (p *prefixed) Read(b []byte) (int, error) { return p.r.Read(b) }
+
+// A device on alpha's VPN opens a VPN-only site of beta, a node with no
+// VPN of its own: alpha's resolver answers the name, alpha's VPN door
+// passes the connection still encrypted, and beta serves it with its own
+// certificate as one that came through the VPN, from that device.
+func TestOneNodesVPNReachesAnotherNodesVPNOnlySite(t *testing.T) {
+	a := newHouse(t, "a.test")
+	b := newHouse(t, "vpnb.test")
+	b.hook.VPNOnly = func(host string) ([]string, bool) { return []string{"phone"}, host == "vpnb.test" }
+	a.hook.VPNPorts = inbound.VPNPorts{HTTP: "0", HTTPS: "0", DNS: "0"}
+	a.hook.VPNAddress = func() (netip.Addr, bool) { return netip.MustParseAddr("127.0.0.1"), true }
+	a.hook.DeviceOf = func(netip.Addr) string { return "phone" }
+	a.hook.Elsewhere = func(host string) bool { return host == "vpnb.test" }
+	relayed := make(chan string, 1)
+	a.hook.Relay = func(c net.Conn, host string, pre []byte, device string) error {
+		relayed <- host + " " + device
+		b.hook.AcceptRelayed(&prefixed{Conn: c, r: io.MultiReader(bytes.NewReader(pre), c)}, device)
+		return nil
+	}
+	var vhttps, vdns string
+	for deadline := time.Now().Add(5 * time.Second); vhttps == ""; {
+		_, vhttps, vdns = a.hook.VPNAddrs()
+		if time.Now().After(deadline) {
+			t.Fatal("the VPN door did not open")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := dnsAsk(t, vdns, "vpnb.test", 1); got != "127.0.0.1" {
+		t.Fatalf("alpha's VPN resolver does not answer beta's name: %q", got)
+	}
+	c := &http.Client{Timeout: 40 * time.Second, Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{RootCAs: b.ca.Pool()},
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, vhttps)
+		},
+	}}
+	resp, body := get(t, c, "https://vpnb.test/")
+	if resp.StatusCode != 200 || !strings.Contains(body, "site=vpnb.test") {
+		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+	if got := <-relayed; got != "vpnb.test phone" {
+		t.Fatalf("relayed %q", got)
+	}
+	// alpha's own site through the same door is served by alpha.
+	ca := &http.Client{Timeout: 40 * time.Second, Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{RootCAs: a.ca.Pool()},
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, vhttps)
+		},
+	}}
+	if resp, body := get(t, ca, "https://a.test/"); resp.StatusCode != 200 || !strings.Contains(body, "site=a.test") {
+		t.Fatalf("alpha's own: %d %s", resp.StatusCode, body)
+	}
+	// Another device, relayed: the site is narrowed to "phone".
+	a.hook.DeviceOf = func(netip.Addr) string { return "laptop" }
+	c.CloseIdleConnections()
+	if resp, _ := get(t, c, "https://vpnb.test/"); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("another device got %d", resp.StatusCode)
 	}
 }

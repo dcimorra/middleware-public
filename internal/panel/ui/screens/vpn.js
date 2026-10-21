@@ -76,7 +76,11 @@ export function vpnCard() {
       }
       try { await api.post(VPN + "/only", { enabled: on }); toast(t(on ? "vpn.panelOnlyDone" : "vpn.panelOpenDone"), "ok"); } catch (e) { only.input.checked = !on; toastError(e); }
     });
-    el.append(h("hr"), h("div", { class: "field" }, only.el, h("p", { class: "small muted" }, t("vpn.panelOnlyHint"))));
+    // In a network the switch is the network's: it closes or opens every
+    // node's panel, and says so.
+    const net = store.get("nodes");
+    el.append(h("hr"), h("div", { class: "field" }, only.el, h("p", { class: "small muted" }, t("vpn.panelOnlyHint")),
+      net && net.network ? h("p", { class: "small" }, t("vpn.panelOnlyNetwork")) : null));
   }
 
   async function addDevice() {

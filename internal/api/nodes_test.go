@@ -57,7 +57,7 @@ func nodeFixture(t *testing.T, name string, port int) (*fixture, *nodes.Mesh) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.srv.RegisterNodes(m)
+	f.srv.RegisterNodes(m, nil)
 	m.Serve(f.srv)
 	t.Cleanup(func() { _ = m.Leave(context.Background()) })
 	return f, m
@@ -167,7 +167,7 @@ func TestAJoinWithoutHelperOrCodeSaysWhy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.srv.RegisterNodes(m)
+	f.srv.RegisterNodes(m, nil)
 	if res, out := f.call("POST", "/api/v1/nodes/invite", map[string]string{"endpoint": "198.51.100.1:51821"}); res.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("%d %s", res.StatusCode, text(out))
 	}

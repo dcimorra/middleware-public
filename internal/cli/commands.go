@@ -35,6 +35,10 @@ const Usage = `  setup        print a one-time code to create the operator in th
   events       recent events (-f to follow)
   system       version, uptime, load, memory, disk
   token        add | list | rm — API tokens for scripts
+  nodes        the network of nodes and its members
+  nodes panel open|close
+               every node's panel open to the internet again, or only through
+               a VPN (the way out when no VPN of the network answers)
 
   Every command takes --root <dir> and --json (machine-readable output).
   The CLI talks to the running supervisor over data/api.sock; without the
@@ -72,6 +76,8 @@ func (e *Env) Run(name string, args []string) error {
 		return e.system(args)
 	case "token":
 		return e.token(args)
+	case "nodes":
+		return e.nodes(args)
 	}
 	return fmt.Errorf("unknown command %q", name)
 }
@@ -861,6 +867,80 @@ func (e *Env) printLines(lines []struct{ Status, Text string }) error {
 	}
 	if failed > 0 {
 		return fmt.Errorf("%d name(s) failed; they are retried with backoff", failed)
+	}
+	return nil
+}
+
+// --- nodes ---------------------------------------------------------------
+
+func (e *Env) nodes(args []string) error {
+	fs := flag.NewFlagSet("nodes", flag.ContinueOnError)
+	var c common
+	c.bind(fs)
+	pos, err := parse(fs, args)
+	if err != nil {
+		return err
+	}
+	cl, err := e.client(c)
+	if err != nil {
+		return err
+	}
+	if len(pos) >= 1 && pos[0] == "panel" {
+		if len(pos) != 2 || (pos[1] != "open" && pos[1] != "close") {
+			return fmt.Errorf("usage: middleware nodes panel open|close")
+		}
+		done := "every node's panel answers the internet again (within a minute on the others)"
+		if pos[1] == "close" {
+			done = "every node's panel answers only through a VPN (within a minute on the others)"
+		}
+		return e.simple(c, cl, "PUT", "/api/v1/nodes/settings", map[string]bool{"panel_vpn_only": pos[1] == "close"}, done)
+	}
+	var raw []byte
+	if err := cl.Do("GET", "/api/v1/nodes", nil, &raw); err != nil {
+		return err
+	}
+	if c.json {
+		e.printJSON(raw)
+		return nil
+	}
+	var in struct {
+		Self struct {
+			Name string `json:"name"`
+			IP   string `json:"ip"`
+		} `json:"self"`
+		Network  string `json:"network"`
+		Up       bool   `json:"up"`
+		Error    string `json:"error"`
+		Settings struct {
+			PanelVPNOnly bool `json:"panel_vpn_only"`
+		} `json:"settings"`
+		Members []struct {
+			Name     string `json:"name"`
+			IP       string `json:"ip"`
+			Endpoint string `json:"endpoint"`
+			Version  string `json:"version"`
+			Online   bool   `json:"online"`
+		} `json:"members"`
+	}
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return err
+	}
+	if in.Network == "" {
+		fmt.Fprintf(e.Stdout, "%s is in no network\n", in.Self.Name)
+		return nil
+	}
+	KeyValues(e.Stdout, [][2]string{
+		{"node", in.Self.Name + " " + in.Self.IP},
+		{"tunnel", yesNo(in.Up) + " " + in.Error},
+		{"panel only by vpn", yesNo(in.Settings.PanelVPNOnly)},
+	})
+	rows := [][]string{}
+	for _, m := range in.Members {
+		rows = append(rows, []string{m.Name, m.IP, orDash(m.Endpoint), m.Version, yesNo(m.Online)})
+	}
+	if len(rows) > 0 {
+		fmt.Fprintln(e.Stdout)
+		Table(e.Stdout, []string{"NODE", "IP", "ENDPOINT", "VERSION", "ONLINE"}, rows)
 	}
 	return nil
 }

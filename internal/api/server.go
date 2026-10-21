@@ -124,8 +124,11 @@ type Server struct {
 	onSettings []func(settings.Settings)
 	// nodes, when set, are the installations linked to this one
 	// (RegisterNodes sets it); summaries are the parts of /node/summary.
-	mesh      *nodes.Mesh
-	summaries map[string]Summarizer
+	mesh *nodes.Mesh
+	// meshCanClose says whether the network's panels may be closed to
+	// all but a VPN from here (this node has one, with a device).
+	meshCanClose func() error
+	summaries    map[string]Summarizer
 }
 
 // Deployer is an alternative way to deploy a site, set with SetDeployer.

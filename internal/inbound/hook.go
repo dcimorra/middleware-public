@@ -63,6 +63,11 @@ type Hook struct {
 	VPNPaths func(host string) []string
 	// DeviceOf names the VPN peer with an address.
 	DeviceOf func(ip netip.Addr) string
+	// Elsewhere says another node of the network answers for host; Relay
+	// passes it a VPN connection for host (relay.go). Both nil outside a
+	// network.
+	Elsewhere func(host string) bool
+	Relay     func(c net.Conn, host string, pre []byte, device string) error
 	// VPNPorts overrides the VPN door's ports (tests).
 	VPNPorts VPNPorts
 
@@ -91,6 +96,8 @@ type Hook struct {
 	// read by every new connection.
 	vpnCovered bool
 	vpnLocal   atomic.Pointer[netip.Addr]
+	// relayIn serves what other nodes relay here (relay.go).
+	relayIn *chanListener
 }
 
 type listener struct {
@@ -180,6 +187,12 @@ func (h *Hook) Wrap(next http.Handler) http.Handler {
 				r.Header.Set("X-Forwarded-Proto", "http")
 			}
 		} else if door == VPN {
+			// Another node's name over plain HTTP: the relay goes by the
+			// name in the TLS handshake, so the device is sent to https.
+			if r.TLS == nil && h.elsewhere(host) {
+				http.Redirect(w, r, "https://"+host+r.URL.RequestURI(), http.StatusFound)
+				return
+			}
 			if r.TLS != nil {
 				r.Header.Set("X-Forwarded-Proto", "https")
 			} else {
@@ -352,8 +365,13 @@ func (h *Hook) openLocked(st State) error {
 		},
 	}}
 	// ServeTLS with no files uses TLSConfig.GetCertificate and turns on
-	// HTTP/2; tls.NewListener by hand would not.
-	go h.https.srv.ServeTLS(ln, "", "")
+	// HTTP/2; tls.NewListener by hand would not. Under it, the VPN's
+	// connections for another node's names are taken out and relayed.
+	go h.https.srv.ServeTLS(h.relayed(ln, func(c net.Conn) bool {
+		a := h.vpnLocal.Load()
+		ap, err := netip.ParseAddrPort(c.LocalAddr().String())
+		return a != nil && err == nil && ap.Addr().Unmap() == *a
+	}), "", "")
 	return nil
 }
 

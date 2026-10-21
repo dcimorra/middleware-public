@@ -2,6 +2,7 @@ package nodes
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/netip"
@@ -219,4 +220,72 @@ func TestAnOldRosterDoesNotBringARemovedNodeBack(t *testing.T) {
 	if _, ex := m.mergeLocked([]Member{{ID: "self", IP: ip, PublicKey: pub, Updated: t0.Add(time.Minute), Removed: true}}); !ex {
 		t.Fatal("a newer removal of this node was not noticed")
 	}
+}
+
+// beta's names reach alpha in a round; a connection alpha relays for one
+// of them arrives at beta with the device it came from, and the network's
+// "panel only through a VPN" set at beta reaches alpha.
+func TestNamesRelayAndSettingsTravelTheNetwork(t *testing.T) {
+	ctx := context.Background()
+	port := freePort(t)
+	relay := port
+	for relay == port {
+		relay = freePort(t)
+	}
+	a, b := newNode(t, "alpha", port), newNode(t, "beta", port)
+	a.opts.RelayPort, b.opts.RelayPort = relay, relay
+	b.opts.Names = func() []string { return []string{"b.test", "panel-b.test"} }
+	got := make(chan string, 1)
+	b.opts.OnRelay = func(c net.Conn, device string) {
+		buf := make([]byte, 5)
+		_, _ = io.ReadFull(c, buf)
+		_, _ = c.Write([]byte("ok:" + device))
+		got <- string(buf)
+		c.Close()
+	}
+	var settings []NetSettings
+	a.opts.OnSettings = func(s NetSettings) { settings = append(settings, s) }
+
+	code, _, err := a.Invite(ctx, "198.51.100.1:51821")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Join(ctx, code, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.SetSettings(NetSettings{PanelVPNOnly: true}); err != nil {
+		t.Fatal(err)
+	}
+	a.Gossip(ctx)
+	if x, ok := a.Owner("www.b.test"); !ok || x.Name != "beta" {
+		t.Fatalf("alpha does not know who serves www.b.test: %v %v", x, ok)
+	}
+	if _, ok := a.Owner("nobody.test"); ok {
+		t.Fatal("a name nobody serves has an owner")
+	}
+	if !a.Settings().PanelVPNOnly || len(settings) == 0 || !settings[len(settings)-1].PanelVPNOnly {
+		t.Fatalf("the setting did not travel: %+v %+v", a.Settings(), settings)
+	}
+
+	dev, client := net.Pipe()
+	go func() { _ = a.Relay(dev, "b.test", []byte("hello"), "phone") }()
+	reply := make([]byte, 8)
+	if _, err := io.ReadFull(client, reply); err != nil || string(reply) != "ok:phone" {
+		t.Fatalf("%q %v", reply, err)
+	}
+	if first := <-got; first != "hello" {
+		t.Fatalf("beta read %q first", first)
+	}
+
+	// Not a member, or not the secret: the relay door closes.
+	c, err := net.Dial("tcp", netip.AddrPortFrom(b.st.IP, uint16(b.opts.RelayPort)).String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = c.Write([]byte("MWRELAY1 wrong - \nhello"))
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if n, _ := c.Read(make([]byte, 8)); n != 0 {
+		t.Fatal("the relay door answered without the secret")
+	}
+	c.Close()
 }

@@ -144,10 +144,17 @@ func (m *Mesh) doorHandler() http.Handler {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == APIPrefix+"/mesh/roster":
 			m.mu.Lock()
-			out := m.rosterLocked()
+			out := rosterAnswer{Members: m.rosterLocked(), Settings: m.st.Settings}
 			m.seen[who.ID] = m.now()
 			m.mu.Unlock()
 			doorJSON(w, http.StatusOK, out)
+			return
+		case r.Method == http.MethodGet && r.URL.Path == APIPrefix+"/mesh/names":
+			names := []string{}
+			if m.opts.Names != nil {
+				names = m.opts.Names()
+			}
+			doorJSON(w, http.StatusOK, names)
 			return
 		case r.Method == http.MethodPost && r.URL.Path == APIPrefix+"/mesh/leave":
 			m.left(who.ID)

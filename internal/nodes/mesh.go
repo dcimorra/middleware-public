@@ -62,6 +62,9 @@ const (
 	// DefaultAPIPort is where the nodes' API listens, on the mesh address
 	// only.
 	DefaultAPIPort = 46101
+	// DefaultRelayPort is where a node takes the connections another
+	// node's VPN door relays to it (relay.go), on the mesh address only.
+	DefaultRelayPort = 46102
 	// Keepalive keeps a node behind NAT reachable and every tunnel warm, at
 	// the cost of one small packet every 25 seconds per node.
 	Keepalive = 25
@@ -130,6 +133,8 @@ type state struct {
 	Version string    `json:"version,omitempty"`
 	Members []Member  `json:"members,omitempty"`
 	Invites []invite  `json:"invites,omitempty"`
+	// Settings are the network's, the same on every node.
+	Settings NetSettings `json:"settings,omitzero"`
 }
 
 // Network is what the mesh needs from the machine: the interface and its
@@ -149,6 +154,17 @@ type Options struct {
 	Net      Network
 	Subnet   netip.Prefix
 	APIPort  int
+	// RelayPort is the relay door's (relay.go).
+	RelayPort int
+	// Names lists what this node answers for (its sites and its panel),
+	// for the other nodes' VPN doors.
+	Names func() []string
+	// OnSettings runs when the network's settings change, here or by a
+	// round, and once at start.
+	OnSettings func(NetSettings)
+	// OnRelay serves a connection relayed by another node's VPN door, for
+	// a VPN device of that node.
+	OnRelay func(c net.Conn, device string)
 	// PublicIP finds this machine's public address, to suggest the
 	// endpoint; nil suggests nothing.
 	PublicIP func(ctx context.Context) (string, error)
@@ -182,6 +198,9 @@ type Mesh struct {
 	// the address changes.
 	trans   *http.Transport
 	transIP netip.Addr
+	// names are what each member answers for, as read in the last round.
+	names map[string][]string
+	relay net.Listener
 }
 
 // Open reads the mesh state, creating this node's identity the first time.
@@ -192,7 +211,10 @@ func Open(opts Options) (*Mesh, error) {
 	if opts.APIPort == 0 {
 		opts.APIPort = DefaultAPIPort
 	}
-	m := &Mesh{opts: opts, now: time.Now, seen: map[string]time.Time{}}
+	if opts.RelayPort == 0 {
+		opts.RelayPort = DefaultRelayPort
+	}
+	m := &Mesh{opts: opts, now: time.Now, seen: map[string]time.Time{}, names: map[string][]string{}}
 	if err := os.MkdirAll(opts.Dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -316,6 +338,7 @@ type Info struct {
 	Up        bool           `json:"up"`
 	Error     string         `json:"error,omitempty"`
 	Suggested string         `json:"suggested_endpoint,omitempty"`
+	Settings  NetSettings    `json:"settings"`
 }
 
 // MemberStatus is a member with what the tunnel says about it.
@@ -329,7 +352,7 @@ type MemberStatus struct {
 // Info reads the mesh and, when in one, the interface.
 func (m *Mesh) Info(ctx context.Context) Info {
 	m.mu.Lock()
-	in := Info{Self: m.selfMemberLocked(), Network: m.st.Network, Port: m.st.Port, APIPort: m.opts.APIPort, Error: m.lastErr, Members: []MemberStatus{}}
+	in := Info{Self: m.selfMemberLocked(), Network: m.st.Network, Port: m.st.Port, APIPort: m.opts.APIPort, Error: m.lastErr, Members: []MemberStatus{}, Settings: m.st.Settings}
 	if in.Network == "" {
 		in.Self = Member{ID: m.self.ID, Name: m.self.Name}
 	}
@@ -534,9 +557,10 @@ type joinRequest struct {
 }
 
 type joinAnswer struct {
-	Network string   `json:"network"`
-	Secret  string   `json:"secret"`
-	Roster  []Member `json:"roster"`
+	Network  string      `json:"network"`
+	Secret   string      `json:"secret"`
+	Roster   []Member    `json:"roster"`
+	Settings NetSettings `json:"settings"`
 }
 
 // Join enters the network a code was made in. endpoint is this node's
@@ -616,6 +640,7 @@ func (m *Mesh) Join(ctx context.Context, raw, endpoint string) (Member, error) {
 	m.st.Secret = ans.Secret
 	m.st.Members = nil
 	m.mergeLocked(ans.Roster)
+	m.st.Settings = ans.Settings
 	m.dirty = true
 	err = m.saveLocked()
 	m.mu.Unlock()
@@ -626,6 +651,7 @@ func (m *Mesh) Join(ctx context.Context, raw, endpoint string) (Member, error) {
 		return Member{}, err
 	}
 	m.emit("mesh.joined", "", c.Inviter.Name, "this node joined the network of "+c.Inviter.Name)
+	m.settingsChanged()
 	return c.Inviter, nil
 }
 
@@ -679,7 +705,7 @@ func (m *Mesh) admit(from netip.Addr, req joinRequest) (joinAnswer, error) {
 		return joinAnswer{}, err
 	}
 	m.emit("mesh.member_added", "", name, "node "+name+" joined the network through this node")
-	return joinAnswer{Network: m.st.Network, Secret: m.st.Secret, Roster: m.rosterLocked()}, nil
+	return joinAnswer{Network: m.st.Network, Secret: m.st.Secret, Roster: m.rosterLocked(), Settings: m.st.Settings}, nil
 }
 
 func (m *Mesh) rosterLocked() []Member {
@@ -783,6 +809,7 @@ func (m *Mesh) wipe(typ, msg string) {
 	m.mu.Unlock()
 	_ = m.Apply(context.Background())
 	m.emit(typ, "warn", name, msg)
+	m.settingsChanged()
 }
 
 // left records that a member said it is leaving.
@@ -820,6 +847,7 @@ func (m *Mesh) Apply(ctx context.Context) error {
 	if st.Network == "" {
 		err = errors.Join(m.opts.Net.Firewall(ctx, helper.MeshFirewallArgs{Interface: Interface, Down: true}), m.opts.Net.Down(ctx))
 		m.closeDoor()
+		m.closeRelay()
 		m.mu.Lock()
 		m.applied.ip, m.applied.port = netip.Addr{}, 0
 	} else {
@@ -832,10 +860,13 @@ func (m *Mesh) Apply(ctx context.Context) error {
 		}
 		err = m.opts.Net.Apply(ctx, cfg, restart)
 		if err == nil {
-			err = m.opts.Net.Firewall(ctx, helper.MeshFirewallArgs{Interface: Interface, APIPort: m.opts.APIPort, ListenPort: st.Port})
+			err = m.opts.Net.Firewall(ctx, helper.MeshFirewallArgs{Interface: Interface, APIPort: m.opts.APIPort, RelayPort: m.opts.RelayPort, ListenPort: st.Port})
 		}
 		if err == nil {
 			err = m.openDoor(st.IP)
+		}
+		if err == nil {
+			err = m.openRelay(st.IP)
 		}
 		m.mu.Lock()
 		if err == nil {
@@ -878,12 +909,14 @@ func (m *Mesh) Run(ctx context.Context) {
 	if m.InNetwork() {
 		_ = m.Apply(ctx)
 	}
+	m.settingsChanged()
 	t := time.NewTicker(GossipEvery)
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			m.closeDoor()
+			m.closeRelay()
 			return
 		case <-t.C:
 		}
@@ -899,7 +932,8 @@ func (m *Mesh) round(ctx context.Context) {
 	}
 	type got struct {
 		id     string
-		roster []Member
+		roster rosterAnswer
+		names  []string
 	}
 	members := m.Members()
 	results := make(chan got, len(members))
@@ -910,20 +944,27 @@ func (m *Mesh) round(ctx context.Context) {
 			defer wg.Done()
 			cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 			defer cancel()
-			var r []Member
+			var r rosterAnswer
 			if m.Call(cctx, x, "GET", "/mesh/roster", nil, &r) == nil {
-				results <- got{x.ID, r}
+				var names []string
+				_ = m.Call(cctx, x, "GET", "/mesh/names", nil, &names)
+				results <- got{x.ID, r, names}
 			}
 		}(x)
 	}
 	wg.Wait()
 	close(results)
-	expelled := false
+	expelled, settings := false, false
 	m.mu.Lock()
 	for g := range results {
 		m.seen[g.id] = m.now()
-		_, ex := m.mergeLocked(g.roster)
+		m.names[g.id] = g.names
+		_, ex := m.mergeLocked(g.roster.Members)
 		expelled = expelled || ex
+		if g.roster.Settings.Updated.After(m.st.Settings.Updated) {
+			m.st.Settings = g.roster.Settings
+			settings, m.dirty = true, true
+		}
 	}
 	if len(m.st.Invites) != len(m.pruneInvitesLocked()) {
 		m.st.Invites = m.pruneInvitesLocked()
@@ -937,6 +978,9 @@ func (m *Mesh) round(ctx context.Context) {
 	if expelled {
 		m.wipe("mesh.expelled", "another node removed this one from the network")
 		return
+	}
+	if settings {
+		m.settingsChanged()
 	}
 	if !dirty && m.opts.Net != nil {
 		if st, err := m.opts.Net.Status(ctx); err == nil && !st.Up {

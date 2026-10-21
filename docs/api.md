@@ -240,7 +240,7 @@ device is gone (404, 410) gets it forgotten.
 | PUT | `/domains/prices` | `{usd: {ending: price}}` → the table, dated today |
 | GET | `/system/vitals` | → `{now, history: [{at, cpu, cores, iowait, load1, mem_used, mem_total, mem_pct, swap_used, swap_total, disk_used, disk_total, disk_pct}], episodes: [{from, to, reason, peak_cpu, avg_cpu, peak_mem, iowait_max, blamed: [{cmd, site, times, cpu}], shots}], lines}`; a sample every 5 s, an hour kept; `?history=0` leaves the hour out |
 | POST | `/system/restart` | → `{ok}` (SIGTERM to self; systemd restarts) |
-| GET | `/system/update` | → `{current, latest, available, checked_at, error, auto, installing, can_install, why}` (`why`: `not_release` or `no_helper`); `?check=1` asks GitHub (an answer under an hour old is reused) |
+| GET | `/system/update` | → `{current, latest, available, checked_at, next_check, every_minutes, error, auto, installing, can_install, why}` (`why`: `not_release` or `no_helper`); `?check=1` asks GitHub (an answer under an hour old is reused) |
 | POST | `/system/update/check` | → the same, asking GitHub now |
 | POST | `/system/update/install` | → `{ok, version}` once the helper installed the newest release; the supervisor restarts a second later (sites keep running). 409 when there is nothing newer, 502 when the helper refused or the download failed |
 | GET | `/system/ports` | → `{from, to, in_use: {port: domain}}` |
@@ -254,6 +254,7 @@ The settings object (`data/settings.json`):
   "listen": "127.0.0.1:46100",
   "ports": { "from": 33000, "to": 47000 },
   "pages": { "stopped": ["Title", "Message"] },
+  "update": { "auto": false, "every_minutes": 60 },
   "agents": {
     "max_concurrent": 8,
     "reserved_for_house": 1,
@@ -262,6 +263,11 @@ The settings object (`data/settings.json`):
   }
 }
 ```
+
+`update` is the self-update: `every_minutes` (1 to 10080, an hour when
+absent) is how often a new release is looked for, and `auto` whether one
+found installs itself; off, it is announced once (`update.available`) and
+waits for `POST /system/update/install`.
 
 `agents` caps the conversations: `max_concurrent` turns at once across
 every conversation (1..64), of which `reserved_for_house` (fewer than the
@@ -485,8 +491,9 @@ network and the credentials are decided at each machine's own panel.
 
 | method | path | body / result |
 | --- | --- | --- |
-| GET | `/nodes` | → `{self: {id, name, ip, public_key, endpoint, version}, network, port, api_port, up, error, invites, suggested_endpoint, members: [{id, name, ip, endpoint, version, updated, handshake, online, last_read}]}` |
+| GET | `/nodes` | → `{self: {id, name, ip, public_key, endpoint, version}, network, port, api_port, up, error, invites, suggested_endpoint, settings: {panel_vpn_only, updated}, members: [{id, name, ip, endpoint, version, updated, handshake, online, last_read}]}` |
 | PUT | `/nodes/self` | `{name}` → `{id, name}` |
+| PUT | `/nodes/settings` | `{panel_vpn_only}` → the network's settings, for every node within a round. Closing is refused (409) from a node without its VPN on and a device in it |
 | POST | `/nodes/invite` | `{endpoint}` (this node's public `ip:port`, needed only when the invitation creates the network) → `{code, expires}`; the code carries a key pair made for the newcomer, which replaces it on joining; single use, fifteen minutes. 503 without the helper |
 | POST | `/nodes/join` | `{code, endpoint}` (this node's public `ip:port`; empty behind NAT) → `{ok, inviter, members}`; the first contact goes through the tunnel, retried for forty seconds. 409 when already in a network, 502 naming the cause when the inviter does not answer |
 | POST | `/nodes/leave` | → `{ok}`; tells the others, takes the interface down |
@@ -501,8 +508,19 @@ network and the credentials are decided at each machine's own panel.
 
 On the mesh door only (not routes of this API): `POST /api/v1/mesh/join`
 (the newcomer, from the invitation's address, with its secret),
-`GET /api/v1/mesh/roster`, `POST /api/v1/mesh/leave` and
+`GET /api/v1/mesh/roster` (members and settings), `GET /api/v1/mesh/names`
+(what the node answers for), `POST /api/v1/mesh/leave` and
 `POST /api/v1/mesh/expelled`.
+
+With `panel_vpn_only` on, no panel of the network answers the internet:
+each answers through a VPN and through the mesh, and a node with no VPN
+of its own is managed from the others. A device on any node's VPN reaches
+every node: that node's resolver answers the others' names with its own
+VPN address, and its VPN door passes a TLS connection for one of them,
+undecrypted, to the node that serves it (TCP 46102 on the mesh address,
+after a line with the network's secret and the device's name), which
+serves it as one that came through its own VPN. `middleware nodes panel
+open` on any machine reopens every panel.
 
 ## VPN
 

@@ -101,6 +101,13 @@ func registerExtraModules(mgr *modules.Manager, root string, bus *events.Bus, dm
 		return err
 	}
 	v, err := vpn.New(vpn.Options{Root: root, Helper: helper.Dial(""), Secrets: box, Bus: bus,
+		// In a network, closing this panel to all but the VPN closes every
+		// node's, and opening it opens them.
+		OnOnly: func(enabled bool) {
+			if theMesh != nil && theMesh.InNetwork() {
+				_ = theMesh.SetSettings(nodes.NetSettings{PanelVPNOnly: enabled})
+			}
+		},
 		// The address the ports door publishes, when the operator set
 		// one; otherwise found the same way the publisher finds it.
 		PublicIP: func(ctx context.Context) (string, error) {
@@ -197,7 +204,12 @@ func buildWire(a *app.App) app.Hook {
 	srv.RegisterUpdate(w.updater)
 	w.mesh = buildMesh(a, srv)
 	if w.mesh != nil {
-		srv.RegisterNodes(w.mesh)
+		srv.RegisterNodes(w.mesh, func() error {
+			if theVPN == nil || !theVPN.Ready() {
+				return errors.New("this node needs its VPN on, with a device, before every panel is closed to everything else: it is the way in that is known to work")
+			}
+			return nil
+		})
 		w.mesh.Serve(srv)
 	}
 	w.shots = shots.New(shots.Options{
@@ -622,6 +634,13 @@ func buildUpdater(a *app.App) *update.Updater {
 			s, err := settings.Load(a.Root)
 			return err == nil && s.Update.Auto
 		},
+		Every: func() time.Duration {
+			s, err := settings.Load(a.Root)
+			if err != nil {
+				return 0
+			}
+			return s.Update.Every()
+		},
 		Helper: hc.Available,
 		Install: func(ctx context.Context, version string) error {
 			_, err := hc.UpdateInstall(ctx, version)
@@ -788,6 +807,10 @@ func fileExists(p string) bool {
 // here once: their tokens revoked and their file removed, so nothing keeps
 // opening this machine to a node that is now expected to come through the
 // tunnel.
+// theMesh is the node's network, for the hooks built before it (the
+// inbound's panel rule, the VPN's switch).
+var theMesh *nodes.Mesh
+
 func buildMesh(a *app.App, srv *api.Server) *nodes.Mesh {
 	host, _ := os.Hostname()
 	root := a.Root
@@ -798,7 +821,38 @@ func buildMesh(a *app.App, srv *api.Server) *nodes.Mesh {
 	if os.Getenv("MIDDLEWARE_MESH_LOOPBACK") == "1" {
 		network, subnet = nodes.LoopbackNetwork{}, netip.MustParsePrefix("127.77.0.0/16")
 	}
+	var m *nodes.Mesh
 	m, err := nodes.Open(nodes.Options{
+		// What this node answers for, for the other nodes' VPN doors: its
+		// sites, their other names and its panel.
+		Names: func() []string {
+			var out []string
+			for h := range a.Engine.Hosts() {
+				out = append(out, h)
+			}
+			if d := a.Proxy.PanelDomain(); d != "" {
+				out = append(out, d)
+			}
+			return out
+		},
+		OnRelay: func(c net.Conn, device string) {
+			if inboundHook == nil {
+				_ = c.Close()
+				return
+			}
+			inboundHook.AcceptRelayed(c, device)
+		},
+		// The network's "panel only through a VPN" is also this node's
+		// VPN rule when it has a VPN to close it to, so the kernel's wall
+		// stands behind the house's here too.
+		OnSettings: func(st nodes.NetSettings) {
+			if m == nil || !m.InNetwork() || theVPN == nil || !theVPN.Ready() || theVPN.PanelOnly() == st.PanelVPNOnly {
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = theVPN.SetOnly(ctx, st.PanelVPNOnly)
+		},
 		Dir:      filepath.Join(dataDir(a), "nodes"),
 		Hostname: host,
 		Version:  Version,
@@ -815,6 +869,14 @@ func buildMesh(a *app.App, srv *api.Server) *nodes.Mesh {
 	if err != nil {
 		a.Bus.Emit(events.Event{Type: "nodes.error", Actor: "engine", Level: "error", Message: "the nodes' mesh is unavailable: " + err.Error()})
 		return nil
+	}
+	theMesh = m
+	if inboundHook != nil {
+		inboundHook.Elsewhere = func(host string) bool {
+			_, ok := m.Owner(host)
+			return ok
+		}
+		inboundHook.Relay = m.Relay
 	}
 	var legacy []struct {
 		Name    string `json:"name"`

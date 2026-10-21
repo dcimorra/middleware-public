@@ -16,6 +16,8 @@ import (
 const MeshTable = "middleware_mesh"
 
 // meshTemplate closes the mesh interface to everything but the nodes' API.
+// The relay port carries what another node's VPN door passes on for this
+// node's names (a device on that VPN opening this node's panel or sites).
 // Being in the same network as another machine must not make its SSH, a
 // database listening on every address or a site's port reachable from it:
 // what the mesh is for is the middleware talking to the middleware.
@@ -32,6 +34,9 @@ table inet {{.Table}} {
 		udp dport {{.ListenPort}} accept
 		iifname "{{.Interface}}" ct state established,related accept
 		iifname "{{.Interface}}" tcp dport {{.APIPort}} accept
+{{- if .RelayPort}}
+		iifname "{{.Interface}}" tcp dport {{.RelayPort}} accept
+{{- end}}
 		iifname "{{.Interface}}" drop
 	}
 }
@@ -41,6 +46,9 @@ table inet {{.Table}} {
 func RenderMeshRuleset(a MeshFirewallArgs) (string, error) {
 	if !wireguard.InterfaceName.MatchString(a.Interface) {
 		return "", fmt.Errorf("%w: interface %q must match %s", errBadArgument, a.Interface, wireguard.InterfaceName)
+	}
+	if a.RelayPort < 0 || a.RelayPort > 65535 {
+		return "", fmt.Errorf("%w: relay port %d out of range", errBadArgument, a.RelayPort)
 	}
 	for _, p := range []int{a.APIPort, a.ListenPort} {
 		if p < 1 || p > 65535 {

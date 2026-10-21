@@ -17,10 +17,12 @@ import (
 // RegisterNodes mounts the mesh: this node and the others of its network,
 // the invitation that brings a machine in, a summary of each for the
 // dashboard and the door through which this panel works on another node.
-func (s *Server) RegisterNodes(m *nodes.Mesh) {
+func (s *Server) RegisterNodes(m *nodes.Mesh, canClose func() error) {
 	s.mu.Lock()
 	s.mesh = m
+	s.meshCanClose = canClose
 	s.mu.Unlock()
+	s.Handle("PUT", Prefix+"/nodes/settings", "Change the network's settings (the panel of every node only through a VPN), for every node", s.nodesSettings)
 	s.Handle("GET", Prefix+"/nodes", "This node, its network and the other nodes, with what the tunnel says of each", s.nodesList)
 	s.Handle("PUT", Prefix+"/nodes/self", "Rename this node", s.nodesRename)
 	s.Handle("POST", Prefix+"/nodes/invite", "Make a single-use code, valid fifteen minutes, for another machine to join; creates the network the first time", s.nodesInvite)
@@ -83,6 +85,34 @@ func (s *Server) nodesList(w http.ResponseWriter, r *http.Request) (any, error) 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	return m.Info(ctx), nil
+}
+
+func (s *Server) nodesSettings(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := s.meshOf()
+	if err != nil {
+		return nil, err
+	}
+	var body nodes.NetSettings
+	if err := ReadJSON(r, &body); err != nil {
+		return nil, err
+	}
+	// Closing every panel is decided where a way in is known to exist: a
+	// VPN with a device here. From a node without one, the operator could
+	// not say whether any node of the network still has a door.
+	if body.PanelVPNOnly && !m.Settings().PanelVPNOnly {
+		s.mu.Lock()
+		check := s.meshCanClose
+		s.mu.Unlock()
+		if check != nil {
+			if err := check(); err != nil {
+				return nil, Errorf(http.StatusConflict, "%v", err)
+			}
+		}
+	}
+	if err := m.SetSettings(body); err != nil {
+		return nil, meshErr(err)
+	}
+	return m.Settings(), nil
 }
 
 func (s *Server) nodesRename(w http.ResponseWriter, r *http.Request) (any, error) {

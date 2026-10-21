@@ -79,6 +79,9 @@ type Secrets interface {
 type Options struct {
 	// Root is the installation root; state lives in data/vpn/.
 	Root string
+	// OnOnly runs after "panel only through the VPN" changed here, so a
+	// network of nodes can carry the decision to every node.
+	OnOnly func(enabled bool)
 	// Helper is the client for the privileged service.
 	Helper *helper.Client
 	// Secrets guards the server's private key and the preshared keys.
@@ -636,7 +639,19 @@ func (v *VPN) SetOnly(ctx context.Context, enabled bool) error {
 		return err
 	}
 	v.emit("vpn.only", v.state.Interface, "", "", map[string]any{"enabled": enabled})
+	if v.opts.OnOnly != nil {
+		go v.opts.OnOnly(enabled)
+	}
 	return nil
+}
+
+// Ready says the VPN is on and has a peer: the panel can be closed to
+// everything else without closing it to everyone.
+func (v *VPN) Ready() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.freshLocked()
+	return v.state.Enabled && len(v.peers) > 0
 }
 
 // PeerStatus is one client as the panel shows it.

@@ -17,7 +17,7 @@ func init() {
 		apiHook = api.NewHook(a, Version)
 		return apiHook
 	}})
-	for _, name := range []string{"setup", "site", "events", "system", "token"} {
+	for _, name := range []string{"setup", "site", "events", "system", "token", "nodes"} {
 		subcommands[name] = cli.Command(name)
 	}
 	extraUsage += cli.Usage

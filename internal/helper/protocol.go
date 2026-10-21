@@ -76,6 +76,7 @@ type FirewallPolicy struct {
 type MeshFirewallArgs struct {
 	Interface  string `json:"interface"`
 	APIPort    int    `json:"api_port"`
+	RelayPort  int    `json:"relay_port,omitempty"`
 	ListenPort int    `json:"listen_port"`
 	Down       bool   `json:"down,omitempty"`
 }

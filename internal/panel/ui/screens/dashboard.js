@@ -11,7 +11,7 @@ import { store } from "../lib/store.js";
 import { navigate } from "../lib/router.js";
 import { currentNode, setCurrentNode } from "../lib/node.js";
 import { page, notice, loading, errorBox } from "../components/page.js";
-import { open, field, confirm } from "../components/dialog.js";
+import { open, field, confirm, toggle } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 import { icon } from "../lib/icons.js";
 
@@ -142,7 +142,9 @@ export function dashboardScreen() {
   const totals = h("div", { class: "dash-totals" });
   const grid = h("div", { class: "dash-grid" }, loading());
   const help = h("div", { class: "card" }, h("h2", null, t("dash.howTitle")), h("p", { class: "small muted" }, t("dash.how1")), h("p", { class: "small muted" }, t("dash.how2")), h("p", { class: "small muted" }, t("dash.how3")));
-  p.body.append(banner, totals, grid, help);
+  // The network's settings: one decision for every node.
+  const netCard = h("div", { class: "card", hidden: true });
+  p.body.append(banner, totals, grid, netCard, help);
   let cards = [];
   let info = null;
   let alive = true;
@@ -155,6 +157,7 @@ export function dashboardScreen() {
       banner.append(notice("bad", h("strong", null, t("dash.meshError")), " ", info.error));
     }
     joinBtn.hidden = Boolean(info && info.network);
+    paintNet();
     clear(totals);
     const ok = cards.filter((c) => c.ok);
     const sum = (f) => ok.reduce((n, c) => n + (f(c.summary || {}) || 0), 0);
@@ -177,6 +180,26 @@ export function dashboardScreen() {
       }
       grid.append(nodeCard(c, acts, byID.get(c.id), mine));
     }
+  }
+
+  function paintNet() {
+    netCard.hidden = !(info && info.network);
+    if (netCard.hidden) return;
+    const on = Boolean(info.settings && info.settings.panel_vpn_only);
+    const sw = toggle(t("dash.panelVPNOnly"), { checked: on });
+    sw.input.addEventListener("change", async () => {
+      const want = sw.input.checked;
+      if (want && !(await confirm({ title: t("dash.panelVPNOnlyQ"), body: t("dash.panelVPNOnlyBody"), confirmLabel: t("dash.panelVPNOnlyGo") }))) { sw.input.checked = false; return; }
+      try {
+        await api.put("/nodes/settings", { panel_vpn_only: want }, { node: "" });
+        toast(t(want ? "dash.panelVPNOnlyOn" : "dash.panelVPNOnlyOff"), "ok");
+        load();
+      } catch (e) { sw.input.checked = !want; toastError(e); }
+    });
+    clear(netCard).append(
+      h("h2", null, t("dash.netTitle")),
+      h("div", { class: "field" }, sw.el, h("p", { class: "small muted" }, t("dash.panelVPNOnlyHint"))),
+      h("p", { class: "small muted" }, t("dash.relayHint")));
   }
 
   async function load() {

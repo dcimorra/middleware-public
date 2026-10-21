@@ -105,7 +105,11 @@ func buildInbound(a *app.App) app.Hook {
 		}
 		return sn.Manifest.VPN.Devices, true
 	}
-	inboundHook.PanelVPNOnly = func() bool { return theVPN != nil && theVPN.PanelOnly() }
+	// Closed by this node's VPN, or by the network for every node: one
+	// panel open while the others are closed is the network's way in.
+	inboundHook.PanelVPNOnly = func() bool {
+		return theVPN != nil && theVPN.PanelOnly() || theMesh != nil && theMesh.Settings().PanelVPNOnly
+	}
 	inboundHook.VPNPaths = func(host string) []string {
 		sn, ok := a.Engine.Lookup(host)
 		if !ok || sn.Manifest == nil || sn.Manifest.VPN == nil {

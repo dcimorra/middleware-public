@@ -721,3 +721,4 @@ svg.dash-spark .mem { stroke: var(--warn); stroke-dasharray: 3 2; }
 .node-title[hidden] { display: none; }
 .node-others:empty { display: none; }
 .dash-tunnel { display: flex; align-items: center; gap: 6px; margin: -6px 0 0; flex-wrap: wrap; }
+.num-input { max-width: 140px; }

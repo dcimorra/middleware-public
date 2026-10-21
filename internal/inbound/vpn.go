@@ -115,14 +115,14 @@ func (h *Hook) openVPNLocked(addr netip.Addr, covered bool) error {
 	}
 	h.vpnHTTPS = &listener{want: host, ln: ln, srv: &http.Server{Handler: h.Handler, ReadHeaderTimeout: 15 * time.Second, ConnContext: tag,
 		TLSConfig: &tls.Config{GetCertificate: h.Store.GetCertificate, MinVersion: tls.VersionTLS12, NextProtos: []string{"h2", "http/1.1", acme.ALPNProto}}}}
-	go h.vpnHTTPS.srv.ServeTLS(ln, "", "")
+	go h.vpnHTTPS.srv.ServeTLS(h.relayed(ln, func(net.Conn) bool { return true }), "", "")
 	return h.openVPNDNSLocked(addr)
 }
 
 func (h *Hook) openVPNDNSLocked(addr netip.Addr) error {
 	host := addr.String()
 	ports := h.vpnPorts()
-	dns := &localdns.Server{Serves: h.knownSite, V4: net.IP(addr.AsSlice()), NoV6: true, Forward: localdns.SystemResolver()}
+	dns := &localdns.Server{Serves: h.vpnServes, V4: net.IP(addr.AsSlice()), NoV6: true, Forward: localdns.SystemResolver()}
 	if err := dns.Listen(context.Background(), net.JoinHostPort(host, ports.DNS)); err != nil {
 		return fmt.Errorf("inbound: vpn dns: %w", err)
 	}
@@ -172,11 +172,7 @@ func (h *Hook) vpnAllows(r *http.Request, host string, door Door) bool {
 	if len(devices) == 0 {
 		return true
 	}
-	ip, err := netip.ParseAddrPort(r.RemoteAddr)
-	if err != nil || h.DeviceOf == nil {
-		return false
-	}
-	name := h.DeviceOf(ip.Addr().Unmap())
+	name := h.deviceFrom(r)
 	for _, d := range devices {
 		if d == name && name != "" {
 			return true
