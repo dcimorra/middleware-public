@@ -722,3 +722,11 @@ svg.dash-spark .mem { stroke: var(--warn); stroke-dasharray: 3 2; }
 .node-others:empty { display: none; }
 .dash-tunnel { display: flex; align-items: center; gap: 6px; margin: -6px 0 0; flex-wrap: wrap; }
 .num-input { max-width: 140px; }
+.oc-providers { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 12px; }
+.oc-providers h3 { margin: 4px 0 0; }
+.oc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.oc-list li { display: flex; align-items: center; gap: 8px; }
+.oc-add { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; background: var(--surface-2); }
+.oc-model-list { max-height: 220px; overflow: auto; margin: 8px 0 0; padding-left: 18px; }
+.oc-models summary { cursor: pointer; }
+.model-input { min-width: 220px; max-width: 320px; }

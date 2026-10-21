@@ -86,6 +86,7 @@ func init() {
 var (
 	agentClaude *agents.Module
 	agentGemini *agents.Module
+	agentOpen   *agents.OpenCode
 )
 
 // theVPN is the VPN module, for the inbound hook's VPN door.
@@ -124,11 +125,14 @@ func registerExtraModules(mgr *modules.Manager, root string, bus *events.Bus, dm
 	reg := providers()
 	agentClaude = agents.Claude(reg)
 	agentGemini = agents.Gemini(reg)
-	for _, m := range []*agents.Module{agentClaude, agentGemini} {
+	agentOpen = agents.NewOpenCode(reg, filepath.Join(root, "data", "agents", "opencode"))
+	for _, m := range []*agents.Module{agentClaude, agentGemini, agentOpen.Module} {
 		m.Deps = dm
 		m.Store = mgr
-		mgr.Register(m)
 	}
+	mgr.Register(agentClaude)
+	mgr.Register(agentGemini)
+	mgr.Register(agentOpen)
 	return nil
 }
 
@@ -163,7 +167,7 @@ func buildWire(a *app.App) app.Hook {
 	} else {
 		w.set = set
 		srv.RegisterModules(api.ModulesOptions{Manager: set.Manager, Public: []string{"POST " + github.Key + "/hook"}})
-		if err := agents.Restore(context.Background(), set.Manager, agentClaude, agentGemini); err != nil {
+		if err := agents.Restore(context.Background(), set.Manager, agentClaude, agentGemini, agentOpen); err != nil {
 			a.Bus.Emit(events.Event{Type: "module.restore_failed", Actor: "engine", Level: "error", Message: err.Error()})
 		}
 		// One deployment runner for the installation: the sites' own,

@@ -56,6 +56,9 @@ type Package struct {
 var Packages = []Package{
 	{Name: "claude", NPM: "@anthropic-ai/claude-code", MinNode: 18},
 	{Name: "gemini", NPM: "@google/gemini-cli", MinNode: 20},
+	// opencode-ai is a launcher; the binary comes in a per-platform
+	// optional dependency npm picks for this machine.
+	{Name: "opencode", NPM: "opencode-ai", MinNode: 20},
 }
 
 // Node release the installer fetches when the machine has none that will

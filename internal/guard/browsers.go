@@ -55,7 +55,7 @@ func debugPort(p *Process) int {
 func agentOf(p *Process, byPID map[int]*Process) int {
 	for depth, q := 0, byPID[p.PPID]; depth < 32 && q != nil; depth, q = depth+1, byPID[q.PPID] {
 		hay := strings.ToLower(q.Comm + " " + strings.Join(q.Cmdline, " "))
-		if q.Comm == "claude" || q.Comm == "gemini" || strings.Contains(hay, "/bin/claude") || strings.Contains(hay, "@anthropic-ai/claude-code") || strings.Contains(hay, "/bin/gemini") {
+		if q.Comm == "claude" || q.Comm == "gemini" || q.Comm == "opencode" || strings.Contains(hay, "/bin/claude") || strings.Contains(hay, "@anthropic-ai/claude-code") || strings.Contains(hay, "/bin/gemini") || strings.Contains(hay, "/bin/opencode") {
 			return q.PID
 		}
 	}

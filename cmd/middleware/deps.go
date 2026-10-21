@@ -16,7 +16,7 @@ import (
 
 func init() {
 	subcommands["deps"] = depsCommand
-	extraUsage += `  deps         status | check | install <claude|gemini>   (the agent CLIs under modules/node)
+	extraUsage += `  deps         status | check | install <claude|gemini|opencode>   (the agent CLIs under modules/node)
 `
 }
 

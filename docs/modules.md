@@ -147,6 +147,30 @@ is written under the run's HOME with a `settings.json` that selects that
 login, which is the only way the CLI reads a session. `api_key` is passed
 as `GEMINI_API_KEY` and wins over it.
 
+## agent-opencode
+
+Conversations run by [OpenCode](https://opencode.ai), which talks to many
+vendors: instead of one sign-in it keeps one API key per provider, chosen
+from OpenCode's own catalog (OpenAI, OpenRouter, Anthropic, Groq, DeepSeek
+and two hundred more). The models the chat offers are the ones the CLI
+lists with those keys, read again whenever a provider is connected or
+disconnected and every twelve hours; OpenCode's free tier, which it lists
+too, is left out because it only answers its own app.
+
+- Config: `model` (default `provider/model`), `bin`. The keys are kept
+  encrypted in the module's config and written, before every turn, to
+  the CLI's `auth.json` under the site's HOME.
+- Routes (also before enabling): `GET providers` → `{catalog, connected:
+  [{id, name, models}], models, reading, models_error}`, `PUT
+  providers/{id}` `{key}`, `DELETE providers/{id}`, `POST models/refresh`.
+- The jail becomes OpenCode's permission rules (`OPENCODE_CONFIG_CONTENT`):
+  everything outside the folder denied, the jail's commands denied after a
+  general allow (the last matching rule wins there), a lent folder open to
+  reading and closed to edits, and a level without some tools denying
+  them. `opencode run` refuses whatever would ask.
+- Installed under modules/node from npm (`opencode-ai`) when there is no
+  binary.
+
 ## vpn
 
 A WireGuard interface (`mw0`) so the panel and the service door are

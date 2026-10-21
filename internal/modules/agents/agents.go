@@ -561,12 +561,10 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 // config and the enabled flag across restarts but calls nobody; without
 // this the panel would say "enabled" over a registry still holding the
 // defaults, which is the silent failure the modules package warns about.
-func Restore(ctx context.Context, mgr *modules.Manager, mods ...*Module) error {
+func Restore(ctx context.Context, mgr *modules.Manager, mods ...Restorable) error {
 	var errs []error
 	for _, m := range mods {
-		if m.Store == nil {
-			m.Store = mgr
-		}
+		m.useStore(mgr)
 		if !mgr.Enabled(m.Key()) {
 			continue
 		}
@@ -580,6 +578,19 @@ func Restore(ctx context.Context, mgr *modules.Manager, mods ...*Module) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// Restorable is an agent module Restore can bring back.
+type Restorable interface {
+	Key() string
+	Enable(ctx context.Context, cfg modules.Config) error
+	useStore(mgr *modules.Manager)
+}
+
+func (m *Module) useStore(mgr *modules.Manager) {
+	if m.Store == nil {
+		m.Store = mgr
+	}
 }
 
 func modelsWith(first string, defaults []string) []string {

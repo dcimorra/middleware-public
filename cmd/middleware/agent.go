@@ -17,6 +17,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/agent"
 	"github.com/dcimorra/middleware-public/internal/agent/claude"
 	"github.com/dcimorra/middleware-public/internal/agent/gemini"
+	"github.com/dcimorra/middleware-public/internal/agent/opencode"
 	"github.com/dcimorra/middleware-public/internal/api"
 	"github.com/dcimorra/middleware-public/internal/app"
 	"github.com/dcimorra/middleware-public/internal/cgroups"
@@ -89,6 +90,8 @@ func providers() *agent.Registry {
 		providersCur = agent.NewRegistry()
 		providersCur.Register(claude.New(claude.Config{}))
 		providersCur.Register(gemini.New(gemini.Config{}))
+		// Without its module there are no keys, and it says so.
+		providersCur.Register(opencode.New(opencode.Config{}))
 	})
 	return providersCur
 }

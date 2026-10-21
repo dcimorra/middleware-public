@@ -25,7 +25,17 @@ export function chatTab(domain) {
   const turns = h("div", { class: "chat-turns", "aria-live": "polite" });
   const text = h("textarea", { placeholder: t("chat.placeholder"), "aria-label": t("chat.message") });
   const provider = h("select", { "aria-label": t("chat.provider") });
-  const model = h("select", { "aria-label": t("chat.model") });
+  // The model: a list while it is short, a box that searches as you type
+  // once a provider brings hundreds (OpenCode with OpenRouter connected).
+  const modelSel = h("select", { "aria-label": t("chat.model") });
+  const modelListID = "chat-models-" + Math.random().toString(36).slice(2, 8);
+  const modelIn = h("input", { type: "text", list: modelListID, class: "model-input", placeholder: t("chat.defaultModel"), "aria-label": t("chat.model"), autocomplete: "off", spellcheck: "false", hidden: true });
+  const modelList = h("datalist", { id: modelListID });
+  let manyModels = false;
+  const model = {
+    get value() { return manyModels ? modelIn.value.trim() : modelSel.value; },
+    set value(v) { modelSel.value = v; modelIn.value = v; },
+  };
   const send = h("button", { type: "submit", class: "btn primary" }, icon("send"), t("chat.send"));
   const stop = h("button", { type: "button", class: "btn danger", hidden: true }, icon("stop"), t("chat.stop"));
   const reset = h("button", { type: "button", class: "btn ghost sm" }, icon("sparkles"), t("chat.new"));
@@ -40,7 +50,7 @@ export function chatTab(domain) {
   const fileInput = h("input", { type: "file", multiple: true, hidden: true });
   const attachBtn = h("button", { type: "button", class: "btn ghost sm", title: t("chat.attachHint") }, icon("plus"), t("chat.attach"));
   const chips = h("div", { class: "chat-chips row" });
-  const form = h("form", { class: "chat-form" }, chips, text, h("div", { class: "row" }, provider, model, attachBtn, fileInput, h("span", { class: "grow" }), status, procsBtn, reset, stop, send));
+  const form = h("form", { class: "chat-form" }, chips, text, h("div", { class: "row" }, provider, modelSel, modelIn, modelList, attachBtn, fileInput, h("span", { class: "grow" }), status, procsBtn, reset, stop, send));
   // Which conversation is open: the site's first one, another of the
   // panel's, or one the site's code opened through the site door (read
   // and stopped from here, never written into: a program is on the other
@@ -335,10 +345,14 @@ export function chatTab(domain) {
     fillModels();
   }
   function fillModels() {
-    clear(model);
     const a = agents.find((x) => x.provider === provider.value);
-    model.append(h("option", { value: "" }, t("chat.defaultModel")));
-    for (const m of (a && a.models) || []) model.append(h("option", { value: m }, m));
+    const list = (a && a.models) || [];
+    manyModels = list.length > 30;
+    modelSel.hidden = manyModels;
+    modelIn.hidden = !manyModels;
+    clear(modelSel).append(h("option", { value: "" }, t("chat.defaultModel")), ...list.map((m) => h("option", { value: m }, m)));
+    clear(modelList).append(...list.map((m) => h("option", { value: m })));
+    if (manyModels && !list.includes(modelIn.value.trim())) modelIn.value = "";
   }
 
   // quiet re-reads without the spinner: after a turn ends, the turn is

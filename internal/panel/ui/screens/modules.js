@@ -9,6 +9,7 @@ import { api, enc } from "../lib/api.js";
 import { onEvent } from "../lib/stream.js";
 import { page, load, empty, notice } from "../components/page.js";
 import { icon } from "../lib/icons.js";
+import { openCodeProviders } from "./opencode-providers.js";
 
 import { checklist } from "../components/checklist.js";
 import { confirm, field } from "../components/dialog.js";
@@ -39,14 +40,14 @@ export function modulesScreen() {
   }
 
   const GROUPS = ["connect", "deploy", "agents", "other"];
-  const GROUP_OF = { cloudflare: "connect", vpn: "connect", github: "deploy", "agent-claude": "agents", "agent-gemini": "agents" };
-  const ICON_OF = { cloudflare: "globe", vpn: "lock", github: "branch", "agent-claude": "sparkles", "agent-gemini": "sparkles" };
+  const GROUP_OF = { cloudflare: "connect", vpn: "connect", github: "deploy", "agent-claude": "agents", "agent-gemini": "agents", "agent-opencode": "agents" };
+  const ICON_OF = { cloudflare: "globe", vpn: "lock", github: "branch", "agent-claude": "sparkles", "agent-gemini": "sparkles", "agent-opencode": "sparkles" };
   // The panel's own words for a module when it has them; the module's
   // (in English, from the server) otherwise.
   const said = (key, fallback) => { const s = t(key); return s === key ? fallback : s; };
 
   // Which command an agent module runs, for the binary line.
-  const AGENT_BIN = { "agent-claude": "claude", "agent-gemini": "gemini" };
+  const AGENT_BIN = { "agent-claude": "claude", "agent-gemini": "gemini", "agent-opencode": "opencode" };
 
   function card(m, depBy) {
     const inputs = {};
@@ -128,7 +129,8 @@ export function modulesScreen() {
         h("div", { class: "grow" }, h("h2", null, m.name || m.key), h("p", { class: "dim small" }, said("modules.desc." + m.key, m.description || ""))),
         state),
       m.installed === false && m.enabled && !agentBin ? notice("warn", t("modules.notInstalled")) : null,
-      agentBin ? signIn(m) : null,
+      // OpenCode has no sign-in of its own: a key per provider instead.
+      m.key === "agent-opencode" ? openCodeProviders() : agentBin ? signIn(m) : null,
       agentBin ? binaryLine(agentBin, depBy.get(agentBin)) : null,
       form,
     );
