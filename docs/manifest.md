@@ -298,6 +298,15 @@ process.
   server's address in the tunnel and no AAAA, and forwards every other
   name. Its certificate needs dns-01 (the Cloudflare module): no CA can
   reach it.
+  `vpn.paths` keeps only those paths inside the VPN (`["/admin"]` covers
+  `/admin` and everything under it, not `/administrator`; the path is
+  cleaned first, so `//admin` is `/admin`): the rest of the site stays
+  public and published, and those paths get, outside the VPN, the page of a
+  name nobody serves. A device reaches them because the VPN's resolver
+  sends it to the VPN door for every name of the house. The panel sets all
+  of this from the site's Access tab. The panel itself can be kept inside
+  the VPN from Inbound → VPN; the machine's own loopback (SSH, the CLI)
+  still reaches it, which is the way back.
 - `autofix: false` keeps the automatic repair (Settings) away from this
   site, whatever the installation says; the panel cannot override it.
 - `aliases` are served exactly like the site. A name that is already a site,

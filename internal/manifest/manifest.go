@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -54,7 +55,9 @@ type Manifest struct {
 	Security *security.Rules `json:"security,omitempty"`
 	// VPN makes the site exist only inside the VPN: served through the VPN
 	// door and nowhere else, never published, resolved by the VPN's own
-	// DNS. Devices, when listed, narrows it to those peers.
+	// DNS. Devices, when listed, narrows it to those peers. With Paths,
+	// only those paths are: the site stays public and published, and
+	// /admin (say) answers only through the VPN.
 	VPN *VPNOnly `json:"vpn,omitempty"`
 	// Autofix false keeps the automatic repair away from this site even
 	// when the installation turns it on: some sites are not touched
@@ -217,6 +220,33 @@ type ClaudeAPI struct {
 type VPNOnly struct {
 	// Devices are VPN peer names; empty is every device.
 	Devices []string `json:"devices,omitempty"`
+	// Paths, when listed, are the only paths kept inside the VPN: a path
+	// and everything under it ("/admin" covers "/admin" and "/admin/x",
+	// not "/administrator"). Empty is the whole site.
+	Paths []string `json:"paths,omitempty"`
+}
+
+// Whole says the whole site is inside the VPN: never published, served
+// through no other door.
+func (v *VPNOnly) Whole() bool { return v != nil && len(v.Paths) == 0 }
+
+// Covers says the request path is kept inside the VPN. The path is
+// cleaned first, so //admin and /x/../admin are /admin.
+func (v *VPNOnly) Covers(p string) bool {
+	if v == nil {
+		return false
+	}
+	if len(v.Paths) == 0 {
+		return true
+	}
+	p = path.Clean("/" + p)
+	for _, pre := range v.Paths {
+		pre = strings.TrimSuffix(path.Clean(pre), "/")
+		if pre == "" || p == pre || strings.HasPrefix(p, pre+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // Notice is how the visitor pages of this site look.
@@ -529,6 +559,11 @@ func (m *Manifest) Validate() error {
 		for _, d := range m.VPN.Devices {
 			if !validName(d) {
 				return fmt.Errorf("vpn.devices: %q is not a device name", d)
+			}
+		}
+		for _, p := range m.VPN.Paths {
+			if !strings.HasPrefix(p, "/") || strings.ContainsAny(p, "?#*") {
+				return fmt.Errorf("vpn.paths: %q is not a path (it starts with /, no wildcards)", p)
 			}
 		}
 	}

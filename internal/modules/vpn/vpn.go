@@ -692,6 +692,14 @@ func (v *VPN) ServerAddress() (netip.Addr, bool) {
 	return wireguard.ServerAddress(v.state.Subnet), true
 }
 
+// PanelOnly says the panel is to answer only through the VPN. It holds
+// only while the VPN is on: off, the way in would be gone.
+func (v *VPN) PanelOnly() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.state.Enabled && v.state.VPNOnly
+}
+
 // PeerName is the name of the peer with this address in the tunnel, or "".
 func (v *VPN) PeerName(ip netip.Addr) string {
 	v.mu.Lock()

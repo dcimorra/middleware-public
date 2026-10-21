@@ -54,6 +54,12 @@ type Hook struct {
 	VPNAddress func() (netip.Addr, bool)
 	// VPNOnly says whether host is a VPN-only site, and for which devices.
 	VPNOnly func(host string) (devices []string, ok bool)
+	// PanelVPNOnly says the panel answers only through the VPN door (and
+	// the machine's own loopback, for SSH and the CLI).
+	PanelVPNOnly func() bool
+	// VPNPaths, when set and not empty for host, are the only paths of it
+	// kept inside the VPN; the rest of the site is public.
+	VPNPaths func(host string) []string
 	// DeviceOf names the VPN peer with an address.
 	DeviceOf func(ip netip.Addr) string
 	// VPNPorts overrides the VPN door's ports (tests).
@@ -139,6 +145,10 @@ func (h *Hook) Wrap(next http.Handler) http.Handler {
 			// The same page as a name nobody serves: through any other
 			// door, a VPN-only site does not exist, and saying "closed"
 			// would say it does. No header changes that.
+			pages.Write(w, r, "unknown", http.StatusNotFound)
+			return
+		}
+		if h.isPanel(host) && !h.panelAllows(r, door) {
 			pages.Write(w, r, "unknown", http.StatusNotFound)
 			return
 		}

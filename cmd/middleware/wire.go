@@ -633,7 +633,9 @@ func buildPublisher(a *app.App, set *moduleSet) *publish.Publisher {
 		},
 		VPNOnly: func(site string) bool {
 			sn, ok := a.Engine.Lookup(site)
-			return ok && sn.Manifest != nil && sn.Manifest.VPN != nil
+			// Only a site wholly inside the VPN is never published; one
+			// with some paths in it is public everywhere else.
+			return ok && sn.Manifest != nil && sn.Manifest.VPN.Whole()
 		},
 	})
 	if err != nil {

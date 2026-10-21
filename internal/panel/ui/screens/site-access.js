@@ -8,6 +8,7 @@ import { api, enc } from "../lib/api.js";
 import { store } from "../lib/store.js";
 import { field } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
+import { vpnSiteCard } from "./vpn.js";
 
 const lines = (arr) => (arr || []).join("\n");
 const parseLines = (s) => s.split(/[\n,]/).map((x) => x.trim()).filter(Boolean);
@@ -99,5 +100,7 @@ export function accessTab(domain) {
     } finally { save.classList.remove("busy"); }
   });
 
-  return { el: form, destroy() {} };
+  // The VPN choice saves on its own: it writes another key of the
+  // manifest, and one form must not carry the other's half-typed values.
+  return { el: h("div", { class: "cards" }, form, vpnSiteCard(domain)), destroy() {} };
 }

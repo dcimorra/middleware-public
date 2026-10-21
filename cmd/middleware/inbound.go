@@ -97,6 +97,14 @@ func buildInbound(a *app.App) app.Hook {
 		}
 		return sn.Manifest.VPN.Devices, true
 	}
+	inboundHook.PanelVPNOnly = func() bool { return theVPN != nil && theVPN.PanelOnly() }
+	inboundHook.VPNPaths = func(host string) []string {
+		sn, ok := a.Engine.Lookup(host)
+		if !ok || sn.Manifest == nil || sn.Manifest.VPN == nil {
+			return nil
+		}
+		return sn.Manifest.VPN.Paths
+	}
 	return inboundHook
 }
 

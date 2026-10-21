@@ -523,3 +523,79 @@ func dnsAsk(t *testing.T, addr, name string, qtype uint16) string {
 	}
 	return net.IP(buf[n-16 : n]).String()
 }
+
+// With paths, only those are inside the VPN: the rest of the site is
+// public through every door, and /admin answers only through the VPN.
+func TestOnlyTheVPNPathsOfASiteNeedTheVPN(t *testing.T) {
+	h := newHouse(t, "mixed.test")
+	h.hook.VPNPorts = inbound.VPNPorts{HTTP: "0", HTTPS: "0", DNS: "0"}
+	h.hook.VPNAddress = func() (netip.Addr, bool) { return netip.MustParseAddr("127.0.0.1"), true }
+	h.hook.VPNOnly = func(host string) ([]string, bool) { return nil, host == "mixed.test" }
+	h.hook.VPNPaths = func(host string) []string { return []string{"/admin"} }
+	var vhttp string
+	for deadline := time.Now().Add(5 * time.Second); vhttp == ""; {
+		vhttp, _, _ = h.hook.VPNAddrs()
+		if time.Now().After(deadline) {
+			t.Fatal("the VPN door did not open")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	outside := func(path string) int {
+		rec := httptest.NewRecorder()
+		h.hook.Handler.ServeHTTP(rec, httptest.NewRequest("GET", "http://mixed.test"+path, nil))
+		return rec.Code
+	}
+	for path, want := range map[string]int{"/": 200, "/administrator": 200, "/admin": 404, "/admin/users": 404, "//admin": 404, "/x/../admin/": 404} {
+		if got := outside(path); got != want {
+			t.Errorf("outside the VPN, %s: %d, want %d", path, got, want)
+		}
+	}
+	req, _ := http.NewRequest("GET", "http://"+vhttp+"/admin/users", nil)
+	req.Host = "mixed.test"
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("through the VPN: %d", resp.StatusCode)
+	}
+}
+
+// With the panel inside the VPN, it answers through the VPN door and the
+// machine's own loopback (SSH, the CLI), never what a tunnel relays.
+func TestThePanelInsideTheVPNAnswersOnlyThroughItAndTheMachine(t *testing.T) {
+	h := newHouse(t, "site.test")
+	h.hook.PanelDomain = "panel.test"
+	only := true
+	h.hook.PanelVPNOnly = func() bool { return only }
+	call := func(remote string, headers ...string) int {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", "http://panel.test/", nil)
+		r.RemoteAddr = remote
+		for _, kv := range headers {
+			k, v, _ := strings.Cut(kv, ": ")
+			r.Header.Set(k, v)
+		}
+		h.hook.Handler.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	if code := call("127.0.0.1:5000", "Cf-Connecting-Ip: 203.0.113.9"); code != http.StatusNotFound {
+		t.Fatalf("through the tunnel: %d", code)
+	}
+	if code := call("127.0.0.1:5000"); code == http.StatusNotFound {
+		t.Fatalf("from the machine itself: %d", code)
+	}
+	// The sites are not touched by it.
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "http://site.test/", nil)
+	r.Header.Set("Cf-Connecting-Ip", "203.0.113.9")
+	h.hook.Handler.ServeHTTP(rec, r)
+	if rec.Code != 200 {
+		t.Fatalf("a site: %d", rec.Code)
+	}
+	only = false
+	if code := call("127.0.0.1:5000", "Cf-Connecting-Ip: 203.0.113.9"); code == http.StatusNotFound {
+		t.Fatalf("off, through the tunnel: %d", code)
+	}
+}

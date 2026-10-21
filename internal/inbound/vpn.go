@@ -11,6 +11,7 @@ import (
 
 	"github.com/dcimorra/middleware-public/internal/acme"
 	"github.com/dcimorra/middleware-public/internal/localdns"
+	"github.com/dcimorra/middleware-public/internal/manifest"
 )
 
 // VPN is the door inside the VPN: the server's address in the tunnel, on
@@ -137,6 +138,11 @@ func (h *Hook) vpnAllows(r *http.Request, host string, door Door) bool {
 	if !only {
 		return true
 	}
+	if h.VPNPaths != nil {
+		if paths := h.VPNPaths(host); len(paths) > 0 && !(&manifest.VPNOnly{Paths: paths}).Covers(r.URL.Path) {
+			return true
+		}
+	}
 	if door != VPN {
 		return false
 	}
@@ -154,4 +160,30 @@ func (h *Hook) vpnAllows(r *http.Request, host string, door Door) bool {
 		}
 	}
 	return false
+}
+
+// panelAllows says whether a request may reach the panel, given the door
+// it came by. With the panel inside the VPN, it answers through the VPN
+// door and through the machine's own loopback when nothing in front of it
+// relayed the request: that is an SSH tunnel, the CLI, a site calling its
+// door, never the internet. A tunnel's connector also connects from
+// loopback, but it says whom it relays for (CF-Connecting-IP), and then
+// the request is the internet's.
+func (h *Hook) panelAllows(r *http.Request, door Door) bool {
+	if h.PanelVPNOnly == nil || !h.PanelVPNOnly() || door == VPN {
+		return true
+	}
+	if door != Tunnel {
+		return false
+	}
+	ip, err := netip.ParseAddrPort(r.RemoteAddr)
+	if err != nil || !ip.Addr().Unmap().IsLoopback() {
+		return false
+	}
+	for _, hdr := range []string{"Cf-Connecting-Ip", "X-Forwarded-For", "X-Real-Ip", "True-Client-Ip"} {
+		if r.Header.Get(hdr) != "" {
+			return false
+		}
+	}
+	return true
 }
