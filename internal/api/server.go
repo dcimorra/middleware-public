@@ -245,6 +245,12 @@ func (s *Server) Panel() http.Handler {
 			s.writeError(w, r, Errorf(http.StatusForbidden, "this address may not reach the panel"))
 			return
 		}
+		if path, ok := SiteDoorPath(r.URL.Path); ok && path != r.URL.Path {
+			r2 := r.Clone(r.Context())
+			r2.URL.Path, r2.URL.RawPath = path, ""
+			s.ServeHTTP(w, r2)
+			return
+		}
 		if r.URL.Path == Prefix || strings.HasPrefix(r.URL.Path, Prefix+"/") {
 			s.ServeHTTP(w, r)
 			return

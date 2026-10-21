@@ -65,7 +65,7 @@ func SiteSystem(c Conversation) string {
 		b.WriteString(strings.TrimSpace(c.System))
 		b.WriteString("\n\n")
 	} else {
-		b.WriteString("You answer requests from the code of the website " + c.Domain + ". On the other side is a program, not a person: answer with exactly what was asked for, with no greeting and no commentary.\n\n")
+		b.WriteString(SiteIntro(c.Domain) + "\n\n")
 	}
 	switch l.Name {
 	case "none":
@@ -78,6 +78,11 @@ func SiteSystem(c Conversation) string {
 		b.WriteString("You work inside the site's folder, behind the same walls as its conversation in the panel.")
 	}
 	return b.String()
+}
+
+// SiteIntro is the brief of a site's conversation that did not write one.
+func SiteIntro(domain string) string {
+	return "You answer requests from the code of the website " + domain + ". On the other side is a program, not a person: answer with exactly what was asked for, with no greeting and no commentary."
 }
 
 // Summary is one conversation in a list.
@@ -208,3 +213,41 @@ func (m *Manager) Conversation(name string) (Conversation, error) {
 // SiteDoorBook is the ledger key of what a site's code spent through the
 // site door; its daily cap is checked against it.
 func SiteDoorBook(domain string) string { return domain + "#door" }
+
+// Asking says the conversation's last turn ended asking something and
+// nobody has answered: not working, and not finished either.
+func Asking(c Conversation) bool {
+	if c.Running || len(c.Turns) == 0 {
+		return false
+	}
+	return len(c.Turns[len(c.Turns)-1].Questions) > 0
+}
+
+// Prune makes room for one more conversation of origin: the oldest go,
+// never one at work or waiting for an answer, until fewer than max are
+// left. A loop that opens one per visit must not fill the disk, and it
+// must not stop working either (V1 pruned; refusing the call broke the
+// site instead).
+func (m *Manager) Prune(domain, origin string, max int) {
+	if max <= 0 {
+		return
+	}
+	var mine []Summary
+	for _, s := range m.List(domain) {
+		if s.Origin == origin {
+			mine = append(mine, s)
+		}
+	}
+	// List is newest first: the oldest are at the end.
+	for i := len(mine) - 1; i >= 0 && len(mine) >= max; i-- {
+		if mine[i].Running {
+			continue
+		}
+		if c, err := m.Conversation(mine[i].Name); err == nil && Asking(c) {
+			continue
+		}
+		if m.Delete(mine[i].Name) == nil {
+			mine = append(mine[:i], mine[i+1:]...)
+		}
+	}
+}

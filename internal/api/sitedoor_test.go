@@ -1,8 +1,9 @@
 package api
 
 import (
+	"bufio"
 	"context"
-	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,6 +68,10 @@ func doorFixture(t *testing.T, manifests map[string]string) (*fixture, *sitetoke
 		},
 		HouseDaily: func() float64 { return 1 },
 		Spent:      m.Ledger().Day,
+		Bus:        f.bus,
+		SiteDir:    func(d string) string { return filepath.Join(f.root, "sites", d) },
+		Available:  func() bool { ok, _ := m.ProviderInfo("claude"); return ok },
+		Models:     func() []string { _, ms := m.ProviderInfo("claude"); return append(ms, "haiku") },
 	})
 	return f, keys, p, m
 }
@@ -105,7 +110,10 @@ func TestTheSiteDoorAnswersItsSiteWithTheLevelItsManifestSays(t *testing.T) {
 	}
 	// Its conversation is listed and continued; the panel's is never
 	// reachable from here, nor another site's.
-	id := out["id"].(string)
+	id := out["chat"].(string)
+	if out["state"] != "done" || out["turns"].(float64) != 1 || out["cost_usd"].(float64) != 0.25 || out["model"] != "haiku" {
+		t.Fatalf("the answer's fields: %v", out)
+	}
 	code, list := f.callList(keys, "open.test", "/api/v1/site/claude/chats")
 	if code != 200 || len(list) != 1 {
 		t.Fatalf("list: %d %v", code, list)
@@ -165,7 +173,120 @@ func (f *fixture) callList(keys *sitetoken.Keys, domain, path string) (int, []an
 	f.token = tok
 	defer func() { f.token = saved }()
 	resp, out := f.call("GET", path, nil)
-	var list []any
-	_ = json.Unmarshal([]byte(text(out)), &list)
+	list, _ := out["chats"].([]any)
 	return resp.StatusCode, list
+}
+
+// A site's code written for V1 calls $MIDDLEWARE_API/api/site/…, and
+// reads chat, state, text, turns and cost_usd: it must not notice the move.
+func TestASiteWrittenForV1WorksUnchanged(t *testing.T) {
+	f, keys, _, m := doorFixture(t, map[string]string{"v1.test": `{"version":2,"claude_api":{}}`})
+	os.WriteFile(filepath.Join(f.root, "sites", "v1.test", "notes.txt"), []byte("hello"), 0o644)
+	code, me := f.asSite(keys, "v1.test", "GET", "/api/site", nil)
+	cl, _ := me["claude"].(map[string]any)
+	if code != 200 || cl == nil || cl["available"] != true || cl["tools"] != "none" || cl["busy"].(float64) != 0 || cl["limits"].(map[string]any)["max_chats"].(float64) != 20 {
+		t.Fatalf("GET /api/site: %d %v", code, me)
+	}
+	// Files of its own folder go with the message; one outside it does not.
+	code, out := f.asSite(keys, "v1.test", "POST", "/api/site/claude/ask", map[string]any{"prompt": "read it", "files": []string{"notes.txt"}})
+	if code != 200 || out["chat"] == nil || out["text"] == nil {
+		t.Fatalf("ask with files: %d %v", code, out)
+	}
+	if code, _ := f.asSite(keys, "v1.test", "POST", "/api/site/claude/ask", map[string]any{"prompt": "x", "files": []string{"../../data/site-door.key"}}); code != 400 {
+		t.Fatalf("a file outside the folder: %d", code)
+	}
+	if code, _ := f.asSite(keys, "v1.test", "POST", "/api/site/claude/ask", map[string]any{"prompt": "x", "model": "gpt-4"}); code != 400 {
+		t.Fatalf("an unknown model: %d", code)
+	}
+	// Opening without a word answers the conversation; wait 0 answers 202.
+	code, opened := f.asSite(keys, "v1.test", "POST", "/api/site/claude/chats", map[string]any{"title": "t"})
+	chatInfo, _ := opened["chat"].(map[string]any)
+	if code != 200 || chatInfo == nil || chatInfo["origin"] != "site" {
+		t.Fatalf("open: %d %v", code, opened)
+	}
+	id := chatInfo["id"].(string)
+	code, out = f.asSite(keys, "v1.test", "POST", "/api/site/claude/chats/"+id+"/messages", map[string]any{"prompt": "go", "wait": "0"})
+	if code != 202 || out["state"] != "running" || out["chat"] != id {
+		t.Fatalf("wait 0: %d %v", code, out)
+	}
+	name := chat.Name("v1.test", id)
+	m.Wait(context.Background(), name, 5*time.Second)
+	code, got := f.asSite(keys, "v1.test", "GET", "/api/site/claude/chats/"+id, nil)
+	msgs, _ := got["messages"].([]any)
+	if code != 200 || got["state"] != "done" || got["text"] == "" || len(msgs) < 3 {
+		t.Fatalf("get: %d %v", code, got)
+	}
+	// An upload, raw with ?name=, and its removal.
+	tok, _ := keys.Token("v1.test")
+	req, _ := http.NewRequest("POST", f.http.URL+"/api/site/claude/chats/"+id+"/files?name=a.csv", strings.NewReader("x,y"))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("upload: %v %v", resp, err)
+	}
+	resp.Body.Close()
+	if code, _ := f.asSite(keys, "v1.test", "DELETE", "/api/site/claude/chats/"+id+"/files/a.csv", nil); code != 200 {
+		t.Fatalf("remove upload: %d", code)
+	}
+}
+
+func TestAtItsLimitASiteLosesItsOldestConversationNotItsNextOne(t *testing.T) {
+	f, keys, _, m := doorFixture(t, map[string]string{"p.test": `{"version":2,"claude_api":{"max_chats":2}}`})
+	var ids []string
+	for i := 0; i < 3; i++ {
+		code, out := f.asSite(keys, "p.test", "POST", "/api/site/claude/chats", nil)
+		if code != 200 {
+			t.Fatalf("open %d: %d %v", i, code, out)
+		}
+		ids = append(ids, out["chat"].(map[string]any)["id"].(string))
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := m.Conversation(chat.Name("p.test", ids[0])); err == nil {
+		t.Fatal("the oldest was kept")
+	}
+	if _, err := m.Conversation(chat.Name("p.test", ids[2])); err != nil {
+		t.Fatal("the newest is missing")
+	}
+}
+
+func TestTheStreamSendsAConversationsMessagesAndItsEnd(t *testing.T) {
+	f, keys, _, _ := doorFixture(t, map[string]string{"s.test": `{"version":2,"claude_api":{}}`})
+	_, opened := f.asSite(keys, "s.test", "POST", "/api/site/claude/chats", nil)
+	id := opened["chat"].(map[string]any)["id"].(string)
+	tok, _ := keys.Token("s.test")
+	req, _ := http.NewRequest("GET", f.http.URL+"/api/site/claude/chats/"+id+"/stream", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("stream: %v %v", resp, err)
+	}
+	defer resp.Body.Close()
+	lines := make(chan string, 64)
+	go func() {
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		close(lines)
+	}()
+	<-lines // ": connected"
+	f.asSite(keys, "s.test", "POST", "/api/site/claude/chats/"+id+"/messages", map[string]any{"prompt": "hi", "wait": "0"})
+	var seen []string
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case l := <-lines:
+			if strings.HasPrefix(l, "event: ") {
+				seen = append(seen, strings.TrimPrefix(l, "event: "))
+			}
+			if l == "event: session" {
+				if strings.Join(seen, ",") != "message,message,session" {
+					t.Fatalf("events %v", seen)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatalf("no session event; saw %v", seen)
+		}
+	}
 }

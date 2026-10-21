@@ -651,6 +651,10 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 		// The site door is Claude's: the levels below are Claude Code's
 		// tools, and a site's code gets the same engine whatever provider
 		// its own conversation in the panel uses.
+		if s.Provider != "claude" {
+			// The site's own model is another provider's name.
+			s.Model = ""
+		}
 		s.Provider = "claude"
 	}
 	provider, err := m.opts.Registry.Get(s.Provider)
@@ -1033,6 +1037,17 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 
 func (m *Manager) emit(typ, domain, level, msg string, data map[string]any) {
 	m.opts.Bus.Emit(events.Event{Type: typ, Subject: domain, Actor: "agent", Level: level, Message: msg, Data: data})
+}
+
+// ProviderInfo says whether a provider can run now and which models it
+// knows; the site door answers with it.
+func (m *Manager) ProviderInfo(key string) (bool, []string) {
+	p, err := m.opts.Registry.Get(key)
+	if err != nil {
+		return false, nil
+	}
+	ok, _ := p.Available()
+	return ok, p.Models()
 }
 
 // Ledger is the cost record the manager writes.

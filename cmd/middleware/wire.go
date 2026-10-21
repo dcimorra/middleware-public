@@ -655,16 +655,25 @@ func wireSiteDoor(a *app.App, srv *api.Server, set *moduleSet) {
 	tokens := sitetoken.New(dataDir(a))
 	runDir := filepath.Join(dataDir(a), "run")
 	sock := filepath.Join(runDir, "site.sock")
-	listen := a.Settings.Listen
+	// Where the loopback listener really is (MIDDLEWARE_LISTEN wins over
+	// the settings), as an address a process can dial: the settings said
+	// one port while a test instance listened on another, and the site's
+	// calls went to whatever answered there.
+	listen := app.ListenAddr(a.Settings.Listen)
+	if host, port, err := net.SplitHostPort(listen); err == nil && (host == "" || host == "0.0.0.0" || host == "::") {
+		listen = net.JoinHostPort("127.0.0.1", port)
+	}
 	a.Engine.SetSiteEnv(func(domain string, m *manifest.Manifest) (map[string]string, []string) {
 		env := map[string]string{}
 		var mounts []string
 		if m.ClaudeAPI != nil {
 			if tok, err := tokens.Token(domain); err == nil {
 				env["MIDDLEWARE_TOKEN"] = tok
-				env["MIDDLEWARE_API"] = "http://" + listen + api.Prefix
+				// The bare address, as in V1: the code calls
+				// $MIDDLEWARE_API/api/site/… (or /api/v1/site/…).
+				env["MIDDLEWARE_API"] = "http://" + listen
 				if m.Run != nil && m.Run.Runtime == "docker" {
-					env["MIDDLEWARE_API"] = "http://localhost" + api.Prefix
+					env["MIDDLEWARE_API"] = "http://localhost"
 					env["MIDDLEWARE_API_SOCKET"] = sock
 					mounts = append(mounts, runDir)
 				}
@@ -682,6 +691,35 @@ func wireSiteDoor(a *app.App, srv *api.Server, set *moduleSet) {
 	srv.RegisterSiteDoor(api.SiteDoorOptions{
 		Chat:   chatManager,
 		Tokens: tokens,
+		Bus:    a.Bus,
+		SiteDir: func(domain string) string {
+			if sn, ok := a.Engine.Lookup(domain); ok {
+				return sn.Dir
+			}
+			return filepath.Join(a.Root, "sites", domain)
+		},
+		Available: func() bool { ok, _ := chatManager.ProviderInfo("claude"); return ok },
+		API:       "http://" + listen,
+		DefaultModel: func() string {
+			if set == nil {
+				return ""
+			}
+			cfg, _ := set.Manager.Config(agents.ClaudeKey)
+			return cfg["model"]
+		},
+		Socket: sock,
+		Domains: func() []string {
+			var out []string
+			for _, sn := range a.Engine.Sites() {
+				out = append(out, sn.Domain)
+			}
+			return out
+		},
+		Models: func() []string {
+			_, models := chatManager.ProviderInfo("claude")
+			// Claude Code's aliases are names too.
+			return append(models, "opus", "sonnet", "haiku")
+		},
 		Lookup: func(domain string) (*manifest.Manifest, bool) {
 			sn, ok := a.Engine.Lookup(domain)
 			if !ok || sn.Domain != domain {
@@ -700,7 +738,7 @@ func wireSiteDoor(a *app.App, srv *api.Server, set *moduleSet) {
 	_ = os.Chmod(sock, 0o666)
 	h := srv.Panel()
 	door := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != api.Prefix+"/site" && !strings.HasPrefix(r.URL.Path, api.Prefix+"/site/") {
+		if _, ok := api.SiteDoorPath(r.URL.Path); !ok {
 			http.NotFound(w, r)
 			return
 		}

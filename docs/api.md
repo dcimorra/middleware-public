@@ -483,30 +483,51 @@ turn one off through the API, which is the point of a watchdog.
 ## The site door
 
 The site's own code talks to Claude through the house: same engine, same
-jail, same bill, visible in the panel. Open it with `claude_api` in the
-manifest; the site's process then gets `MIDDLEWARE_TOKEN` (its token: it
-names the site and opens only this door) and `MIDDLEWARE_API`. A docker site
-gets `MIDDLEWARE_API_SOCKET` too, a unix socket mounted at its own path:
-inside a container 127.0.0.1 is the container's. Through that socket only the
-site door answers. Opening or closing the door restarts the site.
+jail, same bill, visible in the panel. Open it from the site's page in the
+panel (or with `claude_api` in the manifest); the site's process then gets
+`MIDDLEWARE_TOKEN` (its token: it names the site and opens only this door)
+and `MIDDLEWARE_API`, the house's bare address (`http://127.0.0.1:46100`). A
+docker site gets `MIDDLEWARE_API_SOCKET` too, a unix socket mounted at its
+own path: inside a container 127.0.0.1 is the container's. Through that
+socket only the site door answers. Opening or closing the door restarts the
+site.
+
+The contract is V1's, path for path and field for field: the routes answer
+at `$MIDDLEWARE_API/api/site/…` as in V1, and at `/api/v1/site/…` too, so a
+site written for V1 moves without a line changed.
 
 | method | path | result |
 | --- | --- | --- |
-| GET | `/site` | → `{domain, claude: {tools, model, daily_usd, spent_usd, left_usd, chats_open}}` |
-| POST | `/site/claude/ask` | `{prompt, system?, model?, format?: "json", schema?, wait?}` → `{id, turn_id, text, cost_usd, json?, json_error?, error?}`; one question, one call |
-| GET | `/site/claude/chats` | the site's conversations |
-| POST | `/site/claude/chats` | `{title?, system?, model?, prompt?}` → `{id}` (201), or the answer when a prompt was sent |
-| GET | `/site/claude/chats/{id}` | the conversation with every turn |
-| POST | `/site/claude/chats/{id}/messages` | `{prompt, model?, format?, schema?, wait?}` → as ask |
-| POST | `/site/claude/chats/{id}/stop` | stop the turn |
-| POST | `/site/claude/chats/{id}/reap` | stop it and kill what it left running |
-| DELETE | `/site/claude/chats/{id}` | delete it |
+| GET | `/site` | → `{domain, claude: {available, model, tools, limits: {tools, daily_usd, max_chats, model, hide_chats}, spent_usd, left_usd, chats_open, busy}}` |
+| POST | `/site/claude/ask` | `{prompt (or text), system?, model?, title?, format?: "json", schema?, wait?, files?: [paths in the site's folder]}` → `{chat, state: "done", text, model, turns, cost_usd, json?, json_error?, question?, error?}`; one question, one call. Still running when `wait` runs out: 202 `{chat, state: "running", why}` |
+| GET | `/site/claude/chats` | → `{chats: [{id, domain, title, model, created, updated, turns, cost_usd, busy, messages, origin, system, tools, asking}]}` |
+| POST | `/site/claude/chats` | `{title?, system?, model?, format?, schema?, prompt?, files?}` → `{chat: {…}}`, or the answer when a prompt was sent |
+| GET | `/site/claude/chats/{id}` | → `{chat, state, text, messages: [{seq, at, role: user\|assistant\|tool\|result, text, tool: {id, name, input, result, error, done, run, background}, agent, cost_usd, error}], more}`; `?limit=150` (the last ones) |
+| POST | `/site/claude/chats/{id}/messages` | `{prompt, model?, format?, schema?, wait?, files?}` → as ask (409 `{error, chat}` while a turn runs) |
+| GET | `/site/claude/chats/{id}/stream` | server-sent events: `event: message` with each message as it happens, `event: session` with the conversation after each turn |
+| POST | `/site/claude/chats/{id}/files` | a file for the next message: multipart (field `file`) or the raw body with `?name=`; 25 MB → `{ok, file: {name, size, kind, at}}` |
+| DELETE | `/site/claude/chats/{id}/files/{name}` | drop it before it is sent → `{ok}` |
+| POST | `/site/claude/chats/{id}/stop` | stop the turn → `{ok}` |
+| POST | `/site/claude/chats/{id}/reap` | stop it and kill what it left running → `{ok, killed}` |
+| DELETE | `/site/claude/chats/{id}` | delete it → `{ok}` |
+
+The panel's side:
+
+| method | path | result |
+| --- | --- | --- |
+| GET | `/sites/{domain}/claude-api` | → `{enabled, models, defaults, limits?, token?, chats?, spent_usd, use?, api, socket, process}` |
+| POST | `/sites/{domain}/claude-api` | `{enabled, tools, daily_usd, max_chats, model, hide_chats}` → `{ok, token?, warn?}`; writes `claude_api` in the manifest (only what differs from the defaults) and the site restarts |
+| GET | `/claude/sites` | `?days=7…90` (30) → `{days, sites: [{domain, today, d7, d30, month, total, turns30, series, models, since, open, exists, daily_usd, tools}], total}` |
 
 `Authorization: Bearer $MIDDLEWARE_TOKEN`. The operator may call the same
 routes with a session or an API token and `X-Middleware-Site: <domain>`.
 `wait` is how long the call waits for the answer (`2m` by default, `15m` at
-most); `0` returns at once with `running: true` and the conversation is
-polled. The manifest decides on every request: a site whose door was closed
+most); `0` returns at once (202, `state: "running"`) and the conversation is
+polled or streamed. A file named in `files` must be inside the site's folder;
+it is copied, so it works with tools `none` too. With `format: "json"` the
+instruction goes in the conversation's brief and the answer is read back as
+JSON (`json`), or says why not (`json_error`). An unknown model is refused
+(400) before anything is spent. The manifest decides on every request: a site whose door was closed
 is refused even with its token.
 
 **Tool levels** (`claude_api.tools`): `none` (the default: it talks and
@@ -518,6 +539,8 @@ subagents, and cannot read the site's own `.env`.
 
 **Money**: `claude_api.daily_usd` (0: `agents.site_daily_usd` in settings,
 5 USD by default) is checked before every turn, in UTC days. Traffic decides
-this spending, not a person watching. `max_chats` (20) caps the open
-conversations. The last free agent slot is never a site's: the operator can
+this spending, not a person watching. `max_chats` (20) is how many
+conversations the site keeps: at the limit the oldest go (never one at work
+or waiting for an answer), so a site that opens one per visit fills nothing
+and stops nothing. The last free agent slot is never a site's: the operator can
 always get in.

@@ -625,3 +625,9 @@ details.section[open] summary { border-bottom: 1px solid var(--border); margin-b
 .cache-rule { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .cache-rule input.mono { flex: 1 1 200px; }
 .cache-rule input[type=number] { width: 110px; }
+
+/* ---------- the Claude door ---------- */
+pre.snippet { margin: 8px 0 0; padding: 8px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+select.auto { width: auto; }
+svg.bars rect { fill: var(--accent); }
+tr.total td { border-top: 2px solid var(--border); }

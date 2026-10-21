@@ -23,6 +23,7 @@ import { accessTab } from "./site-access.js";
 import { securityTab } from "./site-security.js";
 import { activityTab } from "./site-activity.js";
 import { cacheTab } from "./site-cache.js";
+import { doorCard } from "./site-door.js";
 
 const TABS = ["overview", "activity", "manifest", "logs", "files", "chat", "access", "security", "cache"];
 const TAB_ICON = { overview: "gauge", activity: "activity", manifest: "code", logs: "list", files: "folder", chat: "chat", access: "lock", security: "shield", cache: "box" };
@@ -93,6 +94,9 @@ function overviewTab(domain) {
   const el = h("div");
   const subs = [];
   const envBox = h("div");
+  // Built once: the overview re-renders on every store change, and the
+  // door's form must not lose what is being typed into it.
+  const door = doorCard(domain);
   // The names the house published for this site, from GET /publish:
   // [name, record] pairs, refreshed on publish.* events.
   let published = [];
@@ -168,6 +172,7 @@ function overviewTab(domain) {
       h("div", { class: "card" }, h("h2", null, t("site.tab.overview")), kv(pairs), h("hr"), actions),
       unmanaged ? notice("warn", t("site.unmanagedNotice")) : null,
       workersCard(s),
+      unmanaged ? null : door,
       unmanaged ? null : h("div", { class: "card" }, h("h2", null, t("site.env")), h("p", { class: "small muted" }, t("site.envHint")), envBox),
     ]);
   }

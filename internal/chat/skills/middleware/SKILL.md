@@ -566,9 +566,14 @@ install or call the `claude` CLI from the site, and never put an API key in
 the project:
 
 ```sh
-curl -s "$MIDDLEWARE_API/site/claude/ask" -H "Authorization: Bearer $MIDDLEWARE_TOKEN" \
+curl -s "$MIDDLEWARE_API/api/site/claude/ask" -H "Authorization: Bearer $MIDDLEWARE_TOKEN" \
   -H 'Content-Type: application/json' -d '{"prompt": "Summarise: …", "format": "json"}'
 ```
+
+The answer is `{chat, state, text, model, turns, cost_usd, json, question}`;
+`files: ["path/in/the/site"]` sends files of the site's folder with the
+message, `wait: "0"` answers 202 at once and the conversation is followed at
+`/api/site/claude/chats/{chat}` or its `/stream`.
 
 The default level has no tools; `read`, `web` and `write` are a person's
 decision, not yours. Each site has a daily cap (`claude_api.daily_usd`); a

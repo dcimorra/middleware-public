@@ -29,6 +29,7 @@ import { openBanner } from "./screens/settings-access.js";
 import { settingsScreen } from "./screens/settings.js";
 import { systemScreen } from "./screens/system.js";
 import { houseScreen } from "./screens/house.js";
+import { claudeUsageScreen } from "./screens/claude-usage.js";
 
 const app = document.getElementById("app");
 const main = document.getElementById("main");
@@ -55,6 +56,7 @@ const NAV = [
   ["audit", "/audit", "g a", "alert"],
   ["edge", "/edge", "g x", "link"],
   ["house", "/house", "g h", "sparkles"],
+  ["claude", "/claude", "g u", "gauge"],
   ["events", "/events", "g e", "activity"],
   ["guard", "/guard", "g g", "eye"],
   ["settings", "/settings", "g c", "sliders"],
@@ -131,6 +133,7 @@ route("/docs/:name?", docsScreen);
 route("/settings", settingsScreen);
 route("/system", systemScreen);
 route("/house", houseScreen);
+route("/claude", claudeUsageScreen);
 
 let authView = null;
 let authed = false;
