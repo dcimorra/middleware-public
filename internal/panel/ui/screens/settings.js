@@ -15,17 +15,17 @@ import { passkeysCard, panelAccessCard } from "./settings-access.js";
 import { pushCard } from "./settings-push.js";
 import { autofixCard } from "./settings-autofix.js";
 
-const PAGES = ["unknown", "stopped", "hold", "unavailable"];
 
 export function settingsScreen() {
   const p = page({ title: t("nav.settings"), icon: "sliders" });
   const general = h("div", { class: "card" });
   const pagesCard = h("div", { class: "card" });
+  const cacheCard = h("div", { class: "card" });
   const agentsCard = h("div", { class: "card" });
   const tokensCard = h("div", { class: "card pad0" });
   const depsCard = h("div", { class: "card" });
   const localCard = h("div", { class: "card" });
-  p.body.append(general, pushCard(), autofixCard(), passkeysCard(), panelAccessCard(), pagesCard, agentsCard, depsCard, tokensCard, localCard);
+  p.body.append(general, pushCard(), autofixCard(), passkeysCard(), panelAccessCard(), pagesCard, cacheCard, agentsCard, depsCard, tokensCard, localCard);
 
   // The deps card saves on its own, like the agents one.
   async function renderDeps() {
@@ -107,15 +107,6 @@ export function settingsScreen() {
     const to = h("input", { type: "number", min: "1024", max: "65535", value: (s.ports && s.ports.to) || "" });
     const save = h("button", { type: "submit", class: "btn primary" }, t("common.save"));
     const err = h("div", { class: "error-box", hidden: true });
-    const pages = {};
-    const pagesForm = h("div");
-    for (const key of PAGES) {
-      const cur = (s.pages && s.pages[key]) || ["", ""];
-      const title = h("input", { type: "text", value: cur[0] || "" });
-      const message = h("input", { type: "text", value: cur[1] || "" });
-      pages[key] = [title, message];
-      pagesForm.append(h("details", { class: "section" }, h("summary", null, t("settings.page." + key)), h("div", { class: "section-body form-row" }, field(t("settings.pageTitle"), title), field(t("settings.pageMessage"), message))));
-    }
     const form = h("form", { novalidate: true },
       h("div", { class: "form-row" },
         field(t("settings.panelDomain"), panelDomain, t("settings.panelDomainHint")),
@@ -132,20 +123,62 @@ export function settingsScreen() {
       const f = Number(from.value), tt = Number(to.value);
       if (!(f > 0 && tt > f)) { err.textContent = t("settings.portsBad"); err.hidden = false; return; }
       const cur = await api.get("/settings").catch(() => s);
-      const out = { ...cur, panel_domain: panelDomain.value.trim(), listen: listen.value.trim(), ports: { from: f, to: tt }, pages: {} };
-      for (const key of PAGES) {
-        const [ti, me] = pages[key];
-        if (ti.value || me.value) out.pages[key] = [ti.value, me.value];
-      }
-      if (Object.keys(out.pages).length === 0) delete out.pages;
+      const out = { ...cur, panel_domain: panelDomain.value.trim(), listen: listen.value.trim(), ports: { from: f, to: tt } };
       save.classList.add("busy");
       try { await api.put("/settings", out); toast(t("settings.saved"), "ok"); }
       catch (ex) { err.textContent = ex.message; err.hidden = false; }
       finally { save.classList.remove("busy"); }
     });
     clear(general).append(h("h2", null, t("settings.general")), form);
-    clear(pagesCard).append(h("h2", null, t("settings.pages")), h("p", { class: "small muted" }, t("settings.pagesHint")), pagesForm, h("p", { class: "small muted" }, t("settings.pagesSaveHint")));
+    renderPages(s);
+    renderCache(s);
     return null;
+  }
+
+  // The visitor pages' design, chosen by seeing it: the frame shows the
+  // page a visitor gets, in the design selected, before it is saved.
+  async function renderPages(s) {
+    let cat = { themes: [] };
+    try { cat = await api.get("/pages/themes"); } catch { /* the select stays empty */ }
+    const theme = h("select", null, ...cat.themes.map((th) => h("option", { value: th.key }, th.name)));
+    theme.value = s.visitor_theme || cat.house || "sober";
+    const page = h("select", null, ...["down", "starting", "stopped", "hold", "forbidden", "password"].map((k) => h("option", { value: k }, t("settings.pagePreview." + k))));
+    const note = h("p", { class: "small muted" });
+    // Same origin so the session cookie goes with it; no scripts: the page
+    // has none, and its own policy allows none either.
+    const frame = h("iframe", { class: "page-preview", title: t("settings.pagesPreview"), sandbox: "allow-same-origin" });
+    const show = () => {
+      const th = cat.themes.find((x) => x.key === theme.value);
+      // The note in the panel's language when it has it, the server's otherwise.
+      const k = "pages.themeNote." + theme.value;
+      note.textContent = t(k) !== k ? t(k) : (th ? th.note : "");
+      frame.src = `/api/v1/pages/preview?theme=${encodeURIComponent(theme.value)}&page=${encodeURIComponent(page.value)}`;
+    };
+    theme.addEventListener("change", show);
+    page.addEventListener("change", show);
+    const save = h("button", { type: "button", class: "btn primary" }, t("common.save"));
+    save.addEventListener("click", async () => {
+      save.classList.add("busy");
+      try { const cur = await api.get("/settings"); await api.put("/settings", { ...cur, visitor_theme: theme.value }); toast(t("settings.saved"), "ok"); }
+      catch (e) { toastError(e); } finally { save.classList.remove("busy"); }
+    });
+    clear(pagesCard).append(h("h2", null, t("settings.pages")), h("p", { class: "small muted" }, t("settings.pagesHint")),
+      h("div", { class: "form-row" }, field(t("settings.pagesTheme"), theme), field(t("settings.pagesPage"), page)), note, frame,
+      h("div", { class: "form-actions" }, save));
+    show();
+  }
+
+  // The memory every site's response cache shares.
+  function renderCache(s) {
+    const mb = h("input", { type: "number", min: "16", step: "16", value: String((s.cache && s.cache.max_mb) || 256) });
+    const save = h("button", { type: "button", class: "btn primary" }, t("common.save"));
+    save.addEventListener("click", async () => {
+      save.classList.add("busy");
+      try { const cur = await api.get("/settings"); await api.put("/settings", { ...cur, cache: { ...(cur.cache || {}), max_mb: Number(mb.value) } }); toast(t("settings.saved"), "ok"); }
+      catch (e) { toastError(e); } finally { save.classList.remove("busy"); }
+    });
+    clear(cacheCard).append(h("h2", null, t("settings.cacheTitle")), h("p", { class: "small muted" }, t("settings.cacheHint")),
+      field(t("settings.cacheMB"), mb), h("div", { class: "form-actions" }, save));
   }
 
   async function renderTokens() {

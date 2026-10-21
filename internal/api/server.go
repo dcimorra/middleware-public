@@ -171,6 +171,7 @@ func New(opts Options) *Server {
 	s.registerSites()
 	s.registerEvents()
 	s.registerSystem()
+	s.registerPages()
 	s.registerDocs()
 	s.Handle("GET", Prefix+"/openapi.json", "The OpenAPI description of every registered route", s.openAPI)
 	s.Public("GET", Prefix+"/openapi.json")

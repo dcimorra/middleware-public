@@ -60,7 +60,8 @@ function domainsTab() {
   });
   const mine = h("div");
   el.append(h("div", { class: "card" }, h("h2", null, t("edge.searchTitle")), h("p", { class: "small muted" }, t("edge.searchHint")), form, results),
-    h("div", { class: "card pad0" }, h("div", { class: "log-bar card-pad" }, h("h2", null, t("edge.mine"))), mine));
+    h("div", { class: "card pad0" }, h("div", { class: "log-bar card-pad" }, h("h2", null, t("edge.mine"))), mine),
+    pricesCard());
   (async () => {
     clear(mine).append(loading());
     try {
@@ -171,6 +172,35 @@ function tokenTab() {
         s.missing.length ? notice("bad", t("edge.missing", { list: s.missing.join(", ") })) : null,
         h("div", { class: "form-actions" }, narrow)].filter(Boolean));
     } catch (e) { clear(el).append(h("h2", null, t("edge.tab.token")), h("p", { class: "small muted" }, e.message)); }
+  })();
+  return el;
+}
+
+// The prices the search shows: written by hand, one ending per line, and
+// dated when saved, so that six months on the search says they may be old.
+function pricesCard() {
+  const el = h("div", { class: "card" });
+  (async () => {
+    let p = { usd: {} };
+    try { p = await api.get("/domains/prices"); } catch (e) { el.append(h("h2", null, t("edge.prices")), h("p", { class: "small muted" }, e.message)); return; }
+    const text = h("textarea", { class: "mono", rows: "8", placeholder: "com 10.44\nes 9.50", spellcheck: "false" });
+    text.value = Object.entries(p.usd || {}).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k} ${v}`).join("\n");
+    const save = h("button", { type: "button", class: "btn primary" }, t("common.save"));
+    const when = h("p", { class: "small muted" }, p.updated ? t("edge.pricesFrom", { at: p.updated }) : t("edge.pricesNever"));
+    save.addEventListener("click", async () => {
+      const usd = {};
+      for (const line of text.value.split("\n")) {
+        const [k, v] = line.trim().split(/[\s=:]+/);
+        if (!k) continue;
+        const n = Number(String(v || "").replace(",", "."));
+        if (!(n >= 0)) { toastError(new Error(t("edge.pricesBad", { line }))); return; }
+        usd[k.replace(/^\./, "")] = n;
+      }
+      save.classList.add("busy");
+      try { const r = await api.put("/domains/prices", { usd }); when.textContent = t("edge.pricesFrom", { at: r.updated }); toast(t("edge.saved"), "ok"); }
+      catch (e) { toastError(e); } finally { save.classList.remove("busy"); }
+    });
+    el.append(h("h2", null, t("edge.prices")), h("p", { class: "small muted" }, t("edge.pricesHint")), text, when, h("div", { class: "form-actions" }, save));
   })();
   return el;
 }

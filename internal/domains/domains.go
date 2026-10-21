@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -99,6 +100,30 @@ var labelRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // ErrBadName is a name that is not one label.
 var ErrBadName = errors.New("a name is one label: letters, digits and hyphens")
+
+// Prices is the hand-written price table.
+func (s *Searcher) Prices() Prices {
+	p := s.prices()
+	if p.USD == nil {
+		p.USD = map[string]float64{}
+	}
+	return p
+}
+
+// SetPrices writes the table, dated today: the date is what says, six
+// months on, that the prices may be old.
+func (s *Searcher) SetPrices(usd map[string]float64) (Prices, error) {
+	clean := map[string]float64{}
+	for tld, v := range usd {
+		tld = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(tld), "."))
+		if !labelRe.MatchString(tld) || v < 0 {
+			return Prices{}, fmt.Errorf("%q: an ending and a price of zero or more", tld)
+		}
+		clean[tld] = v
+	}
+	p := Prices{Updated: s.opts.Now().UTC().Format("2006-01-02"), USD: clean}
+	return p, fsx.WriteJSON(filepath.Join(s.opts.DataDir, "tld-prices.json"), p, 0o644)
+}
 
 func (s *Searcher) prices() Prices {
 	var p Prices
