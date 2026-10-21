@@ -60,6 +60,13 @@ func (s *Server) RegisterInbound(o InboundOptions) {
 	if o.Publisher != nil {
 		s.registerPublish(o.Publisher, h)
 	}
+	// One domain at a time, by the same path as the move below.
+	s.registerMigration(func(ctx context.Context, domain string, to inbound.Door) []inbound.Line {
+		if o.Publisher != nil {
+			return o.Publisher.Move(ctx, []string{domain}, to)
+		}
+		return h.Move(ctx, []string{domain}, to)
+	})
 	s.Handle("GET", p, "The doors and every domain's door, certificate and DNS", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		st := h.Status()
 		rows := make([]InboundRow, 0, len(st.Domains))

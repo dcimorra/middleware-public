@@ -240,3 +240,46 @@ func TestTheDoorForNewSitesAndThePublicAddressAreSetThroughTheAPI(t *testing.T) 
 		t.Fatal("the door for new sites is not on disk")
 	}
 }
+
+func TestAMigrationMovesOneDomainAtATimeAndStopsWhenAsked(t *testing.T) {
+	f := newFixture(t).withToken()
+	release := make(chan struct{})
+	var moved []string
+	var mu sync.Mutex
+	f.srv.registerMigration(func(ctx context.Context, d string, to inbound.Door) []inbound.Line {
+		<-release
+		mu.Lock()
+		moved = append(moved, d)
+		mu.Unlock()
+		return []inbound.Line{{Status: "ok", Text: d + " on " + string(to)}}
+	})
+	resp, body := f.call("POST", "/api/v1/inbound/migration", map[string]any{"domains": []string{"a.test", "b.test", "c.test"}, "to": "ports"})
+	if resp.StatusCode != 202 || body["running"] != true {
+		t.Fatalf("start: %d %v", resp.StatusCode, body)
+	}
+	if resp, _ := f.call("POST", "/api/v1/inbound/migration", map[string]any{"domains": []string{"x.test"}, "to": "ports"}); resp.StatusCode != 409 {
+		t.Fatalf("a second one: %d", resp.StatusCode)
+	}
+	release <- struct{}{} // a.test
+	f.call("POST", "/api/v1/inbound/migration/cancel", nil)
+	release <- struct{}{} // b.test, the one it was on
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		_, st := f.call("GET", "/api/v1/inbound/migration", nil)
+		if st["running"] == false {
+			if st["cancelled"] != true || st["done"].(float64) != 2 {
+				t.Fatalf("after cancel: %v", st)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("it did not stop")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(moved) != 2 {
+		t.Fatalf("moved %v", moved)
+	}
+}

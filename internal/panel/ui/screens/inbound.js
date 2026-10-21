@@ -18,9 +18,11 @@ import { unroutedCard } from "./unrouted.js";
 export function inboundScreen() {
   const p = page({ title: t("nav.inbound"), sub: t("inbound.sub"), icon: "door" });
   const body = h("div");
+  const migration = h("div");
+  let migTimer = null;
   // Its own card, loaded once: the doors re-render on every inbound event
   // and a device being named must not be wiped by one.
-  p.body.append(body, vpnCard(), unroutedCard());
+  p.body.append(migration, body, vpnCard(), unroutedCard());
   const subs = [];
   let selected = new Set();
 
@@ -195,27 +197,49 @@ export function inboundScreen() {
     return b;
   }
 
+  // Moving starts a migration on the server, one domain at a time; the
+  // card above the doors follows it and can stop it, here or after coming
+  // back to this screen.
   async function move() {
     const list = [...selected];
     const to = h("select", null, h("option", { value: "tunnel" }, t("inbound.door.tunnel")), h("option", { value: "ports" }, t("inbound.door.ports")));
-    const lines = checklist();
-    const unsub = onEvent("inbound.", (ev) => { if (list.includes(ev.subject) && (ev.message || ev.data)) lines.add({ ok: ev.level !== "error", text: `${ev.subject}: ${ev.message || ev.type}` }); });
-    await open({
+    const ok = await open({
       title: t("inbound.moveQ", { n: list.length }),
-      body: [h("p", { class: "dim" }, list.join(", ")), field(t("inbound.moveTo"), to), lines.el],
-      buttons: [{ label: t("common.close"), value: null }, { label: t("inbound.move"), primary: true, onClick: async (_f, showError) => {
-        lines.set(list.map((d) => ({ state: "pending", text: d })));
-        const r = await api.post("/inbound/move", { domains: list, to: to.value });
-        lines.set(r && r.lines);
-        if (r && r.ok === false) { showError(t("inbound.moveFailed")); return false; }
-        toast(t("inbound.moved", { n: list.length, door: t("inbound.door." + to.value) }), "ok");
-        return false; // keep open so the lines can be read; Close dismisses
-      } }],
+      body: [h("p", { class: "dim" }, list.join(", ")), field(t("inbound.moveTo"), to), h("p", { class: "small muted" }, t("inbound.moveBackground"))],
+      buttons: [{ label: t("common.cancel"), value: null }, { label: t("inbound.move"), primary: true, submit: true }],
+      onSubmit: async () => { await api.post("/inbound/migration", { domains: list, to: to.value }); return true; },
     });
-    unsub();
+    if (!ok) return;
     selected = new Set();
-    load(body, render);
+    showMigration();
   }
+
+  async function showMigration() {
+    let m;
+    try { m = await api.get("/inbound/migration"); } catch { return; }
+    clearTimeout(migTimer);
+    if (!m.id) { clear(migration); return; }
+    const total = m.domains.length || 1;
+    const fill = h("div", { class: "fill" + (m.failed ? " warn" : "") });
+    fill.style.width = `${Math.round((m.done / total) * 100)}%`;
+    const cancel = h("button", { type: "button", class: "btn sm danger", hidden: !m.running }, t("inbound.migrationCancel"));
+    cancel.addEventListener("click", async () => { try { await api.post("/inbound/migration/cancel"); toast(t("inbound.migrationCancelling"), "ok"); } catch (e) { toastError(e); } });
+    const dismiss = h("button", { type: "button", class: "btn sm ghost", hidden: m.running }, t("common.close"));
+    dismiss.addEventListener("click", () => clear(migration));
+    const state = m.running ? t("inbound.migrationRunning", { done: m.done, total, current: m.current || "…", door: t("inbound.door." + m.to) })
+      : t(m.cancelled ? "inbound.migrationCancelled" : "inbound.migrationDone", { done: m.done, total, failed: m.failed, door: t("inbound.door." + m.to) });
+    clear(migration).append(h("div", { class: "card" },
+      h("div", { class: "log-bar" }, h("h2", { class: "grow" }, t("inbound.migrationTitle")), cancel, dismiss),
+      h("p", { class: "small" }, state),
+      h("div", { class: "meter", role: "progressbar", "aria-valuenow": String(m.done), "aria-valuemax": String(total) }, fill),
+      h("details", null, h("summary", { class: "small" }, t("inbound.migrationLines", { n: m.lines.length })),
+        h("div", { class: "stack-sm small mono" }, ...m.lines.map((l) => h("div", { class: l.status === "fail" ? "level-error" : l.status === "ok" ? "" : "muted" }, `[${l.status}] ${l.text}`))))));
+    if (m.running) migTimer = setTimeout(showMigration, 1500);
+    else load(body, render);
+  }
+  subs.push(onEvent("inbound.migration.", () => showMigration()));
+  showMigration();
+
 
   // Rebuild on inbound events from elsewhere, but not while the operator is
   // reading result lines or has the move dialog open.
@@ -223,5 +247,5 @@ export function inboundScreen() {
   subs.push(onEvent("cert.", () => load(body, render)));
   subs.push(onEvent("publish.", () => { if (!document.querySelector("dialog[open]") && !body.querySelector(".checklist li")) load(body, render); }));
   load(body, render);
-  return { el: p.el, destroy() { subs.forEach((u) => u()); } };
+  return { el: p.el, destroy() { clearTimeout(migTimer); subs.forEach((u) => u()); } };
 }

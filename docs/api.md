@@ -326,6 +326,9 @@ The external programs the modules run (the agent CLIs), installed under
 | PUT | `/inbound/local` | `{open, http?, dns?}` → `doors`; the local door's listeners (plain HTTP and the name server), 400 when an address is malformed or collides with the ports door |
 | GET | `/sites/{domain}/security/seen` | who called at the site → `{countries, bots, browsers, agents: [{key, name, extra, count, first, last}], since, total}`, heaviest first; counted before the security rules, so what they shut out is there too |
 | POST | `/sites/{domain}/security/seen/forget` | → `{ok}`; empties the tally |
+| POST | `/inbound/migration` | `{domains, to}` → 202 the migration: moves them in the background one at a time (certificate, door, DNS each); 409 while one runs. Progress on `inbound.migration.*` events |
+| GET | `/inbound/migration` | → `{id, to, domains, done, current, lines, started, finished, running, cancelled, failed}`, the running one or the last |
+| POST | `/inbound/migration/cancel` | → `{ok}`; stops after the domain it is on |
 | GET | `/unrouted` | names that reached this house and belong to no site → `[{host, count, first, last, doors: {door: n}, samples: [{when, door, method, path, ip, agent, proxy, tls, sni}]}]`, most recent first; in memory, 200 names, 5 samples each |
 | DELETE | `/unrouted/{host}` | → `{ok}`; forget it |
 | GET | `/inbound/certificates` | → `[{domain, issued, expires, issuer}]` |
