@@ -267,13 +267,28 @@ func skippedDep(name string) bool {
 
 // aptName is the package apt can install for name: itself, or its t64
 // successor when name is only virtual now; "" when neither exists.
+//
+// The exit status does not say it: for a purely virtual package
+// (libasound2 on Ubuntu 24.04) apt-cache show prints a notice and exits 0,
+// and the install that followed failed with "has no installation
+// candidate" (a fresh VPS, 21 October 2026). A real one prints its record.
 func aptName(name string, ex Exec) string {
 	for _, n := range []string{name, name + "t64"} {
-		if _, err := ex.Run("apt-cache", "show", "--no-all-versions", n); err == nil {
+		out, err := ex.Run("apt-cache", "show", "--no-all-versions", n)
+		if err == nil && hasRecord(out, n) {
 			return n
 		}
 	}
 	return ""
+}
+
+func hasRecord(out, name string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "Package: "+name {
+			return true
+		}
+	}
+	return false
 }
 
 // progress says how a download goes. On a terminal it is one line

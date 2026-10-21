@@ -74,6 +74,23 @@ type Step struct {
 	Run  func() (changed bool, detail string, err error)
 }
 
+// optional marks a step whose failure warns and lets the rest go on: a
+// machine without the pictures of its sites is a whole machine, one
+// without its units is not.
+func optional(run func() (bool, string, error)) func() (bool, string, error) {
+	return func() (bool, string, error) {
+		c, d, err := run()
+		if err != nil {
+			err = optionalError{err}
+		}
+		return c, d, err
+	}
+}
+
+type optionalError struct{ error }
+
+func (e optionalError) Unwrap() error { return e.error }
+
 // Report is what a run produced, for callers that want more than the lines.
 type Report struct {
 	Changed []string
@@ -118,6 +135,9 @@ func (in *Installer) runSteps(steps []Step) (Report, error) {
 	for _, s := range steps {
 		changed, detail, err := s.Run()
 		switch {
+		case err != nil && errors.As(err, new(optionalError)):
+			rep.Failed = append(rep.Failed, s.Name)
+			fmt.Fprintf(in.Out, "! %-26s %s\n", s.Name, shortErr(err))
 		case err != nil:
 			rep.Failed = append(rep.Failed, s.Name)
 			fmt.Fprintf(in.Out, "✗ %-26s %v\n", s.Name, err)
@@ -133,6 +153,21 @@ func (in *Installer) runSteps(steps []Step) (Report, error) {
 		}
 	}
 	return rep, nil
+}
+
+// shortErr is an optional step's failure on one line: apt's whole output
+// was the installer's last screen, and the line that matters is its "E:".
+func shortErr(err error) string {
+	msg := err.Error()
+	for _, line := range strings.Split(msg, "\n") {
+		if l := strings.TrimSpace(line); strings.HasPrefix(l, "E: ") {
+			return l + " (the rest goes on; the panel works without the pictures)"
+		}
+	}
+	if i := strings.IndexByte(msg, '\n'); i > 0 {
+		msg = msg[:i]
+	}
+	return msg + " (the rest goes on; the panel works without the pictures)"
 }
 
 // Install runs every step in order and stops at the first failure, which is
@@ -152,7 +187,7 @@ func (in *Installer) Install() (Report, error) {
 		{"system group", in.stepGroup},
 		{"user in group", in.stepUserInGroup},
 		{"root directory", in.stepRootDir},
-		{"headless browser", in.stepBrowser},
+		{"headless browser", optional(in.stepBrowser)},
 		{"binary", func() (bool, string, error) {
 			c, d, err := in.stepBinary()
 			binaryChanged = c

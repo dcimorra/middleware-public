@@ -81,8 +81,11 @@ func TestSayingYesInstallsTheHeadlessShellAndTheLibrariesItLoads(t *testing.T) {
 		return m[0]
 	}
 	os.MkdirAll(in.Params.Root, 0o755)
-	// Ubuntu 24.04: the old name is only virtual now.
-	rec.Set("apt-cache show --no-all-versions libasound2", "", errors.New("purely virtual"))
+	// Ubuntu 24.04: the old name is only virtual now, and apt-cache says
+	// so with a notice and exit status 0.
+	rec.Set("apt-cache show --no-all-versions libasound2", "N: Can't select versions from package 'libasound2' as it is purely virtual\n", nil)
+	rec.Set("apt-cache show --no-all-versions libasound2t64", "Package: libasound2t64\nVersion: 1.2.11-1ubuntu0.3\n", nil)
+	rec.Set("apt-cache show --no-all-versions libnss3", "Package: libnss3\nVersion: 2:3.98-1build1\n", nil)
 	changed, detail, err := in.stepBrowser()
 	if err != nil || !changed {
 		t.Fatalf("%v %q %v", changed, detail, err)
@@ -158,5 +161,24 @@ func TestADownloadSaysHowItGoes(t *testing.T) {
 	p.done()
 	if !strings.Contains(term.String(), "\r  [###############...............]  50%") {
 		t.Fatalf("on a terminal: %q", term.String())
+	}
+}
+
+func TestABrowserThatCannotBeInstalledDoesNotStopTheInstall(t *testing.T) {
+	in, _, _ := testInstaller(t)
+	var out strings.Builder
+	in.Out = &out
+	ran := false
+	rep, err := in.runSteps([]Step{
+		{"headless browser", optional(func() (bool, string, error) {
+			return false, "", errors.New("sudo: exit status 100: Reading package lists...\nE: Package 'libasound2' has no installation candidate")
+		})},
+		{"binary", func() (bool, string, error) { ran = true; return true, "installed", nil }},
+	})
+	if err != nil || !ran {
+		t.Fatalf("the install stopped: %v", err)
+	}
+	if len(rep.Failed) != 1 || !strings.Contains(out.String(), "! headless browser") || !strings.Contains(out.String(), "E: Package 'libasound2'") || strings.Contains(out.String(), "Reading package lists") {
+		t.Fatalf("%q", out.String())
 	}
 }
