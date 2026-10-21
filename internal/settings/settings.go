@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/dcimorra/middleware-public/internal/fsx"
 )
@@ -39,10 +40,32 @@ type Settings struct {
 	Update Update `json:"update"`
 }
 
-// Update is the self-update. Off by default: a new release is installed
-// when the operator says so, or daily once they turned this on.
+// Update is the self-update. The newest release is looked for every
+// EveryMinutes (an hour unless set); one found is installed by itself only
+// with Auto on, off by default, and otherwise waits for the button.
 type Update struct {
-	Auto bool `json:"auto,omitempty"`
+	Auto         bool `json:"auto,omitempty"`
+	EveryMinutes int  `json:"every_minutes,omitempty"`
+}
+
+// DefaultUpdateMinutes is how often a new release is looked for.
+const DefaultUpdateMinutes = 60
+
+// Every is the interval between checks, with its default.
+func (u Update) Every() time.Duration {
+	if u.EveryMinutes <= 0 {
+		return DefaultUpdateMinutes * time.Minute
+	}
+	return time.Duration(u.EveryMinutes) * time.Minute
+}
+
+// Validate refuses an interval that is not a whole number of minutes from
+// one minute to a week.
+func (u Update) Validate() error {
+	if u.EveryMinutes < 0 || u.EveryMinutes > 7*24*60 {
+		return fmt.Errorf("update.every_minutes: want 1 to %d minutes", 7*24*60)
+	}
+	return nil
 }
 
 // Cache is the memory every site's response cache shares. The sum is what

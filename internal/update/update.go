@@ -23,8 +23,9 @@ import (
 	"github.com/dcimorra/middleware-public/internal/release"
 )
 
-// Every is how often the automatic update looks.
-const Every = 24 * time.Hour
+// DefaultEvery is how often a new release is looked for when the
+// operator did not say.
+const DefaultEvery = time.Hour
 
 // fresh is how long a check is reused before asking GitHub again.
 const fresh = time.Hour
@@ -33,8 +34,11 @@ const fresh = time.Hour
 type Options struct {
 	Current string
 	Bus     *events.Bus
-	// Auto says whether the installation updates itself.
+	// Auto says whether a release found is installed by itself.
 	Auto func() bool
+	// Every is how often to look; nil or zero is DefaultEvery. Read before
+	// every wait, so a change applies without a restart.
+	Every func() time.Duration
 	// Install asks the helper to install version. Helper says whether
 	// there is one to ask; without, the panel says to use the script.
 	Install func(ctx context.Context, version string) error
@@ -48,13 +52,17 @@ type Options struct {
 
 // Status is what the System screen shows.
 type Status struct {
-	Current    string    `json:"current"`
-	Latest     string    `json:"latest,omitempty"`
-	Available  bool      `json:"available"`
-	CheckedAt  time.Time `json:"checked_at,omitzero"`
-	Error      string    `json:"error,omitempty"`
-	Auto       bool      `json:"auto"`
-	Installing bool      `json:"installing,omitempty"`
+	Current   string    `json:"current"`
+	Latest    string    `json:"latest,omitempty"`
+	Available bool      `json:"available"`
+	CheckedAt time.Time `json:"checked_at,omitzero"`
+	Error     string    `json:"error,omitempty"`
+	Auto      bool      `json:"auto"`
+	// EveryMinutes is the interval the checks run at; NextCheck when the
+	// next one is due.
+	EveryMinutes int       `json:"every_minutes"`
+	NextCheck    time.Time `json:"next_check,omitzero"`
+	Installing   bool      `json:"installing,omitempty"`
 	// CanInstall is false without the helper (a container, an install
 	// with --no-helper) or on a build that is not a release.
 	CanInstall bool `json:"can_install"`
@@ -80,6 +88,10 @@ type Updater struct {
 	opts Options
 	mu   sync.Mutex
 	st   Status
+	// told is the last release announced as waiting for the button, so it
+	// is announced once and not at every check.
+	told string
+	next time.Time
 }
 
 // New builds an updater.
@@ -105,6 +117,10 @@ func (u *Updater) Status() Status {
 	st := u.st
 	u.mu.Unlock()
 	st.Auto = u.opts.Auto != nil && u.opts.Auto()
+	st.EveryMinutes = int(u.every() / time.Minute)
+	u.mu.Lock()
+	st.NextCheck = u.next
+	u.mu.Unlock()
 	st.CanInstall, st.Why = true, ""
 	switch {
 	case !release.Valid(u.opts.Current):
@@ -233,24 +249,60 @@ func (u *Updater) Install(ctx context.Context, actor string) (string, error) {
 	return st.Latest, nil
 }
 
-// Run updates on its own, daily, while the setting is on.
+func (u *Updater) every() time.Duration {
+	if u.opts.Every != nil {
+		if d := u.opts.Every(); d >= time.Minute {
+			return d
+		}
+	}
+	return DefaultEvery
+}
+
+// Run looks for a new release every interval, the first time two minutes
+// after starting. One found is installed when Auto is on; otherwise it is
+// announced, once, and waits for the button.
 func (u *Updater) Run(ctx context.Context) {
-	first := time.NewTimer(2 * time.Minute)
-	defer first.Stop()
-	t := time.NewTicker(Every)
+	last := u.opts.Now().Add(-u.every() + 2*time.Minute)
+	t := time.NewTicker(15 * time.Second)
 	defer t.Stop()
 	for {
+		due := last.Add(u.every())
+		u.mu.Lock()
+		u.next = due
+		u.mu.Unlock()
 		select {
 		case <-ctx.Done():
 			return
-		case <-first.C:
 		case <-t.C:
 		}
-		if u.opts.Auto == nil || !u.opts.Auto() {
+		// Every tick, not one long sleep: an interval shortened in the
+		// panel applies now, not after the old one runs out.
+		if u.opts.Now().Before(due) {
 			continue
 		}
-		if st := u.Check(ctx, true); st.Available && st.CanInstall {
-			_, _ = u.Install(ctx, "engine")
-		}
+		last = u.opts.Now()
+		u.tick(ctx)
+	}
+}
+
+func (u *Updater) tick(ctx context.Context) {
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	st := u.Check(cctx, true)
+	cancel()
+	if !st.Available {
+		return
+	}
+	if st.Auto && st.CanInstall {
+		ictx, cancel := context.WithTimeout(ctx, 11*time.Minute)
+		defer cancel()
+		_, _ = u.Install(ictx, "engine")
+		return
+	}
+	u.mu.Lock()
+	told := u.told == st.Latest
+	u.told = st.Latest
+	u.mu.Unlock()
+	if !told {
+		u.opts.Bus.Emit(events.Event{Type: "update.available", Actor: "engine", Level: "warn", Message: st.Latest + " is available (running " + st.Current + "); install it from System"})
 	}
 }

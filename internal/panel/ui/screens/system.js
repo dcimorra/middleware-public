@@ -9,7 +9,7 @@ import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
 import { onEvent } from "../lib/stream.js";
 import { page, load, table, cell, empty, kv, notice } from "../components/page.js";
-import { confirm, toggle } from "../components/dialog.js";
+import { confirm, toggle, field } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 
 export function systemScreen() {
@@ -91,8 +91,10 @@ export function systemScreen() {
     return null;
   }
 
-  // The self-update: off unless turned on, and a button for now. It asks
-  // GitHub when the screen opens (at most hourly, the server keeps it).
+  // The self-update: a check every so many minutes, chosen here; what it
+  // finds installs itself only with the switch on, and a button for now.
+  // It asks GitHub when the screen opens (at most hourly, the server keeps
+  // it).
   async function renderUpdate(check) {
     const u = check === "force" ? await api.post("/system/update/check") : await api.get(`/system/update${check ? "?check=1" : ""}`);
     const auto = toggle(t("system.update.auto"), { checked: u.auto });
@@ -102,6 +104,16 @@ export function systemScreen() {
         await api.put("/settings", { ...cur, update: { ...(cur.update || {}), auto: auto.input.checked } });
         toast(t(auto.input.checked ? "system.update.autoOn" : "system.update.autoOff"), "ok");
       } catch (e) { auto.input.checked = !auto.input.checked; toastError(e); }
+    });
+    const every = h("input", { type: "number", min: "1", max: "10080", step: "1", inputmode: "numeric", value: String(u.every_minutes || 60), class: "num-input" });
+    every.addEventListener("change", async () => {
+      const n = Number(every.value);
+      if (!Number.isInteger(n) || n < 1 || n > 10080) { toast(t("system.update.everyBad"), "bad"); every.value = String(u.every_minutes || 60); return; }
+      try {
+        const cur = await api.get("/settings");
+        await api.put("/settings", { ...cur, update: { ...(cur.update || {}), every_minutes: n } });
+        toast(t("system.update.everySaved", { n }), "ok");
+      } catch (e) { toastError(e); }
     });
     const checkBtn = h("button", { type: "button", class: "btn" }, icon("refresh"), t("system.update.check"));
     checkBtn.addEventListener("click", async () => {
@@ -128,9 +140,11 @@ export function systemScreen() {
         [t("system.update.running"), h("code", null, u.current || "")],
         [t("system.update.latest"), u.latest ? h("code", null, u.latest) : h("span", { class: "muted" }, "—")],
         [t("system.update.checked"), u.checked_at ? new Date(u.checked_at).toLocaleString() : h("span", { class: "muted" }, "—")],
+        [t("system.update.next"), u.next_check && !u.next_check.startsWith("0001") ? new Date(u.next_check).toLocaleString() : h("span", { class: "muted" }, "—")],
       ]),
       state,
       u.can_install ? null : notice("warn", t("system.update.why." + u.why)),
+      field(t("system.update.every"), every, t("system.update.everyHint")),
       h("div", { class: "field" }, auto.el, h("p", { class: "small muted" }, t("system.update.autoHint"))),
       h("div", { class: "form-actions" }, checkBtn, installBtn),
     ]);

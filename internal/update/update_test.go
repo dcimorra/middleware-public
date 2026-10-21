@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/release"
 )
 
@@ -78,5 +80,41 @@ func TestADevBuildOrNoHelperCannotInstall(t *testing.T) {
 	}
 	if st := New(Options{Current: "v2.0.0-alpha.5", Auto: func() bool { return false }}).Status(); st.Auto {
 		t.Fatal("auto on by default")
+	}
+}
+
+// A check that finds a release installs it with auto on; with auto off it
+// says so once, however many checks find the same release.
+func TestACheckInstallsOnlyWithAutoOnAndOtherwiseAnnouncesOnce(t *testing.T) {
+	fakeGitHub(t, releases)
+	bus := events.New("")
+	ch, stop := bus.Subscribe()
+	defer stop()
+	auto := false
+	var installed string
+	u := New(Options{Current: "v2.0.0-alpha.5", Arch: "amd64", Bus: bus, Auto: func() bool { return auto },
+		Every:   func() time.Duration { return 5 * time.Minute },
+		Install: func(_ context.Context, v string) error { installed = v; return nil }})
+	if st := u.Status(); st.EveryMinutes != 5 {
+		t.Fatalf("interval %+v", st)
+	}
+	u.tick(context.Background())
+	u.tick(context.Background())
+	if installed != "" {
+		t.Fatal("installed with auto off")
+	}
+	announced := 0
+	for len(ch) > 0 {
+		if e := <-ch; e.Type == "update.available" {
+			announced++
+		}
+	}
+	if announced != 1 {
+		t.Fatalf("announced %d times", announced)
+	}
+	auto = true
+	u.tick(context.Background())
+	if installed != "v2.0.0-alpha.10" {
+		t.Fatalf("auto on did not install: %q", installed)
 	}
 }
