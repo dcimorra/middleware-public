@@ -468,6 +468,38 @@ is not valid JSON is left in the text and ignored.
 | POST | `/tasks/{name}/run` | → `{ok, log}` at once; the run is on `/events/stream` as `task.*`, and `task.skipped` when it was already running |
 | GET | `/tasks/{name}/log` | `?lines=500` → `text/plain`, the last lines of `data/logs/tasks/{name}.log` |
 
+## Nodes
+
+Installations linked to each other. A link is two ordinary full tokens,
+one minted on each side and named `node: <name>`; the panel of one works
+on another through `/nodes/{id}/api/…`, which forwards to that node's
+`/api/v1/…` with its token, streams included. A linked node's token opens
+everything an operator's does except `/nodes/…` (but `/nodes/leave`) and
+`/auth/…` (but `/auth/me`): links and credentials are decided on each
+machine, never by another.
+
+| method | path | body / result |
+| --- | --- | --- |
+| GET | `/nodes` | → `{self: {id, name}, peers: [{id, name, url, added}]}` |
+| PUT | `/nodes/self` | `{name}` → `{id, name}` |
+| POST | `/nodes/invite` | `{url}` (where the other node reaches this one) → `{code, expires}`; single use, fifteen minutes, in memory only |
+| POST | `/nodes` | `{code, url}` (where the other node reaches this one) → `{id, name, url}`; 502 naming the cause when the other node cannot be reached or refuses |
+| POST | `/nodes/join` | public; `{secret, id, name, url, token}` → `{id, name, token}`; what `POST /nodes` sends to the node that made the code. 401 without a live invitation |
+| POST | `/nodes/leave` | only from a linked node: it unlinked, its token here is revoked |
+| DELETE | `/nodes/{id}` | → `{ok, remote_error?}`; tells the other side, and unlinks here even when it cannot |
+| GET | `/nodes/overview` | → `[{id, name, url, self, ok, error, latency_ms, summary}]`, this node first, every peer asked in parallel (8 s each) |
+| GET | `/node/summary` | → `{id, name, version, started, hostname, sites: {sites, projects, serving, stopped, trouble: [{domain, why}]}, events (last warnings and errors), vitals: {now, minutes: [[unix, cpu, mem]], open_episode}, chats: {asking, working}, update}` |
+| GET | `/nodes/{id}/api/{path...}` | the linked node's `/api/v1/{path...}`, streams included. Its 401 comes back as a 502: a link undone over there is not this panel's session ending |
+| POST | `/nodes/{id}/api/{path...}` | the same, for every method |
+| PUT | `/nodes/{id}/api/{path...}` | 〃 |
+| PATCH | `/nodes/{id}/api/{path...}` | 〃 |
+| DELETE | `/nodes/{id}/api/{path...}` | 〃 |
+
+An address is `https://…`, or `http://` only to loopback, private and
+CGNAT ranges (a VPN's), because the token travels in every request. The
+other node must admit this one's address to its panel: an address list or
+a VPN-only panel there applies to it as to anyone.
+
 ## VPN
 
 | method | path | result |

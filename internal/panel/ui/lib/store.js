@@ -50,6 +50,17 @@ export const store = {
     notify("site:" + domain);
   },
   site(domain) { return state.sites.get(domain); },
+  // forgetNode empties what belongs to one machine when the panel moves
+  // to another: a site list or an event of the old one shown under the
+  // new one's name is the worst kind of wrong.
+  forgetNode() {
+    state.sites = new Map();
+    state.sitesLoaded = false;
+    state.events = [];
+    state.lastEvent = new Map();
+    notify("sites");
+    notify("events");
+  },
   siteList() { return [...state.sites.values()].sort((a, b) => a.domain.localeCompare(b.domain)); },
 
   // events

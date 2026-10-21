@@ -5,7 +5,7 @@
 import { icon } from "../lib/icons.js";
 import { h, clear, copy } from "../lib/dom.js";
 import { t, LANGUAGES, LANGUAGE_NAMES, currentLang } from "../lib/i18n.js";
-import { api, enc } from "../lib/api.js";
+import { api, apiURL, enc } from "../lib/api.js";
 import { page, load, table, cell, empty, kv } from "../components/page.js";
 import { open, confirm, field, toggle, checkbox } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
@@ -152,7 +152,7 @@ export function settingsScreen() {
       // The note in the panel's language when it has it, the server's otherwise.
       const k = "pages.themeNote." + theme.value;
       note.textContent = t(k) !== k ? t(k) : (th ? th.note : "");
-      frame.src = `/api/v1/pages/preview?theme=${encodeURIComponent(theme.value)}&page=${encodeURIComponent(page.value)}`;
+      frame.src = apiURL(`/pages/preview?theme=${encodeURIComponent(theme.value)}&page=${encodeURIComponent(page.value)}`);
     };
     theme.addEventListener("change", show);
     page.addEventListener("change", show);

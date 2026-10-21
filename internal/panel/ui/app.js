@@ -30,6 +30,8 @@ import { settingsScreen } from "./screens/settings.js";
 import { systemScreen } from "./screens/system.js";
 import { houseScreen } from "./screens/house.js";
 import { claudeUsageScreen } from "./screens/claude-usage.js";
+import { dashboardScreen } from "./screens/dashboard.js";
+import { currentNode, setCurrentNode, onNodeChange } from "./lib/node.js";
 
 const app = document.getElementById("app");
 const main = document.getElementById("main");
@@ -40,6 +42,8 @@ const menuBtn = document.getElementById("menu-btn");
 const themeBtn = document.getElementById("theme-btn");
 const helpBtn = document.getElementById("help-btn");
 const streamState = document.getElementById("stream-state");
+const nodePick = document.getElementById("node-pick");
+const nodeSelect = document.getElementById("node-select");
 
 applyTheme();
 
@@ -47,6 +51,7 @@ applyTheme();
 // runs (sites, doors, protection, modules, tasks) and what they watch
 // (events, guard, settings, the process); the sidebar draws the line.
 const NAV = [
+  ["dashboard", "/dashboard", "g n", "layout"],
   ["sites", "/sites", "g s", "globe"],
   ["inbound", "/inbound", "g i", "door"],
   ["waf", "/waf", "g w", "shield"],
@@ -63,7 +68,7 @@ const NAV = [
   ["system", "/system", "g y", "cpu"],
   ["docs", "/docs", "g d", "file"],
 ];
-const NAV_GROUPS = { sites: "nav.groupManage", events: "nav.groupObserve" };
+const NAV_GROUPS = { dashboard: "nav.groupManage", events: "nav.groupObserve" };
 
 export const NAV_ICON = Object.fromEntries(NAV.map(([k, , , i]) => [k, i]));
 
@@ -134,6 +139,43 @@ route("/settings", settingsScreen);
 route("/system", systemScreen);
 route("/house", houseScreen);
 route("/claude", claudeUsageScreen);
+route("/dashboard", dashboardScreen);
+
+// ---- nodes ----
+// The selector shows only once another node is linked; until then there
+// is one machine and nothing to choose.
+async function readNodes() {
+  try { store.set("nodes", await api.get("/nodes", { node: "" })); } catch { /* an older node, or none: one machine */ }
+}
+function paintNodes() {
+  const n = store.get("nodes");
+  const peers = (n && n.peers) || [];
+  if (currentNode() && n && !peers.some((p) => p.id === currentNode())) setCurrentNode("");
+  nodePick.hidden = peers.length === 0;
+  clear(nodeSelect);
+  if (n) {
+    nodeSelect.append(h("option", { value: "" }, t("nodes.thisOne", { name: n.self.name })), ...peers.map((p) => h("option", { value: p.id }, p.name)));
+  }
+  nodeSelect.value = currentNode();
+  nodeSelect.title = t("nodes.pickHint");
+  document.getElementById("node-pick-label").textContent = t("nodes.pick");
+  app.dataset.remote = currentNode() ? "1" : "";
+}
+store.subscribe("nodes", paintNodes);
+nodeSelect.addEventListener("change", () => {
+  // A site's screen belongs to the machine it was opened on.
+  if (/^\/sites\/./.test(currentPath())) navigate("/sites");
+  setCurrentNode(nodeSelect.value);
+});
+onNodeChange(() => {
+  store.forgetNode();
+  paintNodes();
+  if (!authed) return;
+  disconnect();
+  connect();
+  readWaiting();
+  rerender();
+});
 
 let authView = null;
 let authed = false;
@@ -173,6 +215,7 @@ async function boot() {
   topbar.hidden = false;
   sidebar.hidden = false;
   buildSidebar();
+  await readNodes();
   connect();
   readWaiting();
   if (!mounted) {

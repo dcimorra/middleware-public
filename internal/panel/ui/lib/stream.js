@@ -3,7 +3,7 @@
 // would multiply the server's fan-out by the number of open tabs, and a
 // poll would show a handover seconds after it happened.
 
-import { api, BASE, enc } from "./api.js";
+import { api, apiURL, enc } from "./api.js";
 import { store } from "./store.js";
 import { debounce } from "./dom.js";
 
@@ -21,7 +21,7 @@ export function onEvent(prefix, fn) {
 
 export function connect() {
   if (source) return;
-  source = new EventSource(BASE + "/events/stream", { withCredentials: true });
+  source = new EventSource(apiURL("/events/stream"), { withCredentials: true });
   store.set("streamState", "connecting");
   source.onopen = () => store.set("streamState", "live");
   source.onerror = () => {

@@ -11,6 +11,7 @@ import (
 
 // RegisterUpdate mounts the self-update.
 func (s *Server) RegisterUpdate(u *update.Updater) {
+	s.AddSummary("update", func() any { return u.Status() })
 	s.Handle("GET", Prefix+"/system/update", "This program's version, the newest release and whether it updates itself (?check=1 asks GitHub, at most hourly)", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		if r.URL.Query().Get("check") == "1" {
 			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)

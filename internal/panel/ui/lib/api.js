@@ -1,7 +1,13 @@
 // The API client. One place knows the base path, the header that every
 // non-GET must carry and what a 401 means, so a screen never has to.
 
+import { nodePath } from "./node.js";
+
 export const BASE = "/api/v1";
+
+// apiURL is the address of path on node (the current one when undefined),
+// for what the browser fetches by itself: a link, an image, a frame.
+export function apiURL(path, node) { return BASE + nodePath(path, node); }
 
 export class ApiError extends Error {
   constructor(status, message, body) {
@@ -39,7 +45,7 @@ async function request(method, path, body, opts = {}) {
       init.body = JSON.stringify(body);
     }
   }
-  const res = await fetch(BASE + path, init);
+  const res = await fetch(apiURL(path, opts.node), init);
   if (res.status === 401 && !opts.allow401) {
     for (const fn of listeners) fn();
   }
@@ -73,10 +79,17 @@ export const api = {
   del: (path, opts) => request("DELETE", path, undefined, opts),
   putRaw: (path, body, contentType) => request("PUT", path, body, { raw: true, contentType }),
   postRaw: (path, body, contentType) => request("POST", path, body, { raw: true, contentType }),
+  // at is the same client on one node, whichever the panel is on: the
+  // dashboard and the sites list ask every node at once.
+  at: (node) => ({
+    get: (path, opts) => request("GET", path, undefined, { ...opts, node }),
+    post: (path, body, opts) => request("POST", path, body ?? {}, { ...opts, node }),
+    del: (path, opts) => request("DELETE", path, undefined, { ...opts, node }),
+  }),
   // stream opens a GET whose body keeps coming (logs with ?follow=1) and
   // hands each chunk to onChunk until the controller aborts it.
   async stream(path, onChunk, signal) {
-    const res = await fetch(BASE + path, { credentials: "same-origin", signal });
+    const res = await fetch(apiURL(path), { credentials: "same-origin", signal });
     if (!res.ok) throw new ApiError(res.status, await res.text().catch(() => res.statusText));
     const reader = res.body.getReader();
     const dec = new TextDecoder();

@@ -34,6 +34,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/modules/cloudflare"
 	"github.com/dcimorra/middleware-public/internal/modules/github"
 	"github.com/dcimorra/middleware-public/internal/modules/vpn"
+	"github.com/dcimorra/middleware-public/internal/nodes"
 	"github.com/dcimorra/middleware-public/internal/pages"
 	"github.com/dcimorra/middleware-public/internal/proxy"
 	"github.com/dcimorra/middleware-public/internal/publish"
@@ -191,6 +192,12 @@ func buildWire(a *app.App) app.Hook {
 	}
 	w.updater = buildUpdater(a)
 	srv.RegisterUpdate(w.updater)
+	host, _ := os.Hostname()
+	if st, err := nodes.Open(filepath.Join(dataDir(a), "nodes"), host); err != nil {
+		a.Bus.Emit(events.Event{Type: "nodes.error", Actor: "engine", Level: "error", Message: "linked nodes are unavailable: " + err.Error()})
+	} else {
+		srv.RegisterNodes(st)
+	}
 	w.shots = shots.New(shots.Options{
 		Root:    a.Root,
 		DataDir: dataDir(a),

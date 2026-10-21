@@ -4,7 +4,7 @@
 
 import { h, clear, append, shortRev, fmtTime } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
-import { api, enc } from "../lib/api.js";
+import { api, apiURL, enc } from "../lib/api.js";
 import { onEvent } from "../lib/stream.js";
 import { store } from "../lib/store.js";
 import { navigate } from "../lib/router.js";
@@ -141,7 +141,7 @@ function overviewTab(domain) {
     if (!unmanaged) {
       // A plain link: the browser downloads with the session cookie, and a
       // site of gigabytes streams instead of passing through memory.
-      actions.append(h("a", { class: "btn", href: `/api/v1/sites/${enc(domain)}/download.zip`, download: `${domain}.zip`, title: t("site.downloadHint") }, icon("download"), t("site.download")));
+      actions.append(h("a", { class: "btn", href: apiURL(`/sites/${enc(domain)}/download.zip`), download: `${domain}.zip`, title: t("site.downloadHint") }, icon("download"), t("site.download")));
       actions.append(btn(t("site.rename"), "edit", rename));
       actions.append(btn(t("site.exec"), "terminal", runCommand));
     }
@@ -306,7 +306,7 @@ function overviewTab(domain) {
   // The site as a visitor sees it, taken through a door that skips its
   // password; a picture that is not there yet just does not show.
   function sitePicture() {
-    const img = h("img", { class: "site-shot", alt: t("site.pictureAlt", { domain }), src: `/api/v1/sites/${enc(domain)}/shot.png?t=${Math.floor(Date.now() / 60000)}`, loading: "lazy" });
+    const img = h("img", { class: "site-shot", alt: t("site.pictureAlt", { domain }), src: apiURL(`/sites/${enc(domain)}/shot.png?t=${Math.floor(Date.now() / 60000)}`), loading: "lazy" });
     const box = h("div", { class: "stack-sm" }, img);
     img.addEventListener("error", () => { img.hidden = true; });
     const again = h("button", { type: "button", class: "btn sm ghost" }, icon("refresh"), t("site.pictureAgain"));
@@ -319,7 +319,7 @@ function overviewTab(domain) {
   subs.push(onEvent("shot.taken", (ev) => {
     if (ev.subject !== domain) return;
     const img = el.querySelector("img.site-shot");
-    if (img) { img.hidden = false; img.src = `/api/v1/sites/${enc(domain)}/shot.png?t=${Date.now()}`; }
+    if (img) { img.hidden = false; img.src = apiURL(`/sites/${enc(domain)}/shot.png?t=${Date.now()}`); }
   }));
 
   async function publish() {

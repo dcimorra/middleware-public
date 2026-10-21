@@ -43,6 +43,9 @@ type Agents struct {
 // over different names: chat.Middleware is not a valid domain, which is
 // what keeps the routes from colliding.
 func (s *Server) RegisterAgents(o AgentsOptions) {
+	if o.Chat != nil {
+		s.AddSummary("chats", func() any { return o.Chat.Waiting() })
+	}
 	s.Handle("GET", Prefix+"/agents", "The agent providers, whether each can run and its models, with the live capacity", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		out := Agents{Providers: []AgentInfo{}}
 		if o.Registry != nil {

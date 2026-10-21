@@ -21,6 +21,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/engine"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/middleware-public/internal/nodes"
 	"github.com/dcimorra/middleware-public/internal/publish"
 	"github.com/dcimorra/middleware-public/internal/settings"
 	"github.com/dcimorra/middleware-public/internal/sites"
@@ -121,6 +122,10 @@ type Server struct {
 	vulnerable func(domain string) string
 	// onSettings runs after PUT /settings saved, with what was saved.
 	onSettings []func(settings.Settings)
+	// nodes, when set, are the installations linked to this one
+	// (RegisterNodes sets it); summaries are the parts of /node/summary.
+	nodes     *nodes.Store
+	summaries map[string]Summarizer
 }
 
 // Deployer is an alternative way to deploy a site, set with SetDeployer.
@@ -287,6 +292,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// to it as to anyone.
 	if !public && len(caller.Scopes) > 0 && !auth.Allows(caller.Scopes, pattern, siteIn(pattern, r.URL.Path)) {
 		s.writeError(w, r, Errorf(http.StatusForbidden, "this token's scopes (%s) do not open %s", strings.Join(caller.Scopes, ", "), pattern))
+		return
+	}
+	if p, ok := s.fromNode(caller); ok && !nodeMay(pattern) {
+		s.writeError(w, r, Errorf(http.StatusForbidden, "node %s may not use %s: links and credentials are decided on each machine", p.Name, pattern))
 		return
 	}
 	if caller.Via == auth.ViaCookie && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {

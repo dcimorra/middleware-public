@@ -163,6 +163,22 @@ everything that happens (instance started, handover done, certificate
 renewed, address blocked). The panel is static HTML/CSS/JS embedded in the
 binary, no build step; the CLI uses the same API over the unix socket.
 
+## Linked nodes
+
+Several installations can be linked so one panel works on all of them
+(`internal/nodes`). A link is an invitation code made on one node and
+pasted on the other; the two exchange ordinary full API tokens, recorded
+in `data/nodes/peers.json` (0600) with the id of the token each minted, so
+unlinking revokes it. The panel keeps the node it is working on per tab
+and sends every call through `/api/v1/nodes/{id}/api/…`, a streaming
+reverse proxy that swaps the browser's cookie for the node's token: what
+runs (a build, a chat turn, an agent) runs on the machine that owns the
+site, and this node only carries bytes. A linked node's token cannot touch
+the links or the credentials of the other, and a link undone on one side
+shows as a 502 on the other, never as a logout. The dashboard is one
+request, `/nodes/overview`, which asks every node's `/node/summary` in
+parallel.
+
 ## Events, not logs
 
 Anything that changes state emits an event with a type, the subject and who

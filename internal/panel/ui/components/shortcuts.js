@@ -9,7 +9,7 @@ import { open } from "./dialog.js";
 import { navigate } from "../lib/router.js";
 
 export const GOTO = {
-  s: "/sites", i: "/inbound", w: "/waf", m: "/modules", t: "/tasks", h: "/house", e: "/events", g: "/guard", c: "/settings", y: "/system",
+  n: "/dashboard", s: "/sites", i: "/inbound", w: "/waf", m: "/modules", t: "/tasks", h: "/house", e: "/events", g: "/guard", c: "/settings", y: "/system",
 };
 
 let pendingG = false;

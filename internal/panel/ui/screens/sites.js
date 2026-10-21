@@ -5,15 +5,16 @@
 
 import { h, clear, shortRev, fmtAgo, debounce } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
-import { api } from "../lib/api.js";
+import { api, apiURL } from "../lib/api.js";
 import { store } from "../lib/store.js";
 import { navigate } from "../lib/router.js";
-import { page, empty, errorBox, loading, table, cell, search as searchBox } from "../components/page.js";
+import { page, empty, errorBox, loading, table, cell, notice, search as searchBox } from "../components/page.js";
 import { icon } from "../lib/icons.js";
 
 import { modeBadge, aliveStatus, siteMode } from "../components/badge.js";
 import { open, field, checkbox } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
+import { currentNode, setCurrentNode } from "../lib/node.js";
 
 export function sitesScreen({ query }) {
   const search = h("input", { type: "search", placeholder: t("sites.search"), "aria-label": t("sites.search"), autocomplete: "off" });
@@ -26,7 +27,11 @@ export function sitesScreen({ query }) {
   // selection survives re-renders (the stream re-renders often) and drops
   // sites that went away.
   const bulkBar = h("div", { class: "notice bulk-bar", hidden: true });
-  p.body.append(bulkBar, container, count);
+  // With other nodes linked, the list says whose sites these are, and the
+  // other machines' follow, each under its name.
+  const here = h("h2", { class: "node-title", hidden: true });
+  const others = h("div", { class: "node-others" });
+  p.body.append(here, bulkBar, container, count, others);
 
   let filter = "";
   const selected = new Set();
@@ -121,11 +126,19 @@ export function sitesScreen({ query }) {
       else if (template.value === "project") template.value = "static";
     };
     domain.addEventListener("input", syncPublish);
+    // Where it is made: the node being viewed unless another is chosen.
+    const nodes_ = store.get("nodes");
+    const where = h("select", null);
+    if (nodes_ && (nodes_.peers || []).length) {
+      where.append(h("option", { value: "" }, t("nodes.thisOne", { name: nodes_.self.name })), ...nodes_.peers.map((x) => h("option", { value: x.id }, x.name)));
+      where.value = currentNode();
+    }
     let published = false;
     const made = await open({
       title: t("sites.newTitle"),
       body: [
         field(t("sites.domain"), domain, t("sites.domainHint")),
+        where.options.length ? field(t("sites.node"), where, t("sites.nodeHint")) : null,
         field(t("sites.template"), template, t("sites.templateHint")),
         h("div", { class: "field" }, publish.el, h("div", { class: "hint" }, t("sites.publishHint"))),
       ],
@@ -135,9 +148,11 @@ export function sitesScreen({ query }) {
         if (!/^[a-z0-9-]+(\.[a-z0-9-]+)*$/.test(d)) { showError(t("sites.badDomain")); return false; }
         const body = { domain: d, template: template.value };
         if (!isProject()) body.publish = publish.input.checked;
-        const site = await api.post("/sites", body);
+        const target = where.options.length ? where.value : currentNode();
+        const site = await api.at(target).post("/sites", body);
         published = Boolean(site.publishing);
-        store.putSite(site);
+        if (target === currentNode()) store.putSite(site);
+        else setCurrentNode(target);
         return site.domain;
       },
     });
@@ -226,14 +241,67 @@ export function sitesScreen({ query }) {
         const mb = (a.bytes / 1048576).toFixed(1);
         list.append(h("div", { class: "row" },
           h("span", { class: "grow" }, h("strong", null, a.domain), " ", h("span", { class: "small muted" }, `${new Date(a.at).toLocaleString()} · ${mb} MB`)),
-          h("a", { class: "btn sm", href: `/api/v1/archive/${encodeURIComponent(a.name)}/download`, download: a.name }, icon("download")),
+          h("a", { class: "btn sm", href: apiURL(`/archive/${encodeURIComponent(a.name)}/download`), download: a.name }, icon("download")),
           restore, remove));
       }
     };
     try { await fill(); } catch (e) { toastError(e); return; }
     await open({ title: t("sites.archivedTitle"), body: [h("p", { class: "dim" }, t("sites.archivedBody")), list], buttons: [{ label: t("common.close"), value: null }] });
   });
-  search.addEventListener("input", () => { filter = search.value; render(); });
+  search.addEventListener("input", () => { filter = search.value; render(); paintOthers(); });
+
+  // The other nodes: what was chosen in the selector is above, live; the
+  // rest are read every twenty seconds through this node.
+  function nodeList() {
+    const n = store.get("nodes");
+    if (!n || !(n.peers || []).length) return [];
+    const list = currentNode() ? [{ id: "", name: n.self.name }] : [];
+    for (const peer of n.peers) if (peer.id !== currentNode()) list.push(peer);
+    return list;
+  }
+  function paintHere() {
+    const n = store.get("nodes");
+    const peers = (n && n.peers) || [];
+    here.hidden = peers.length === 0;
+    if (here.hidden) return;
+    const name = currentNode() ? (peers.find((x) => x.id === currentNode()) || {}).name : n.self.name;
+    clear(here).append(...[icon("server"), h("span", null, name), currentNode() ? null : h("span", { class: "badge info" }, t("dash.thisNode"))].filter(Boolean));
+  }
+  let otherSites = [];
+  async function loadOthers() {
+    const list = nodeList();
+    otherSites = await Promise.all(list.map(async (node) => {
+      try { return { node, sites: await api.at(node.id).get("/sites") }; } catch (e) { return { node, error: e.message }; }
+    }));
+    paintOthers();
+  }
+  function paintOthers() {
+    clear(others);
+    const q = filter.trim().toLowerCase();
+    for (const { node, sites, error } of otherSites) {
+      const card = h("section", { class: "card node-section" }, h("h2", null, icon("server"), h("span", null, node.name)));
+      if (error) { card.append(notice("bad", error)); others.append(card); continue; }
+      const list = (sites || []).filter((x) => !q || x.domain.toLowerCase().includes(q) || siteMode(x).includes(q)).sort((a, b) => a.domain.localeCompare(b.domain));
+      if (!list.length) { card.append(h("p", { class: "small muted" }, q ? t("sites.noMatch") : t("sites.emptyTitle"))); others.append(card); continue; }
+      const open_ = (x) => { setCurrentNode(node.id); navigate(`/sites/${encodeURIComponent(x.domain)}`); };
+      card.append(table([
+        { label: t("sites.col.domain") }, { label: t("sites.col.mode") }, { label: t("sites.col.status") }, { label: t("sites.col.revision") },
+      ], list.map((x) => {
+        const a = h("a", { class: "cell-link", href: "#" }, x.domain);
+        a.addEventListener("click", (e) => { e.preventDefault(); open_(x); });
+        const tr = h("tr", { class: "row-link", tabindex: "-1" },
+          cell(a, null, "primary"), cell(modeBadge(x), t("sites.col.mode")), cell(aliveStatus(x), t("sites.col.status")), cell(shortRev(x.revision), t("sites.col.revision"), "mono"));
+        tr.addEventListener("click", (e) => { if (!e.target.closest("a")) open_(x); });
+        return tr;
+      }), { responsive: true }).el);
+      others.append(card);
+    }
+  }
+  subs.push(store.subscribe("nodes", () => { paintHere(); loadOthers(); }));
+  paintHere();
+  loadOthers();
+  const othersTimer = setInterval(() => { if (!document.hidden) loadOthers(); }, 20000);
+  subs.push(() => clearInterval(othersTimer));
 
   // A handover emits several events in a second; one render after the
   // burst is enough and keeps the row from flickering under the pointer.
