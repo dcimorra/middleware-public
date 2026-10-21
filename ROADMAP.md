@@ -7,8 +7,10 @@ lacks, by area; what is done is summarised at the end. Each feature is
 rebuilt the V2 way (its packages, its hooks, its manifest): V1 is read for
 what it does and what it learned, never for code to copy. A line leaves
 this file in the commit that makes it true, with the test that proves it.
-`middleware migrate` (for anyone bringing V1 manifests over) names the
-section here that unblocks each one it cannot convert yet.
+`middleware migrate` (for anyone bringing V1 manifests over) converts every
+V1 feature; what it still refuses is a manifest written wrong. V1's in-process
+apps (Mask, the Browser) are not carried over: they were not in use, and
+migrate drops the line with a note.
 
 ## Not proven yet
 
@@ -50,11 +52,6 @@ Nothing left.
 ## 7. The panel
 
 Nothing left.
-
-## 8. Apps
-
-- The app layer inside the process (manifest `app`), then the Browser
-  (Chromium over CDP), then Mask (the site factory).
 
 ## Done
 

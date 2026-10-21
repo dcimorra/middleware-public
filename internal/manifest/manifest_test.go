@@ -223,3 +223,9 @@ func TestAMisspeltSecurityRuleRejectsTheManifest(t *testing.T) {
 		t.Fatalf("a family that does not exist: %v", err)
 	}
 }
+
+func TestAnAppIsNotAFieldOfV2(t *testing.T) {
+	if _, err := Parse([]byte(`{"version":2,"app":"mask"}`)); err == nil {
+		t.Fatal("app was accepted: a field nothing reads would do nothing and say nothing")
+	}
+}

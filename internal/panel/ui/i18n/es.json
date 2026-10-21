@@ -128,7 +128,6 @@
   "site.staticRoot": "Raíz estática",
   "site.holdTitle": "Título de la pausa",
   "site.holdMessage": "Mensaje de la pausa",
-  "site.app": "App",
   "site.restart": "Reiniciar",
   "site.restarted": "Relevo solicitado",
   "site.start": "Arrancar",

@@ -255,7 +255,9 @@ func present(raw json.RawMessage) bool {
 // with the section of ROADMAP.md that brings it.
 func (c *converter) blockers(in *v1) {
 	if in.App != "" {
-		c.block("app %q (apps; ROADMAP §8)", in.App)
+		// V1's in-process apps (Mask, the Browser) are not part of V2:
+		// the site is converted and the line dropped, said here.
+		c.note("app %q: apps are not part of V2, the site is converted without it", in.App)
 	}
 	if in.AutoFix != nil {
 		if *in.AutoFix {

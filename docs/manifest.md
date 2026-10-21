@@ -101,9 +101,7 @@ never shell strings. Paths are relative to the site folder.
     }
   },
 
-  "agent": { "provider": "claude", "model": "", "monthly_cap_usd": 0 },
-
-  "app": ""
+  "agent": { "provider": "claude", "model": "", "monthly_cap_usd": 0 }
 }
 ```
 

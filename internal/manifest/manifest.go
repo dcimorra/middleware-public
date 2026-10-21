@@ -83,7 +83,6 @@ type Manifest struct {
 	Chat   *ChatRules `json:"chat,omitempty"`
 	Deploy *Deploy    `json:"deploy,omitempty"`
 	Agent  *Agent     `json:"agent,omitempty"`
-	App    string     `json:"app,omitempty"`
 }
 
 // Static serves files.

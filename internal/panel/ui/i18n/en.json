@@ -128,7 +128,6 @@
   "site.staticRoot": "Static root",
   "site.holdTitle": "Hold title",
   "site.holdMessage": "Hold message",
-  "site.app": "App",
   "site.restart": "Restart",
   "site.restarted": "Handover requested",
   "site.start": "Start",

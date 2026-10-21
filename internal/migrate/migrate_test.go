@@ -131,7 +131,7 @@ func TestApplyKeepsTheOriginalAndOnlyTouchesReadySites(t *testing.T) {
 		os.WriteFile(filepath.Join(dir, name, manifest.FileName), []byte(body), 0o644)
 	}
 	write("ok.example", `{"kind":"static","title":"ok"}`)
-	write("app.example", `{"kind":"static","app":"mask"}`)
+	write("cgi.example", `{"kind":"cgi"}`)
 	write("v2.example", `{"version":2}`)
 	write("_retirado-x.example-20260101-0000", `{"kind":"static"}`)
 	write("out.example", `{"kind":"static","root":"../ok.example"}`)
@@ -276,5 +276,12 @@ func TestAVPNOnlySiteIsCarried(t *testing.T) {
 	r := Convert("a.example", []byte(`{"kind":"static","vpn":{"devices":["phone"]}}`))
 	if !r.Ready() || r.Manifest.VPN == nil || r.Manifest.VPN.Devices[0] != "phone" {
 		t.Fatalf("%+v %v", r.Manifest, r.Blockers)
+	}
+}
+
+func TestAnAppIsDroppedAndSaid(t *testing.T) {
+	r := Convert("a.example", []byte(`{"kind":"static","app":"mask"}`))
+	if !r.Ready() || !strings.Contains(strings.Join(r.Notes, "\n"), "apps are not part of V2") {
+		t.Fatalf("%+v", r)
 	}
 }

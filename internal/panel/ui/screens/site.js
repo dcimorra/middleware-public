@@ -155,7 +155,6 @@ function overviewTab(domain) {
       [t("site.upstream"), m.upstream || null],
       [t("site.staticRoot"), m.static ? (m.static.root || "public") : null],
       [t("site.holdTitle"), m.hold && m.hold.enabled ? (m.hold.title || "—") : null],
-      [t("site.app"), m.app || null],
       [t("site.picture"), mode === "project" || unmanaged ? null : sitePicture()],
       [t("site.published"), published.length ? h("div", { class: "stack-sm" }, ...published.map(([name, r]) => h("div", null,
         h("code", null, name), " ",
