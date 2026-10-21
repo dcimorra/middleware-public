@@ -127,9 +127,14 @@ func installCmd(args []string) error {
 	}
 	in := installer.New(p)
 	in.NoStart = *noStart
+	in.Live = isTerminal(os.Stdout)
 	panel := p.Domain + " (" + p.Door + ")"
 	if p.Domain == "" {
 		panel = "none (loopback only)"
+		// A re-run keeps the name an earlier one gave it.
+		if s, err := settings.Load(p.Root); err == nil && s.PanelDomain != "" {
+			panel = s.PanelDomain + " (kept)"
+		}
 	}
 	browser := shots.FindIn(p.Root)
 	switch {

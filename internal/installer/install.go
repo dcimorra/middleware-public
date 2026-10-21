@@ -44,6 +44,8 @@ type Installer struct {
 	// OperatorExists says whether `middleware setup` already ran. The auth
 	// package owns the file; the installer only needs a yes or no.
 	OperatorExists func(root string) bool
+	// Live says Out is a terminal, where progress rewrites one line.
+	Live bool
 	// FindBrowser looks for a headless Chromium; nil is shots.FindIn.
 	FindBrowser func(root string) string
 	// BrowserPlatform overrides the Chrome for Testing platform (tests).

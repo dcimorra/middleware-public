@@ -75,13 +75,14 @@ func (in *Installer) stepBrowser() (bool, string, error) {
 		return false, "", err
 	}
 	fmt.Fprintf(in.Out, "  downloading Chrome for Testing %s (%s, over 100 MB)…\n", version, platform)
-	bin, err := installBrowser(url, shots.BrowserDir(in.Params.Root))
+	bin, err := installBrowser(url, shots.BrowserDir(in.Params.Root), newProgress(in.Out, in.Live))
 	if err != nil {
 		return false, "", err
 	}
 	// The libraries it loads, from the list the build itself carries.
 	if deps := browserDeps(filepath.Dir(bin), pm, in.Exec); len(deps) > 0 && cmd != nil {
 		args := append(append([]string{}, cmd[1:]...), deps...)
+		fmt.Fprintf(in.Out, "  installing the %d system libraries it loads with %s…\n", len(deps), pm)
 		if _, err := in.Exec.Sudo(cmd[0], args...); err != nil {
 			return false, "", fmt.Errorf("the libraries it needs: %w", err)
 		}
@@ -125,7 +126,7 @@ func browserBuild(platform string) (version, url string, err error) {
 // installBrowser downloads the zip and unpacks it into dir, through a
 // temporary folder renamed into place: a half-unpacked browser is never
 // what the supervisor finds.
-func installBrowser(url, dir string) (string, error) {
+func installBrowser(url, dir string, prog *progress) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
@@ -143,10 +144,13 @@ func installBrowser(url, dir string) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("%s answered %s", url, resp.Status)
 	}
-	size, err := io.Copy(zf, resp.Body)
+	prog.total = resp.ContentLength
+	size, err := io.Copy(io.MultiWriter(zf, prog), resp.Body)
+	prog.done()
 	if err != nil {
 		return "", err
 	}
+	fmt.Fprint(prog.out, "  unpacking…\n")
 	zr, err := zip.NewReader(zf, size)
 	if err != nil {
 		return "", err
@@ -270,4 +274,60 @@ func aptName(name string, ex Exec) string {
 		}
 	}
 	return ""
+}
+
+// progress says how a download goes. On a terminal it is one line
+// rewritten in place; in a log, a line every 10%, so whoever reads it
+// later sees it moved and where it stopped. A download of a minute with
+// nothing on screen looked like a hung installer.
+type progress struct {
+	out   io.Writer
+	live  bool
+	total int64
+	got   int64
+	shown int64 // last percentage (or MB, without a total) printed
+	at    time.Time
+}
+
+func newProgress(out io.Writer, live bool) *progress {
+	if out == nil {
+		out = io.Discard
+	}
+	return &progress{out: out, live: live, shown: -1}
+}
+
+func (p *progress) Write(b []byte) (int, error) {
+	p.got += int64(len(b))
+	mb := float64(p.got) / (1 << 20)
+	if p.total > 0 {
+		pct := p.got * 100 / p.total
+		switch {
+		case p.live && (pct != p.shown || time.Since(p.at) > time.Second):
+			const width = 30
+			fill := int(pct) * width / 100
+			fmt.Fprintf(p.out, "\r  [%s%s] %3d%%  %.0f / %.0f MB", strings.Repeat("#", fill), strings.Repeat(".", width-fill), pct, mb, float64(p.total)/(1<<20))
+			p.shown, p.at = pct, time.Now()
+		case !p.live && pct/10 != p.shown/10:
+			fmt.Fprintf(p.out, "  %d%%  %.0f MB\n", pct, mb)
+			p.shown = pct
+		}
+		return len(b), nil
+	}
+	// No length announced: megabytes so far.
+	if step := p.got >> 23; step != p.shown { // every 8 MB
+		if p.live {
+			fmt.Fprintf(p.out, "\r  %.0f MB", mb)
+		} else {
+			fmt.Fprintf(p.out, "  %.0f MB\n", mb)
+		}
+		p.shown = step
+	}
+	return len(b), nil
+}
+
+// done ends the line a terminal was rewriting.
+func (p *progress) done() {
+	if p.live && p.shown >= 0 {
+		fmt.Fprint(p.out, "\n")
+	}
 }

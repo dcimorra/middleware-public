@@ -140,3 +140,23 @@ func TestTheRealHeadlessShellDownloadsAndStarts(t *testing.T) {
 type noSudo struct{ System }
 
 func (noSudo) Sudo(name string, args ...string) (string, error) { return "", nil }
+
+func TestADownloadSaysHowItGoes(t *testing.T) {
+	var log bytes.Buffer
+	p := newProgress(&log, false)
+	p.total = 100
+	for i := 0; i < 10; i++ {
+		p.Write(make([]byte, 10))
+	}
+	if n := strings.Count(log.String(), "\n"); n != 10 || !strings.Contains(log.String(), "100%") {
+		t.Fatalf("in a log:\n%s", log.String())
+	}
+	var term bytes.Buffer
+	p = newProgress(&term, true)
+	p.total = 100
+	p.Write(make([]byte, 50))
+	p.done()
+	if !strings.Contains(term.String(), "\r  [###############...............]  50%") {
+		t.Fatalf("on a terminal: %q", term.String())
+	}
+}

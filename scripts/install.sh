@@ -61,7 +61,13 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 say "Downloading $BASE/$NAME"
-curl -fsSL -o "$TMP/$NAME" "$BASE/$NAME"
+# A bar while a person watches (stderr is still the terminal when the
+# script itself comes through a pipe); silent in a log.
+if [ -t 2 ]; then
+  curl -fL --progress-bar -o "$TMP/$NAME" "$BASE/$NAME"
+else
+  curl -fsSL -o "$TMP/$NAME" "$BASE/$NAME"
+fi
 curl -fsSL -o "$TMP/$NAME.sha256" "$BASE/$NAME.sha256"
 
 # The .sha256 file is "<hash>  <name>", as sha256sum writes it.
