@@ -189,7 +189,21 @@ func (c *Client) RegistrarDomains(ctx context.Context) ([]RegistrarDomain, error
 // that runs every feature here.
 var NeededPermissions = []string{
 	"Zone Read", "DNS Write", "Cloudflare Tunnel Write", "Cache Purge",
-	"Cache Settings Write", "Access: Apps and Policies Read", "Registrar: Domains Read",
+	"Cache Settings Write", "Access: Apps and Policies Read", "Registrar Domains Read",
+}
+
+// groupKey compares permission names as Cloudflare's screens and its API
+// disagree on them: the token page lists "Registrar Domains Read", the
+// docs "Registrar: Domains Read". An exact match called a token that had
+// it short of it.
+func groupKey(name string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(name) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // TokenScope is what the current token may do.
@@ -231,17 +245,21 @@ func (c *Client) Scope(ctx context.Context) (TokenScope, error) {
 			have[g.Name] = true
 		}
 	}
+	haveKey := map[string]bool{}
+	for n := range have {
+		haveKey[groupKey(n)] = true
+	}
 	out := TokenScope{ID: v.ID, Permissions: []string{}, Extra: []string{}, Missing: []string{}}
 	need := map[string]bool{}
 	for _, n := range NeededPermissions {
-		need[n] = true
-		if !have[n] {
+		need[groupKey(n)] = true
+		if !haveKey[groupKey(n)] {
 			out.Missing = append(out.Missing, n)
 		}
 	}
 	for n := range have {
 		out.Permissions = append(out.Permissions, n)
-		if !need[n] {
+		if !need[groupKey(n)] {
 			out.Extra = append(out.Extra, n)
 		}
 	}
@@ -279,7 +297,7 @@ func (c *Client) Narrow(ctx context.Context, name string) (string, []string, err
 				zone = true
 			}
 		}
-		byName[g.Name] = group{id: g.ID, zone: zone}
+		byName[groupKey(g.Name)] = group{id: g.ID, zone: zone}
 	}
 	// Zone permissions and account permissions take different resources,
 	// so they go in two policies: the zones of this account, and the
@@ -287,7 +305,7 @@ func (c *Client) Narrow(ctx context.Context, name string) (string, []string, err
 	var zoneIDs, accountIDs []map[string]string
 	var missing []string
 	for _, n := range NeededPermissions {
-		g, ok := byName[n]
+		g, ok := byName[groupKey(n)]
 		switch {
 		case !ok:
 			missing = append(missing, n)

@@ -170,3 +170,12 @@ func TestATokenIsReadAndNarrowedToWhatTheHouseUses(t *testing.T) {
 		t.Fatalf("the zone policy: %v", zone)
 	}
 }
+
+func TestAPermissionIsRecognisedWithOrWithoutItsColon(t *testing.T) {
+	if groupKey("Registrar: Domains Read") != groupKey("Registrar Domains Read") {
+		t.Fatal("the two spellings Cloudflare uses are not the same permission")
+	}
+	if groupKey("DNS Write") == groupKey("DNS Read") {
+		t.Fatal("different permissions compared equal")
+	}
+}
