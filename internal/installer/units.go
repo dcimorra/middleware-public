@@ -216,6 +216,10 @@ Before={{.ServiceUnitName}}
 [Service]
 Type=simple
 User=root
+# The group is the supervisor's, so the runtime directory systemd creates
+# (root and this group, 0750) can be crossed by the supervisor to reach
+# the socket. With the default group, root's, it could not.
+Group={{.Group}}
 RuntimeDirectory=middleware
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
@@ -233,8 +237,10 @@ PrivateTmp=yes
 NoNewPrivileges=yes
 # NET_ADMIN for nftables and wireguard, NET_RAW for the interface, SYS_ADMIN
 # for sysctl writes under /proc/sys.
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+# CHOWN to hand the socket to the supervisor's group: without it the
+# helper died at its first breath and no installation ever had one.
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_CHOWN
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_CHOWN
 
 [Install]
 WantedBy=multi-user.target

@@ -156,7 +156,17 @@ func (in *Installer) checkRootDir() Check {
 
 func (in *Installer) checkPorts() Check {
 	want := fmt.Sprintf("%d-%d", in.Params.PortsFrom, in.Params.PortsTo)
-	out, err := in.Exec.Run("sysctl", "-n", "net.ipv4.ip_local_reserved_ports")
+	// On the machine, /proc directly: sysctl lives in /usr/sbin, which a
+	// Debian user's PATH does not have, and the check failed for that.
+	var out string
+	var err error
+	if _, real := in.Exec.(System); real {
+		var b []byte
+		b, err = os.ReadFile("/proc/sys/net/ipv4/ip_local_reserved_ports")
+		out = string(b)
+	} else {
+		out, err = in.Exec.Run("sysctl", "-n", "net.ipv4.ip_local_reserved_ports")
+	}
 	if err != nil {
 		return Check{"reserved ports", false, fmt.Sprintf("cannot read sysctl: %v", err)}
 	}
