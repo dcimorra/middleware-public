@@ -48,6 +48,12 @@ type Server struct {
 	WireguardDir string
 	SysctlDir    string
 	SysNetDir    string
+	// Binary is the executable update.install replaces; empty is this
+	// one. Arch overrides the release's architecture, and Exit how the
+	// helper ends after an update (tests).
+	Binary string
+	Arch   string
+	Exit   func()
 	// Log receives one line per call. nil means stderr, which under
 	// systemd is the journal.
 	Log *log.Logger
@@ -97,6 +103,7 @@ func (s *Server) init() {
 			OpVPNDown:         s.vpnDown,
 			OpVPNStatus:       s.vpnStatus,
 			OpSysctlReserve:   s.sysctlReservePorts,
+			OpUpdateInstall:   s.updateInstall,
 		}
 	})
 }

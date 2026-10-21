@@ -235,6 +235,9 @@ device is gone (404, 410) gets it forgotten.
 | GET | `/settings` | → settings |
 | PUT | `/settings` | settings → settings |
 | POST | `/system/restart` | → `{ok}` (SIGTERM to self; systemd restarts) |
+| GET | `/system/update` | → `{current, latest, available, checked_at, error, auto, installing, can_install, why}` (`why`: `not_release` or `no_helper`); `?check=1` asks GitHub (an answer under an hour old is reused) |
+| POST | `/system/update/check` | → the same, asking GitHub now |
+| POST | `/system/update/install` | → `{ok, version}` once the helper installed the newest release; the supervisor restarts a second later (sites keep running). 409 when there is nothing newer, 502 when the helper refused or the download failed |
 | GET | `/system/ports` | → `{from, to, in_use: {port: domain}}` |
 | GET | `/system/processes` | → `[{pid, domain, kind, rss, cpu, started}]` |
 

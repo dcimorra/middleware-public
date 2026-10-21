@@ -4,6 +4,17 @@ The binary is swapped, the supervisor restarts, the sites keep running.
 That is the whole procedure; what follows is why it is safe and what to do
 after.
 
+## From the panel
+
+System → Updates says which release runs and which is the newest, and
+**Update now** installs it: the privileged helper downloads it from this
+repository, checks its sha256, replaces `/usr/local/bin/middleware` and
+both services restart; the sites keep running. **Update automatically**
+(off by default; `settings.json` `update.auto`) does the same once a day.
+An installation running a pre-release is offered pre-releases; one on a
+stable release, stable ones only. Without the helper (`--no-helper`, a
+container) the panel says to use the procedure below.
+
 ## The procedure
 
 ```sh

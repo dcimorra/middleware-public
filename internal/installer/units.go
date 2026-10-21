@@ -11,6 +11,7 @@ package installer
 import (
 	"bytes"
 	"fmt"
+	"path/filepath"
 	"text/template"
 )
 
@@ -124,6 +125,10 @@ func Render(p Params) (map[string]string, error) {
 func (Params) SocketUnitName() string  { return SocketUnit }
 func (Params) ServiceUnitName() string { return ServiceUnit }
 
+// BinaryDir is the folder of the executable, which the helper writes to
+// when it installs an update.
+func (p Params) BinaryDir() string { return filepath.Dir(p.Binary) }
+
 var templates = map[string]string{
 	ServiceUnit: `# middleware.service, rendered by middleware {{.Version}} install.
 # Re-run "middleware install" to regenerate; edits here are overwritten.
@@ -200,7 +205,7 @@ WantedBy=sockets.target
 `,
 	HelperUnit: `# middleware-helper.service, rendered by middleware {{.Version}} install.
 # The only thing in this installation that runs as root. It answers a closed
-# list of operations (firewall, vpn, sysctl) on a unix socket shared with the
+# list of operations (firewall, vpn, sysctl, update) on a unix socket shared with the
 # {{.Group}} group, and never takes a string that reaches a shell.
 [Unit]
 Description=middleware privileged helper
@@ -218,10 +223,11 @@ ExecStart={{.Binary}} helper --socket {{.HelperSocket}} --allow-gid {{.Group}}
 Restart=always
 RestartSec=2
 
-# Strict by default; the three places the operations write are listed and
-# nothing else on the filesystem is reachable for writing.
+# Strict by default; the places the operations write are listed and
+# nothing else on the filesystem is reachable for writing. The binary's
+# folder is for update.install, which replaces it with a newer release.
 ProtectSystem=strict
-ReadWritePaths=/etc/wireguard /etc/sysctl.d {{.RunDir}}
+ReadWritePaths=/etc/wireguard /etc/sysctl.d {{.RunDir}} {{.BinaryDir}}
 ProtectHome=yes
 PrivateTmp=yes
 NoNewPrivileges=yes

@@ -7,8 +7,8 @@ import { h, clear, append, fmtBytes, fmtDuration } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
 import { onEvent } from "../lib/stream.js";
-import { page, load, table, cell, empty, kv } from "../components/page.js";
-import { confirm } from "../components/dialog.js";
+import { page, load, table, cell, empty, kv, notice } from "../components/page.js";
+import { confirm, toggle } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 
 export function systemScreen() {
@@ -18,7 +18,8 @@ export function systemScreen() {
   const info = h("div", { class: "card" });
   const procs = h("div", { class: "card pad0" });
   const portsCard = h("div", { class: "card" });
-  p.body.append(stats, info, procs, portsCard);
+  const updateCard = h("div", { class: "card" });
+  p.body.append(stats, info, updateCard, procs, portsCard);
   const subs = [];
   let timer = null;
 
@@ -88,15 +89,62 @@ export function systemScreen() {
     return null;
   }
 
+  // The self-update: off unless turned on, and a button for now. It asks
+  // GitHub when the screen opens (at most hourly, the server keeps it).
+  async function renderUpdate(check) {
+    const u = check === "force" ? await api.post("/system/update/check") : await api.get(`/system/update${check ? "?check=1" : ""}`);
+    const auto = toggle(t("system.update.auto"), { checked: u.auto });
+    auto.input.addEventListener("change", async () => {
+      try {
+        const cur = await api.get("/settings");
+        await api.put("/settings", { ...cur, update: { ...(cur.update || {}), auto: auto.input.checked } });
+        toast(t(auto.input.checked ? "system.update.autoOn" : "system.update.autoOff"), "ok");
+      } catch (e) { auto.input.checked = !auto.input.checked; toastError(e); }
+    });
+    const checkBtn = h("button", { type: "button", class: "btn" }, icon("refresh"), t("system.update.check"));
+    checkBtn.addEventListener("click", async () => {
+      checkBtn.classList.add("busy");
+      try { await renderUpdate("force"); } catch (e) { toastError(e); } finally { checkBtn.classList.remove("busy"); }
+    });
+    const installBtn = h("button", { type: "button", class: "btn primary", disabled: !(u.available && u.can_install) || u.installing }, icon("download"), t("system.update.install"));
+    installBtn.addEventListener("click", async () => {
+      if (!(await confirm({ title: t("system.update.installQ", { from: u.current, to: u.latest }), body: t("system.update.installBody"), confirmLabel: t("system.update.install") }))) return;
+      installBtn.classList.add("busy");
+      installBtn.disabled = true;
+      try { const r = await api.post("/system/update/install"); toast(t("system.update.installed", { v: r.version }), "ok"); }
+      catch (e) { toastError(e); installBtn.disabled = false; }
+      finally { installBtn.classList.remove("busy"); }
+    });
+    let state;
+    if (u.error) state = notice("warn", t("system.update.error", { error: u.error }));
+    else if (!u.checked_at) state = h("p", { class: "small muted" }, t("system.update.notChecked"));
+    else if (u.available) state = notice("ok", t("system.update.available", { v: u.latest }));
+    else state = h("p", { class: "small muted" }, t("system.update.current"));
+    append(clear(updateCard), [
+      h("h2", null, t("system.update.title")),
+      kv([
+        [t("system.update.running"), h("code", null, u.current || "")],
+        [t("system.update.latest"), u.latest ? h("code", null, u.latest) : h("span", { class: "muted" }, "—")],
+        [t("system.update.checked"), u.checked_at ? new Date(u.checked_at).toLocaleString() : h("span", { class: "muted" }, "—")],
+      ]),
+      state,
+      u.can_install ? null : notice("warn", t("system.update.why." + u.why)),
+      h("div", { class: "field" }, auto.el, h("p", { class: "small muted" }, t("system.update.autoHint"))),
+      h("div", { class: "form-actions" }, checkBtn, installBtn),
+    ]);
+    return null;
+  }
+
   restartBtn.addEventListener("click", async () => {
     if (!(await confirm({ title: t("system.restartQ"), body: t("system.restartBody"), confirmLabel: t("system.restart"), danger: true }))) return;
     try { await api.post("/system/restart"); toast(t("system.restarting"), "ok"); } catch (e) { toastError(e); }
   });
 
-  const all = () => { load(info, render); load(procs, renderProcs); load(portsCard, renderPorts); };
+  const all = () => { load(info, render); load(procs, renderProcs); load(portsCard, renderPorts); load(updateCard, () => renderUpdate(true)); };
   all();
   timer = setInterval(() => { render().catch(() => {}); renderProcs().catch(() => {}); }, 10000);
   subs.push(onEvent("middleware.", all));
+  subs.push(onEvent("update.", () => renderUpdate(false).catch(() => {})));
   subs.push(onEvent("instance.", () => { renderProcs().catch(() => {}); renderPorts().catch(() => {}); }));
   return { el: p.el, destroy() { clearInterval(timer); subs.forEach((u) => u()); } };
 }

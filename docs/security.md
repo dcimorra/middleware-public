@@ -25,7 +25,12 @@ has. If the supervisor is compromised, the attacker is your user, not root.
 **Closed helper.** `middleware-helper.service` is the only root process.
 It listens on `/run/middleware/helper.sock` (`root:middleware`, `0660`) and
 answers a **closed list of operations**: `firewall.apply`, `firewall.block`,
-`firewall.unblock`, `vpn.apply`, `vpn.up`, `vpn.down`, `sysctl.reserve_ports`.
+`firewall.unblock`, `vpn.apply`, `vpn.up`, `vpn.down`, `sysctl.reserve_ports`,
+`update.install`. The last takes a release's name and nothing else: it
+downloads that release from this repository only, checks the published
+sha256, runs the binary to see it is that version, and refuses anything
+not newer than what runs, so a supervisor that was broken into can neither
+install a binary of its own as root nor go back to an older one.
 Each validates its input (addresses parse, keys are base64 of the right
 length, names match `^[a-z0-9-]+$`) and none takes a free-form string that
 reaches a shell. Its unit has `ProtectSystem=strict` with exactly three

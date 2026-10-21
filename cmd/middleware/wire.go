@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/acme"
@@ -39,6 +40,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/settings"
 	"github.com/dcimorra/middleware-public/internal/shots"
 	"github.com/dcimorra/middleware-public/internal/sitetoken"
+	"github.com/dcimorra/middleware-public/internal/update"
 )
 
 // The order of the hooks is the shape of the process, so it is written
@@ -121,6 +123,7 @@ type wireHook struct {
 	notifier  *push.Notifier
 	auditor   *audit.Auditor
 	fixer     *autofix.Fixer
+	updater   *update.Updater
 }
 
 func buildWire(a *app.App) app.Hook {
@@ -165,6 +168,8 @@ func buildWire(a *app.App) app.Hook {
 	}
 	srv.RegisterWAF(api.WAFOptions{WAF: theWAF, Traffic: theTraffic, Attack: theAttack})
 	srv.RegisterSecurity(api.SecurityOptions{Door: theSecurity, Country: edgeCountry})
+	w.updater = buildUpdater(a)
+	srv.RegisterUpdate(w.updater)
 	w.shots = shots.New(shots.Options{
 		Root:    a.Root,
 		DataDir: dataDir(a),
@@ -367,6 +372,9 @@ func (w *wireHook) Run(ctx context.Context, a *app.App) error {
 	if w.fixer != nil {
 		go w.fixer.Run(ctx)
 	}
+	if w.updater != nil {
+		go w.updater.Run(ctx)
+	}
 	// The logs sites and tasks write, rotated at 10 MB with three kept.
 	go logrotate.Run(ctx, []string{filepath.Join(dataDir(a), "logs", "*", "*.log")}, func(path string, err error) {
 		if err != nil {
@@ -563,6 +571,26 @@ func dns01For(d cloudflareDNS) *acme.DNS01 {
 			return c.SetTXT(ctx, fqdn, value)
 		},
 	}
+}
+
+// buildUpdater is the self-update: the helper installs, the supervisor
+// restarts itself as the Restart button does.
+func buildUpdater(a *app.App) *update.Updater {
+	hc := helper.Dial("")
+	return update.New(update.Options{
+		Current: Version,
+		Bus:     a.Bus,
+		Auto: func() bool {
+			s, err := settings.Load(a.Root)
+			return err == nil && s.Update.Auto
+		},
+		Helper: hc.Available,
+		Install: func(ctx context.Context, version string) error {
+			_, err := hc.UpdateInstall(ctx, version)
+			return err
+		},
+		Restart: func() { _ = syscall.Kill(os.Getpid(), syscall.SIGTERM) },
+	})
 }
 
 // buildPublisher is the one place names are published. Its DNS is the

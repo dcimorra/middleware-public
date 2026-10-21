@@ -103,6 +103,7 @@ group `middleware`, mode 0660). It accepts a **closed list of operations**:
 | `vpn.apply` | write `/etc/wireguard/mw0.conf` from a validated config and reload |
 | `vpn.up` / `vpn.down` | bring the interface up or down |
 | `sysctl.reserve_ports` | reserve the site port range from the ephemeral range |
+| `update.install` | replace the binary with a newer release of this repository, sha256 checked, then restart itself |
 
 Each operation validates its input (addresses parse, keys are base64 of the
 right length, names match `^[a-z0-9-]+$`), logs what it did, and never takes a

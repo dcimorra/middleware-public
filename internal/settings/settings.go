@@ -35,6 +35,14 @@ type Settings struct {
 	Autofix Autofix `json:"autofix"`
 	// Cache is the house's response cache budget.
 	Cache Cache `json:"cache"`
+	// Update is whether this program updates itself (internal/update).
+	Update Update `json:"update"`
+}
+
+// Update is the self-update. Off by default: a new release is installed
+// when the operator says so, or daily once they turned this on.
+type Update struct {
+	Auto bool `json:"auto,omitempty"`
 }
 
 // Cache is the memory every site's response cache shares. The sum is what
