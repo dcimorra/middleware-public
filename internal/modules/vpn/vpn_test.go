@@ -336,11 +336,19 @@ func TestVPNOnlyLoadsAFirewallPolicyAndDisableLiftsIt(t *testing.T) {
 	if len(eventsOf(f.bus, "vpn.disabled")) != 1 {
 		t.Fatal("no vpn.disabled event")
 	}
-	// A helper failure leaves the decision as it was.
+	// Without a working nft (none installed, say) the decision still
+	// holds: the house closes the panel itself, the kernel rule is a second
+	// wall, and the failure is said as a warning.
 	f.vpn.Enable(context.Background(), map[string]string{"endpoint": "vpn.example.com:51820"})
-	f.rec.Fail["nft -f -"] = errors.New("nft: Error: syntax error")
-	if err := f.vpn.SetOnly(context.Background(), true); err == nil || f.vpn.Status(context.Background()).VPNOnly {
-		t.Fatalf("vpn_only recorded although nft failed: %v", err)
+	f.rec.Fail["nft -f -"] = errors.New("nft is not installed")
+	if err := f.vpn.SetOnly(context.Background(), true); err != nil || !f.vpn.Status(context.Background()).VPNOnly {
+		t.Fatalf("vpn_only refused because nft failed: %v", err)
+	}
+	if len(eventsOf(f.bus, "firewall.apply.failed")) == 0 {
+		t.Fatal("the failure was not said")
+	}
+	if err := f.vpn.Disable(context.Background()); err != nil {
+		t.Fatalf("disable refused because nft failed: %v", err)
 	}
 }
 

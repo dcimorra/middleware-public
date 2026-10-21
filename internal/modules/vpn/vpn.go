@@ -381,7 +381,7 @@ func (v *VPN) Enable(ctx context.Context, config map[string]string) ([]Line, err
 	lines = append(lines, Line{"ok", "interface " + v.state.Interface + " is up on udp/" + strconv.Itoa(port)})
 	if v.state.VPNOnly {
 		if err := v.applyFirewallLocked(ctx); err != nil {
-			return append(lines, Line{"fail", err.Error()}), err
+			lines = append(lines, Line{"skip", "kernel firewall not applied: " + err.Error()})
 		}
 	}
 	v.emit("vpn.enabled", v.state.Interface, "", "", map[string]any{"endpoint": endpoint, "listen_port": port, "subnet": subnet.String()})
@@ -396,10 +396,7 @@ func (v *VPN) Disable(ctx context.Context) error {
 	defer v.mu.Unlock()
 	if v.state.VPNOnly {
 		v.state.VPNOnly = false
-		if err := v.applyFirewallLocked(ctx); err != nil {
-			v.state.VPNOnly = true
-			return err
-		}
+		_ = v.applyFirewallLocked(ctx)
 		v.emit("vpn.only", v.state.Interface, "warn", "vpn-only access lifted because the VPN was disabled", map[string]any{"enabled": false})
 	}
 	if err := v.opts.Helper.VPNDown(ctx, v.state.Interface); err != nil {
@@ -471,9 +468,14 @@ func (v *VPN) policyLocked() helper.FirewallPolicy {
 	}
 }
 
+// The kernel rule is a second wall, not the first: the panel inside the
+// VPN is enforced by the house's inbound hook on every request. So a
+// machine without nftables (Debian's minimal images have none) gets a
+// warning and keeps the setting; refusing it, and refusing to disable the
+// VPN for the same reason, left the operator with no way in or out.
 func (v *VPN) applyFirewallLocked(ctx context.Context) error {
 	if err := v.opts.Helper.FirewallApply(ctx, v.policyLocked()); err != nil {
-		v.emit("firewall.apply.failed", v.state.Interface, "error", err.Error(), nil)
+		v.emit("firewall.apply.failed", v.state.Interface, "warn", "the kernel firewall rule was not applied ("+err.Error()+"); the house closes the panel by itself all the same", nil)
 		return err
 	}
 	v.emit("firewall.applied", v.state.Interface, "", "", map[string]any{"vpn_only": v.state.VPNOnly, "panel_ports": v.opts.PanelPorts})
@@ -599,12 +601,8 @@ func (v *VPN) SetOnly(ctx context.Context, enabled bool) error {
 	if enabled && len(v.peers) == 0 {
 		return errors.New("vpn: add a peer before making the panel vpn-only, or nobody can reach it")
 	}
-	was := v.state.VPNOnly
 	v.state.VPNOnly = enabled
-	if err := v.applyFirewallLocked(ctx); err != nil {
-		v.state.VPNOnly = was
-		return err
-	}
+	_ = v.applyFirewallLocked(ctx)
 	if err := v.save(); err != nil {
 		return err
 	}

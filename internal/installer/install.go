@@ -148,7 +148,7 @@ func (in *Installer) Install() (Report, error) {
 	var unitsChanged, binaryChanged bool
 	steps := []Step{
 		{"package manager", in.stepPackageManager},
-		{"git, curl and wireguard-tools", in.stepPackages},
+		{"git, curl, wireguard, nftables", in.stepPackages},
 		{"system group", in.stepGroup},
 		{"user in group", in.stepUserInGroup},
 		{"root directory", in.stepRootDir},
@@ -317,7 +317,7 @@ func (in *Installer) stepPackages() (bool, string, error) {
 	// Binary → package: wg comes from wireguard-tools, so the vpn module
 	// finds it there the day it is enabled instead of asking the operator
 	// to apt-get something by hand.
-	for _, p := range []struct{ bin, pkg string }{{"git", "git"}, {"curl", "curl"}, {"wg", "wireguard-tools"}} {
+	for _, p := range []struct{ bin, pkg string }{{"git", "git"}, {"curl", "curl"}, {"wg", "wireguard-tools"}, {"nft", "nftables"}} {
 		if _, err := in.Exec.LookPath(p.bin); err != nil {
 			missing = append(missing, p.pkg)
 		}
