@@ -75,6 +75,9 @@ func (s *Server) RegisterAgents(o AgentsOptions) {
 	var usage *claude.Usage
 	var usageErr error
 	var usageAt time.Time
+	s.Handle("GET", Prefix+"/agents/waiting", "Whose turn it is to speak: the conversations waiting for the operator's answer, and how many turns are at work", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		return o.Chat.Waiting(), nil
+	})
 	s.Handle("GET", Prefix+"/agents/usage", "The Claude account's five-hour and seven-day windows, as /usage shows them", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		usageMu.Lock()
 		defer usageMu.Unlock()

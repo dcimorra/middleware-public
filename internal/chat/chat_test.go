@@ -460,3 +460,27 @@ func TestATurnKeepsItsStepsInOrderWithEachToolsAnswerAndItsSubagents(t *testing.
 		t.Fatalf("thread %+v", th)
 	}
 }
+
+func TestWaitingCountsTheConversationsThatEndedAskingTheOperator(t *testing.T) {
+	q := "Which one?\n\n```question\n{\"question\": \"Which?\", \"options\": [\"a\", \"b\"]}\n```"
+	p := &fakeProvider{key: "fake", script: []agent.Event{{Kind: agent.KindText, Text: q}, {Kind: agent.KindResult}}}
+	m, _, bus := newManager(t, p)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+	if w := m.Waiting(); len(w.Asking) != 0 {
+		t.Fatalf("before: %+v", w)
+	}
+	m.Send("a.test", "go", "")
+	waitFor(t, ch, "agent.done")
+	w := m.Waiting()
+	if len(w.Asking) != 1 || w.Asking[0].Name != "a.test" {
+		t.Fatalf("after a question: %+v", w)
+	}
+	p.script = []agent.Event{{Kind: agent.KindText, Text: "done"}, {Kind: agent.KindResult}}
+	time.Sleep(10 * time.Millisecond) // a new mtime
+	m.Send("a.test", "a", "")
+	waitFor(t, ch, "agent.done")
+	if w := m.Waiting(); len(w.Asking) != 0 {
+		t.Fatalf("answered: %+v", w)
+	}
+}

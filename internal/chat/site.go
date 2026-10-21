@@ -251,3 +251,78 @@ func (m *Manager) Prune(domain, origin string, max int) {
 		}
 	}
 }
+
+// Waiting is whose turn it is to speak: the conversations whose last turn
+// ended asking the operator something, and how many turns are at work.
+type Waiting struct {
+	Asking  []WaitingChat `json:"asking"`
+	Working int           `json:"working"`
+}
+
+// WaitingChat is one conversation waiting for an answer.
+type WaitingChat struct {
+	Name   string `json:"name"`
+	Domain string `json:"domain"`
+	ID     string `json:"id,omitempty"`
+}
+
+type askState struct {
+	mod    time.Time
+	asking bool
+}
+
+// Waiting reads every conversation's file, again only when it changed: it
+// is asked for every half minute to put a number in the tab's title, which
+// is all that shows with the tab in the background. A site's own
+// conversations are not counted: on their other side is a program.
+func (m *Manager) Waiting() Waiting {
+	root := filepath.Join(m.opts.Root, "data", "chat")
+	var files []string
+	top, _ := filepath.Glob(filepath.Join(root, "*.json"))
+	nested, _ := filepath.Glob(filepath.Join(root, "*", "*.json"))
+	files = append(append(files, top...), nested...)
+	out := Waiting{Asking: []WaitingChat{}}
+	m.askMu.Lock()
+	if m.asks == nil {
+		m.asks = map[string]askState{}
+	}
+	seen := map[string]bool{}
+	for _, f := range files {
+		st, err := os.Stat(f)
+		if err != nil {
+			continue
+		}
+		seen[f] = true
+		a, ok := m.asks[f]
+		if !ok || !a.mod.Equal(st.ModTime()) {
+			var c Conversation
+			if fsx.ReadJSON(f, &c) == nil && c.Origin != OriginSite {
+				a = askState{mod: st.ModTime(), asking: len(c.Turns) > 0 && len(c.Turns[len(c.Turns)-1].Questions) > 0}
+			} else {
+				a = askState{mod: st.ModTime()}
+			}
+			m.asks[f] = a
+		}
+		if !a.asking {
+			continue
+		}
+		rel, _ := filepath.Rel(root, f)
+		rel = strings.TrimSuffix(rel, ".json")
+		domain, id, _ := strings.Cut(rel, string(filepath.Separator))
+		name := Name(domain, id)
+		if m.Running(name) {
+			continue
+		}
+		out.Asking = append(out.Asking, WaitingChat{Name: name, Domain: domain, ID: id})
+	}
+	for f := range m.asks {
+		if !seen[f] {
+			delete(m.asks, f)
+		}
+	}
+	m.askMu.Unlock()
+	m.mu.Lock()
+	out.Working = len(m.running)
+	m.mu.Unlock()
+	return out
+}

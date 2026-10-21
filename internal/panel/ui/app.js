@@ -2,11 +2,11 @@
 // routes. Screens live in ./screens and know nothing about each other;
 // what they share is in ./lib and ./components.
 
-import { h, clear } from "./lib/dom.js";
+import { h, clear, debounce } from "./lib/dom.js";
 import { t, loadStrings } from "./lib/i18n.js";
 import { api, onUnauthorized } from "./lib/api.js";
 import { store } from "./lib/store.js";
-import { connect, disconnect } from "./lib/stream.js";
+import { connect, disconnect, onEvent } from "./lib/stream.js";
 import { route, mount, navigate, currentPath, render as rerender } from "./lib/router.js";
 import { applyTheme, getTheme, setTheme, getLang } from "./lib/theme.js";
 import { installShortcuts, showShortcuts, GOTO } from "./components/shortcuts.js";
@@ -174,6 +174,7 @@ async function boot() {
   sidebar.hidden = false;
   buildSidebar();
   connect();
+  readWaiting();
   if (!mounted) {
     mounted = true;
     mount(main, (path) => (path === "/" || path === "/logout" ? "/sites" : path));
@@ -188,8 +189,26 @@ document.addEventListener("route", () => {
   const path = currentPath();
   const key = NAV.find(([, href]) => path === href || path.startsWith(href + "/"))?.[0];
   const site = /^\/sites\/([^/?]+)/.exec(path);
-  document.title = (site ? decodeURIComponent(site[1]) : key ? t("nav." + key) : "") + " · " + t("app.title");
+  baseTitle = (site ? decodeURIComponent(site[1]) : key ? t("nav." + key) : "") + " · " + t("app.title");
+  paintTitle();
 });
+
+// Whose turn it is to speak, in the tab's title: with the tab in the
+// background the title is all that shows, and a conversation that ended
+// asking something waits there for nobody otherwise. Read every half
+// minute and when a turn ends; a small answer, cheap to ask often.
+let baseTitle = t("app.title");
+let waiting = { asking: [], working: 0 };
+function paintTitle() {
+  const n = (waiting.asking || []).length;
+  document.title = (n ? `(${n}) ` : "") + baseTitle;
+}
+const readWaiting = debounce(async () => {
+  if (!authed) return;
+  try { waiting = await api.get("/agents/waiting"); store.set("waiting", waiting); paintTitle(); } catch { /* the title keeps what it had */ }
+}, 500);
+setInterval(readWaiting, 30000);
+onEvent("agent.", (ev) => { if (/^agent\.(done|error|question|started)$/.test(ev.type)) readWaiting(); });
 installShortcuts();
 
 (async () => {

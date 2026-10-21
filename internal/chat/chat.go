@@ -195,6 +195,10 @@ type Options struct {
 
 // Manager runs the conversations.
 type Manager struct {
+	// asks caches, per conversation file, whether it ends asking (Waiting).
+	askMu sync.Mutex
+	asks  map[string]askState
+
 	opts    Options
 	mu      sync.Mutex
 	running map[string]*running
