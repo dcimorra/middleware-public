@@ -643,3 +643,20 @@ svg.vchart .limit { stroke: var(--bad); stroke-dasharray: 4 4; stroke-width: 1; 
 details.episode { margin: 6px 0; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); }
 details.episode summary { cursor: pointer; }
 iframe.page-preview { width: 100%; height: 420px; border: 1px solid var(--border); border-radius: var(--radius); background: #fff; margin-top: 8px; }
+
+/* ---------- modules ---------- */
+.module-groups { display: flex; flex-direction: column; gap: 22px; }
+.module-group > h3 { margin: 0 0 10px; }
+.module-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); align-items: start; }
+.module-card { display: flex; flex-direction: column; gap: 10px; }
+.module-card.on { border-color: color-mix(in srgb, var(--ok) 35%, var(--border)); }
+.module-head { display: flex; gap: 12px; align-items: flex-start; }
+.module-head h2 { margin: 0 0 2px; }
+.module-head p { margin: 0; }
+.module-icon { flex: none; width: 38px; height: 38px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent); }
+.module-card.on .module-icon { background: var(--ok-soft); color: var(--ok); }
+.module-card .form-actions { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 4px; flex-wrap: wrap; }
+.module-card details.advanced > summary { cursor: pointer; font-size: 13px; color: var(--text-2); padding: 4px 0; }
+.module-card .signin { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; background: var(--surface-2); }
+@media (max-width: 720px) { .module-grid { grid-template-columns: 1fr; } }
+.module-grid > .card { margin: 0; }

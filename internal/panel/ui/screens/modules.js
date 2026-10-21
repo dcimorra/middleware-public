@@ -16,7 +16,7 @@ import { toast, toastError } from "../components/toast.js";
 
 export function modulesScreen() {
   const p = page({ title: t("nav.modules"), sub: t("modules.sub"), icon: "blocks" });
-  const body = h("div", { class: "grid" });
+  const body = h("div", { class: "module-groups" });
   p.body.append(body);
   const subs = [];
 
@@ -25,9 +25,25 @@ export function modulesScreen() {
     clear(body);
     if (!mods || mods.length === 0) { body.append(empty(t("modules.emptyTitle"), t("modules.emptyHint"))); return null; }
     const depBy = new Map((deps || []).map((d) => [d.name, d]));
-    for (const m of mods) body.append(card(m, depBy));
+    // Grouped by what they are for, in a fixed order; one the panel does
+    // not know yet goes under "others" rather than nowhere.
+    const groups = new Map(GROUPS.map((g) => [g, []]));
+    for (const m of mods) groups.get(GROUP_OF[m.key] || "other").push(m);
+    for (const [g, list] of groups) {
+      if (!list.length) continue;
+      body.append(h("section", { class: "module-group" },
+        h("h3", null, t("modules.group." + g)),
+        h("div", { class: "module-grid" }, ...list.map((m) => card(m, depBy)))));
+    }
     return null;
   }
+
+  const GROUPS = ["connect", "deploy", "agents", "other"];
+  const GROUP_OF = { cloudflare: "connect", vpn: "connect", github: "deploy", "agent-claude": "agents", "agent-gemini": "agents" };
+  const ICON_OF = { cloudflare: "globe", vpn: "lock", github: "branch", "agent-claude": "sparkles", "agent-gemini": "sparkles" };
+  // The panel's own words for a module when it has them; the module's
+  // (in English, from the server) otherwise.
+  const said = (key, fallback) => { const s = t(key); return s === key ? fallback : s; };
 
   // Which command an agent module runs, for the binary line.
   const AGENT_BIN = { "agent-claude": "claude", "agent-gemini": "gemini" };
@@ -40,7 +56,10 @@ export function modulesScreen() {
     // under "advanced" for whoever wants to change them.
     const visible = (m.needs || []).filter((n) => !n.hidden);
     const simple = visible.length > 0 && visible.every((n) => n.optional);
-    const fields = simple ? h("details", { class: "advanced" }, h("summary", null, t("modules.advanced"))) : form;
+    // An enabled module's settings are folded: the card says what it is
+    // and that it works; the fields are there for whoever opens them.
+    const folded = simple || (m.enabled && visible.length > 0);
+    const fields = folded ? h("details", { class: "advanced" }, h("summary", null, t(simple ? "modules.advanced" : "modules.settings"))) : form;
     for (const n of m.needs || []) {
       // A hidden need is filled by the module itself (a session from a
       // sign-in); it has its own place on the card.
@@ -50,9 +69,9 @@ export function modulesScreen() {
         class: "mono", placeholder: n.secret && m.enabled ? t("modules.secretKept") : "", value: n.value || "",
       });
       inputs[n.key] = input;
-      fields.append(field(n.label || n.key, input, n.help || n.hint));
+      fields.append(field(said(`modules.need.${m.key}.${n.key}`, n.label || n.key), input, said(`modules.needHelp.${m.key}.${n.key}`, n.help || n.hint)));
     }
-    if (simple) form.append(fields);
+    if (folded) form.append(fields);
     const lines = checklist();
     const verifyBtn = h("button", { type: "button", class: "btn", hidden: simple || !(m.needs && m.needs.length) }, t("modules.verify"));
     const enableBtn = h("button", { type: "submit", class: "btn primary", hidden: simple && m.enabled }, m.enabled ? t("modules.save") : t("modules.enable"));
@@ -103,9 +122,11 @@ export function modulesScreen() {
     form.append(lines.el, h("div", { class: "form-actions" }, verifyBtn, enableBtn, disableBtn, forgetBtn));
     const state = stateBadge(m);
     const agentBin = AGENT_BIN[m.key];
-    return h("div", { class: "card module-card" },
-      h("div", { class: "log-bar" }, h("h2", { class: "grow" }, m.name || m.key), state),
-      h("p", { class: "dim small" }, m.description || ""),
+    return h("div", { class: "card module-card" + (m.enabled ? " on" : "") },
+      h("div", { class: "module-head" },
+        h("span", { class: "module-icon" }, icon(ICON_OF[m.key] || "blocks")),
+        h("div", { class: "grow" }, h("h2", null, m.name || m.key), h("p", { class: "dim small" }, said("modules.desc." + m.key, m.description || ""))),
+        state),
       m.installed === false && m.enabled && !agentBin ? notice("warn", t("modules.notInstalled")) : null,
       agentBin ? signIn(m) : null,
       agentBin ? binaryLine(agentBin, depBy.get(agentBin)) : null,
