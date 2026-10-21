@@ -34,10 +34,13 @@ export function wafScreen() {
       const d = await api.get("/waf/traffic");
       const ps = Array.isArray(d.per_second) ? d.per_second : Object.keys(d.per_second || {}).sort().map((k) => d.per_second[k]);
       spark.set(ps);
-      const dom = Object.entries(d.by_domain || {}).sort((a, b) => b[1] - a[1]).slice(0, 12);
+      // Each domain is {requests, per_second, p95_ms…}; a bare number is
+      // an older build's answer.
+      const reqs = (v) => (typeof v === "number" ? v : (v && v.requests) || 0);
+      const dom = Object.entries(d.by_domain || {}).sort((a, b) => reqs(b[1]) - reqs(a[1])).slice(0, 12);
       clear(byDomain);
       if (dom.length === 0) byDomain.append(h("p", { class: "small muted" }, t("waf.noTraffic")));
-      else byDomain.append(table([{ label: t("waf.domain") }, { label: t("waf.requests"), class: "num" }], dom.map(([k, v]) => h("tr", null, cell(k), cell(String(v), null, "num mono"))), {}).el);
+      else byDomain.append(table([{ label: t("waf.domain") }, { label: t("waf.requests"), class: "num" }], dom.map(([k, v]) => h("tr", null, cell(h("a", { href: `#/sites/${encodeURIComponent(k)}/activity` }, k)), cell(String(reqs(v)), null, "num mono"))), {}).el);
       clear(byStatus);
       for (const [k, v] of Object.entries(d.by_status || {}).sort()) {
         const cls = k.startsWith("5") ? "bad" : k.startsWith("4") ? "warn" : k.startsWith("2") ? "ok" : "";

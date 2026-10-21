@@ -91,6 +91,7 @@ func (f *fixture) open(t *testing.T) *VPN {
 		PanelPorts: []int{46100},
 		LookPath:   func(string) (string, error) { return "/usr/bin/x", nil },
 		Now:        func() time.Time { return time.Unix(1760000000, 0) },
+		PublicIP:   func(context.Context) (string, error) { return "198.51.100.7", nil },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -430,5 +431,18 @@ func TestFileSecretsRoundTripAndCreateTheKeyOwnerOnly(t *testing.T) {
 	}
 	if _, err := again.Decrypt(enc[:len(enc)-4] + "AAAA"); err == nil {
 		t.Fatal("a tampered ciphertext was accepted")
+	}
+}
+
+func TestTurningTheVPNOnAsksNothing(t *testing.T) {
+	f := newFixture(t)
+	lines, err := f.vpn.Enable(context.Background(), map[string]string{})
+	if err != nil {
+		t.Fatalf("enable with nothing: %v\n%+v", err, lines)
+	}
+	f.up()
+	st := f.vpn.Status(context.Background())
+	if st.Endpoint != "198.51.100.7:51820" {
+		t.Fatalf("endpoint %q", st.Endpoint)
 	}
 }

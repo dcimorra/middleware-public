@@ -94,6 +94,9 @@ type Options struct {
 	LookPath func(string) (string, error)
 	// Now is the clock; time.Now when nil.
 	Now func() time.Time
+	// PublicIP finds this machine's public address, for the endpoint
+	// clients connect to when the operator gave none.
+	PublicIP func(ctx context.Context) (string, error)
 }
 
 // state is data/vpn/state.json: everything the module decided.
@@ -222,7 +225,7 @@ func (v *VPN) Description() string {
 // Needs implements Module.
 func (v *VPN) Needs() []Need {
 	return []Need{
-		{Key: "endpoint", Label: "Public endpoint clients connect to (host:port)"},
+		{Key: "endpoint", Label: "Public endpoint clients connect to (host:port)", Default: "detected"},
 		{Key: "listen_port", Label: "UDP port WireGuard listens on", Default: strconv.Itoa(DefaultListenPort)},
 		{Key: "subnet", Label: "Subnet for the VPN", Default: wireguard.DefaultSubnet.String()},
 	}
@@ -231,7 +234,7 @@ func (v *VPN) Needs() []Need {
 // settingsOf parses the operator's answers, applying the defaults.
 func settingsOf(config map[string]string) (endpoint string, port int, subnet netip.Prefix, err error) {
 	endpoint = strings.TrimSpace(config["endpoint"])
-	if !wireguard.ValidEndpoint(endpoint) {
+	if endpoint != "" && !wireguard.ValidEndpoint(endpoint) {
 		return "", 0, subnet, fmt.Errorf("endpoint %q must be host:port", endpoint)
 	}
 	port = DefaultListenPort
@@ -252,14 +255,43 @@ func settingsOf(config map[string]string) (endpoint string, port int, subnet net
 	return endpoint, port, subnet, nil
 }
 
+// endpointFor is the endpoint clients are given: the operator's, the one
+// already handed out (so configs in people's phones keep working), or
+// this machine's public address with the port. Turning the VPN on asks
+// nothing.
+func (v *VPN) endpointFor(ctx context.Context, given string, port int) (string, error) {
+	if given != "" {
+		return given, nil
+	}
+	v.mu.Lock()
+	kept := v.state.Endpoint
+	v.mu.Unlock()
+	if kept != "" {
+		host, _, err := net.SplitHostPort(kept)
+		if err == nil {
+			return net.JoinHostPort(host, strconv.Itoa(port)), nil
+		}
+	}
+	if v.opts.PublicIP == nil {
+		return "", errors.New("no endpoint given and no way to find this machine's public address: give one as host:port")
+	}
+	ip, err := v.opts.PublicIP(ctx)
+	if err != nil {
+		return "", fmt.Errorf("this machine's public address could not be found (%v): give the endpoint as host:port", err)
+	}
+	return net.JoinHostPort(ip, strconv.Itoa(port)), nil
+}
+
 // Verify implements Module: every line is something that was actually
 // probed, and what cannot be probed without side effects says so.
 func (v *VPN) Verify(ctx context.Context, config map[string]string) []Line {
 	var lines []Line
-	if _, _, _, err := settingsOf(config); err != nil {
+	if given, port, _, err := settingsOf(config); err != nil {
+		lines = append(lines, Line{"fail", err.Error()})
+	} else if ep, err := v.endpointFor(ctx, given, port); err != nil {
 		lines = append(lines, Line{"fail", err.Error()})
 	} else {
-		lines = append(lines, Line{"ok", "endpoint, port and subnet are well formed"})
+		lines = append(lines, Line{"ok", "clients will connect to " + ep})
 	}
 	for _, bin := range []string{"wg", "wg-quick"} {
 		if _, err := v.opts.LookPath(bin); err != nil {
@@ -306,6 +338,9 @@ func (v *VPN) Enable(ctx context.Context, config map[string]string) ([]Line, err
 	}
 	endpoint, port, subnet, err := settingsOf(config)
 	if err != nil {
+		return lines, err
+	}
+	if endpoint, err = v.endpointFor(ctx, endpoint, port); err != nil {
 		return lines, err
 	}
 	v.mu.Lock()

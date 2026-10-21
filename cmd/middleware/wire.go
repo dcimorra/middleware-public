@@ -26,6 +26,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/firewall"
 	"github.com/dcimorra/middleware-public/internal/helper"
+	"github.com/dcimorra/middleware-public/internal/inbound"
 	"github.com/dcimorra/middleware-public/internal/logrotate"
 	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/modules"
@@ -95,7 +96,15 @@ func registerExtraModules(mgr *modules.Manager, root string, bus *events.Bus, dm
 	if err != nil {
 		return err
 	}
-	v, err := vpn.New(vpn.Options{Root: root, Helper: helper.Dial(""), Secrets: box, Bus: bus})
+	v, err := vpn.New(vpn.Options{Root: root, Helper: helper.Dial(""), Secrets: box, Bus: bus,
+		// The address the ports door publishes, when the operator set
+		// one; otherwise found the same way the publisher finds it.
+		PublicIP: func(ctx context.Context) (string, error) {
+			if st, err := inbound.LoadState(root); err == nil && st.PublicIP != "" {
+				return st.PublicIP, nil
+			}
+			return publish.DetectPublicIP(ctx)
+		}})
 	if err != nil {
 		return fmt.Errorf("vpn: %w", err)
 	}

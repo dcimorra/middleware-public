@@ -31,7 +31,11 @@ func (a *VPNAdapter) Needs() []Need {
 	out := make([]Need, 0, len(src))
 	for _, n := range src {
 		help := ""
-		if n.Default != "" {
+		switch n.Default {
+		case "":
+		case "detected":
+			help = "Empty: this machine's public address, found by itself, with the port below."
+		default:
 			help = "Default " + n.Default + "."
 		}
 		out = append(out, Need{Key: n.Key, Label: n.Label, Secret: n.Secret, Optional: n.Default != "", Help: help})

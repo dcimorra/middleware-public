@@ -56,11 +56,15 @@ export function authScreen({ mode, onDone }) {
     }
     if (closed) form.append(h("p", { class: "small muted" }, t("auth.passwordClosed")));
     form.append(err, h("div", { class: "form-actions" }, closed ? null : submit, pkBtn));
-    form.append(h("p", { class: "small muted" },
-      current === "setup"
-        ? h("a", { href: "#", onClick: (e) => { e.preventDefault(); current = "login"; render(); } }, t("auth.haveAccount"))
-        : h("a", { href: "#", onClick: (e) => { e.preventDefault(); current = "setup"; render(); } }, t("auth.firstRun")),
-    ));
+    // The way to the setup screen is offered only while there is no
+    // operator: on a running installation it led to a code nobody had.
+    if (current === "setup" || me.setup_pending) {
+      form.append(h("p", { class: "small muted" },
+        current === "setup"
+          ? h("a", { href: "#", onClick: (e) => { e.preventDefault(); current = "login"; render(); } }, t("auth.haveAccount"))
+          : h("a", { href: "#", onClick: (e) => { e.preventDefault(); current = "setup"; render(); } }, t("auth.firstRun")),
+      ));
+    }
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       err.hidden = true;

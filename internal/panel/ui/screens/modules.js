@@ -35,6 +35,12 @@ export function modulesScreen() {
   function card(m, depBy) {
     const inputs = {};
     const form = h("form", { novalidate: true, class: "needs" });
+    // A module that needs nothing typed (every field has a default the
+    // module fills, as the VPN) is a switch: on or off, its fields folded
+    // under "advanced" for whoever wants to change them.
+    const visible = (m.needs || []).filter((n) => !n.hidden);
+    const simple = visible.length > 0 && visible.every((n) => n.optional);
+    const fields = simple ? h("details", { class: "advanced" }, h("summary", null, t("modules.advanced"))) : form;
     for (const n of m.needs || []) {
       // A hidden need is filled by the module itself (a session from a
       // sign-in); it has its own place on the card.
@@ -44,13 +50,20 @@ export function modulesScreen() {
         class: "mono", placeholder: n.secret && m.enabled ? t("modules.secretKept") : "", value: n.value || "",
       });
       inputs[n.key] = input;
-      form.append(field(n.label || n.key, input, n.hint));
+      fields.append(field(n.label || n.key, input, n.help || n.hint));
     }
+    if (simple) form.append(fields);
     const lines = checklist();
-    const verifyBtn = h("button", { type: "button", class: "btn", hidden: !(m.needs && m.needs.length) }, t("modules.verify"));
-    const enableBtn = h("button", { type: "submit", class: "btn primary" }, m.enabled ? t("modules.save") : t("modules.enable"));
-    const disableBtn = h("button", { type: "button", class: "btn", hidden: !m.enabled }, t("modules.disable"));
-    const forgetBtn = h("button", { type: "button", class: "btn ghost sm", hidden: !(m.needs && m.needs.length) }, t("modules.forget"));
+    const verifyBtn = h("button", { type: "button", class: "btn", hidden: simple || !(m.needs && m.needs.length) }, t("modules.verify"));
+    const enableBtn = h("button", { type: "submit", class: "btn primary", hidden: simple && m.enabled }, m.enabled ? t("modules.save") : t("modules.enable"));
+    const disableBtn = h("button", { type: "button", class: "btn" + (simple ? " danger" : ""), hidden: !m.enabled }, t("modules.disable"));
+    const forgetBtn = h("button", { type: "button", class: "btn ghost sm", hidden: simple || !(m.needs && m.needs.length) }, t("modules.forget"));
+    // On a switch, changing an advanced field and saving is the only reason
+    // to press "save" while it is on.
+    if (simple) {
+      const saveAdvanced = h("button", { type: "submit", class: "btn sm", hidden: !m.enabled }, t("modules.save"));
+      fields.append(h("div", { class: "form-actions" }, saveAdvanced));
+    }
     const config = () => {
       const c = {};
       for (const [k, input] of Object.entries(inputs)) if (input.value !== "") c[k] = input.value;
@@ -74,7 +87,10 @@ export function modulesScreen() {
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const r = await run(enableBtn, `/modules/${enc(m.key)}/enable`, t("modules.enabled", { name: m.name }));
-      if (r && r.ok !== false) { m.enabled = true; state.replaceWith(stateBadge(m)); enableBtn.textContent = t("modules.save"); disableBtn.hidden = false; }
+      if (r && r.ok !== false) {
+        m.enabled = true; state.replaceWith(stateBadge(m)); enableBtn.textContent = t("modules.save"); disableBtn.hidden = false;
+        if (simple) load(body, render);
+      }
     });
     disableBtn.addEventListener("click", async () => {
       if (!(await confirm({ title: t("modules.disableQ", { name: m.name }), body: t("modules.disableBody"), confirmLabel: t("modules.disable"), danger: true }))) return;
