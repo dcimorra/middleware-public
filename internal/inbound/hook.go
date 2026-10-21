@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/acme"
@@ -82,6 +83,14 @@ type Hook struct {
 	vpnDNS            *localdns.Server
 	vpnWant           netip.Addr
 	lastVPNErr        string
+	// vpnCovered: the ports door listens on every address, the VPN's
+	// included, so the VPN door has no 80/443 of its own (two listeners
+	// on one port cannot coexist: whichever opened second failed, and
+	// after a restart that was the public one). Its connections are told
+	// apart by the address they arrived at; vpnLocal is that address,
+	// read by every new connection.
+	vpnCovered bool
+	vpnLocal   atomic.Pointer[netip.Addr]
 }
 
 type listener struct {
@@ -269,7 +278,14 @@ func (h *Hook) reconcile() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.reconcileLocalLocked(st)
-	h.reconcileVPNLocked()
+	// The VPN's 80/443 go first when the ports door will cover them, and
+	// after it otherwise: never two listeners on the same port.
+	covered := st.Ports.Open && wildcard(st.Ports.HTTP) && wildcard(st.Ports.HTTPS)
+	if covered {
+		h.reconcileVPNLocked(true)
+	} else {
+		defer h.reconcileVPNLocked(false)
+	}
 	if !st.Ports.Open {
 		if h.http != nil || h.https != nil {
 			h.closeLocked()
@@ -296,7 +312,13 @@ func (h *Hook) reconcile() {
 }
 
 func (h *Hook) openLocked(st State) error {
-	tag := func(ctx context.Context, _ net.Conn) context.Context {
+	tag := func(ctx context.Context, c net.Conn) context.Context {
+		// A connection to the VPN's address came through the tunnel.
+		if a := h.vpnLocal.Load(); a != nil {
+			if ap, err := netip.ParseAddrPort(c.LocalAddr().String()); err == nil && ap.Addr().Unmap() == *a {
+				return context.WithValue(ctx, ctxKey{}, VPN)
+			}
+		}
 		return context.WithValue(ctx, ctxKey{}, Ports)
 	}
 	ln, err := net.Listen("tcp", st.Ports.HTTP)
@@ -422,6 +444,11 @@ func (h *Hook) closeLocked() {
 // over plain HTTP is a mistake the redirect corrects, including the
 // panel.
 func (h *Hook) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	if doorOf(r) == VPN {
+		// Inside the tunnel plain HTTP is already encrypted: served as is.
+		h.Handler.ServeHTTP(w, r)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, acme.ChallengePath) {
 		h.Solver.ServeHTTP(w, r)
 		return
@@ -449,6 +476,10 @@ func (h *Hook) serveHTTP(w http.ResponseWriter, r *http.Request) {
 // so; the chain behind would serve the site under a certificate no
 // browser trusts, which is worse than a clear 503.
 func (h *Hook) serveHTTPS(w http.ResponseWriter, r *http.Request) {
+	if doorOf(r) == VPN {
+		h.Handler.ServeHTTP(w, r)
+		return
+	}
 	host := proxy.Host(r)
 	if !h.Store.Has(host) {
 		pages.Write(w, r, "nocert", http.StatusServiceUnavailable)
@@ -727,3 +758,9 @@ func (h *Hook) SetPublishing(newSites Door, publicIP string, clearIP bool) error
 }
 
 var _ app.Hook = (*Hook)(nil)
+
+// wildcard says a listen address is every address of the machine.
+func wildcard(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	return err == nil && (host == "" || host == "0.0.0.0" || host == "::")
+}

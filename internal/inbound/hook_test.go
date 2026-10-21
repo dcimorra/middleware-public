@@ -599,3 +599,43 @@ func TestThePanelInsideTheVPNAnswersOnlyThroughItAndTheMachine(t *testing.T) {
 		t.Fatalf("off, through the tunnel: %d", code)
 	}
 }
+
+// The ports door on every address and the VPN up: the VPN has no 80/443
+// of its own (two listeners on one port cannot coexist, and after a
+// restart the public one was the loser), and what arrives at the VPN's
+// address through the public listener is the VPN's.
+func TestThePortsDoorAndTheVPNShareThePortsWithoutLockingEachOtherOut(t *testing.T) {
+	h := newHouse(t, "vpn.test", "open.test")
+	h.hook.VPNPorts = inbound.VPNPorts{HTTP: "0", HTTPS: "0", DNS: "0"}
+	h.hook.VPNOnly = func(host string) ([]string, bool) { return nil, host == "vpn.test" }
+	h.hook.VPNAddress = func() (netip.Addr, bool) { return netip.MustParseAddr("127.0.0.1"), true }
+	st, _ := inbound.LoadState(h.root)
+	st.Ports.HTTP, st.Ports.HTTPS = ":0", ":0"
+	if err := inbound.SaveState(h.root, st); err != nil {
+		t.Fatal(err)
+	}
+	var httpAddr, vpnHTTP string
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		httpAddr, _ = h.hook.Addrs()
+		vpnHTTP, _, _ = h.hook.VPNAddrs()
+		if httpAddr != "" && vpnHTTP != "" && !strings.HasPrefix(httpAddr, "127.0.0.1") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("ports %q, vpn %q", httpAddr, vpnHTTP)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	_, port, _ := net.SplitHostPort(httpAddr)
+	req, _ := http.NewRequest("GET", "http://127.0.0.1:"+port+"/", nil)
+	req.Host = "vpn.test"
+	resp, err := (&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(b), "site=vpn.test") {
+		t.Fatalf("at the VPN's address: %d %s", resp.StatusCode, b)
+	}
+}

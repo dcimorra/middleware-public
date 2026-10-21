@@ -24,24 +24,24 @@ const VPN Door = "vpn"
 
 // reconcileVPNLocked keeps the VPN door's sockets on the address the VPN
 // module reports. Called under h.mu.
-func (h *Hook) reconcileVPNLocked() {
+func (h *Hook) reconcileVPNLocked(covered bool) {
 	var addr netip.Addr
 	up := false
 	if h.VPNAddress != nil {
 		addr, up = h.VPNAddress()
 	}
 	if !up {
-		if h.vpnHTTP != nil {
+		if h.vpnDNS != nil || h.vpnHTTP != nil {
 			h.closeVPNLocked()
 			h.emit("engine", "inbound.stopped", string(VPN), "", "vpn door closed", nil)
 		}
 		return
 	}
-	if h.vpnHTTP != nil && h.vpnWant == addr {
+	if h.vpnDNS != nil && h.vpnWant == addr && h.vpnCovered == covered {
 		return
 	}
 	h.closeVPNLocked()
-	if err := h.openVPNLocked(addr); err != nil {
+	if err := h.openVPNLocked(addr, covered); err != nil {
 		h.closeVPNLocked()
 		if err.Error() != h.lastVPNErr {
 			h.lastVPNErr = err.Error()
@@ -76,16 +76,31 @@ func (h *Hook) vpnPorts() VPNPorts {
 func (h *Hook) VPNAddrs() (httpAddr, httpsAddr, dnsAddr string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.vpnHTTP == nil || h.vpnHTTPS == nil || h.vpnDNS == nil {
+	if h.vpnDNS == nil {
+		return "", "", ""
+	}
+	if h.vpnCovered {
+		if h.http == nil || h.https == nil {
+			return "", "", ""
+		}
+		return h.http.ln.Addr().String(), h.https.ln.Addr().String(), h.vpnDNS.Addr()
+	}
+	if h.vpnHTTP == nil || h.vpnHTTPS == nil {
 		return "", "", ""
 	}
 	return h.vpnHTTP.ln.Addr().String(), h.vpnHTTPS.ln.Addr().String(), h.vpnDNS.Addr()
 }
 
-func (h *Hook) openVPNLocked(addr netip.Addr) error {
+func (h *Hook) openVPNLocked(addr netip.Addr, covered bool) error {
 	tag := func(ctx context.Context, _ net.Conn) context.Context { return context.WithValue(ctx, ctxKey{}, VPN) }
 	host := addr.String()
 	ports := h.vpnPorts()
+	h.vpnCovered = covered
+	a := addr
+	h.vpnLocal.Store(&a)
+	if covered {
+		return h.openVPNDNSLocked(addr)
+	}
 	ln, err := net.Listen("tcp", net.JoinHostPort(host, ports.HTTP))
 	if err != nil {
 		return fmt.Errorf("inbound: vpn http: %w", err)
@@ -101,6 +116,12 @@ func (h *Hook) openVPNLocked(addr netip.Addr) error {
 	h.vpnHTTPS = &listener{want: host, ln: ln, srv: &http.Server{Handler: h.Handler, ReadHeaderTimeout: 15 * time.Second, ConnContext: tag,
 		TLSConfig: &tls.Config{GetCertificate: h.Store.GetCertificate, MinVersion: tls.VersionTLS12, NextProtos: []string{"h2", "http/1.1", acme.ALPNProto}}}}
 	go h.vpnHTTPS.srv.ServeTLS(ln, "", "")
+	return h.openVPNDNSLocked(addr)
+}
+
+func (h *Hook) openVPNDNSLocked(addr netip.Addr) error {
+	host := addr.String()
+	ports := h.vpnPorts()
 	dns := &localdns.Server{Serves: h.knownSite, V4: net.IP(addr.AsSlice()), NoV6: true, Forward: localdns.SystemResolver()}
 	if err := dns.Listen(context.Background(), net.JoinHostPort(host, ports.DNS)); err != nil {
 		return fmt.Errorf("inbound: vpn dns: %w", err)
@@ -125,6 +146,8 @@ func (h *Hook) closeVPNLocked() {
 		h.vpnDNS = nil
 	}
 	h.vpnWant = netip.Addr{}
+	h.vpnCovered = false
+	h.vpnLocal.Store(nil)
 }
 
 // vpnAllows says whether a request may reach host, given the door it came
