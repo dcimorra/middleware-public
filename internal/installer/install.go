@@ -103,15 +103,14 @@ func (in *Installer) defaults() error {
 	return in.Params.Validate()
 }
 
-// defaultOperatorExists looks for the files the auth package may write.
-// Either one means setup already ran.
+// defaultOperatorExists says the operator's password is set.
 func defaultOperatorExists(root string) bool {
-	for _, f := range []string{"auth.json", "operator.json"} {
-		if fsx.Exists(filepath.Join(root, "data", f)) {
-			return true
-		}
-	}
-	return false
+	// Where the auth package keeps the operator's password. The installer
+	// looked for data/auth.json, which nothing writes: every re-run took
+	// the house for new and printed a setup code, which can set a new
+	// password.
+	b, err := os.ReadFile(filepath.Join(root, "data", "auth", "password"))
+	return err == nil && len(bytes.TrimSpace(b)) > 0
 }
 
 func (in *Installer) runSteps(steps []Step) (Report, error) {

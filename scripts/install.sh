@@ -18,8 +18,18 @@ resolve_tag() {
     printf '%s\n' "$MIDDLEWARE_VERSION"
     return
   fi
-  tag="$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=1" 2>/dev/null \
-    | sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+  # The newest by version, not the first listed: GitHub orders releases
+  # by tag name as text, and alpha.10 came after alpha.2 and before
+  # alpha.3, so the first one was alpha.9 for ever. Each tag gets a
+  # sortable key: major, minor, patch, release-after-pre-release, the
+  # pre-release's name and number.
+  tag="$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=100" 2>/dev/null \
+    | sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\(v[0-9][^"]*\)".*/\1/p' \
+    | awk '{ s = $0; sub(/^v/, "", s); pre = ""; i = index(s, "-");
+             if (i) { pre = substr(s, i + 1); s = substr(s, 1, i - 1) }
+             split(s, a, "."); np = split(pre, p, ".");
+             printf "%08d%08d%08d %d %-12s %08d %s\n", a[1], a[2], a[3], (pre == ""), p[1], p[2], $0 }' \
+    | sort | tail -n 1 | awk '{ print $NF }')"
   if [ -n "$tag" ]; then
     printf '%s\n' "$tag"
   else

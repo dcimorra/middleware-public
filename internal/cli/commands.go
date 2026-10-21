@@ -30,6 +30,7 @@ import (
 const Usage = `  setup        print a one-time code to create the operator in the panel
                (--domain panel.example.com [--door ports|tunnel]: the panel's name and door)
                (--password: set the password from the terminal instead)
+               (--reset: with an operator already set, a code to set a new one)
   site         list | show | add | rm | restart | stop | start | hold | unhold | logs | deploy
   events       recent events (-f to follow)
   system       version, uptime, load, memory, disk
@@ -125,6 +126,7 @@ func (e *Env) setup(args []string) error {
 	var c common
 	c.bind(fs)
 	direct := fs.Bool("password", false, "set the operator password now, from the terminal")
+	reset := fs.Bool("reset", false, "with an operator already set, print a code that sets a new password from the panel")
 	domain := fs.String("domain", "", "the panel's domain, so the first sign-in is at https://<domain>")
 	door := fs.String("door", "ports", "how the panel's domain is reached: ports (80/443) or tunnel (cloudflare); new sites follow it")
 	if _, err := parse(fs, args); err != nil {
@@ -169,6 +171,13 @@ func (e *Env) setup(args []string) error {
 		} else {
 			fmt.Fprintln(e.Stdout, "Password set. Every session is logged out.")
 		}
+		return nil
+	}
+	// A code sets the operator's password: with one already set, it is a
+	// reset, and has to be asked for by name. The installer re-run on a
+	// working house printed one every time.
+	if store.HasOperator() && !*reset {
+		fmt.Fprintln(e.Stdout, "The operator is already set. `middleware setup --password` sets a new password here; `middleware setup --reset` prints a code to set it from the panel.")
 		return nil
 	}
 	code, err := store.CreateSetupCode()

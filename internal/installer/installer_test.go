@@ -448,3 +448,15 @@ func TestTheSystemExecRunsRealCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestTheOperatorIsFoundWhereTheAuthPackageKeepsIt(t *testing.T) {
+	root := t.TempDir()
+	if defaultOperatorExists(root) {
+		t.Fatal("an empty root has an operator")
+	}
+	os.MkdirAll(filepath.Join(root, "data", "auth"), 0o700)
+	os.WriteFile(filepath.Join(root, "data", "auth", "password"), []byte("$argon2id$…\n"), 0o600)
+	if !defaultOperatorExists(root) {
+		t.Fatal("the operator's password was not found")
+	}
+}
