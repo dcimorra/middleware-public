@@ -42,6 +42,7 @@ export function vpnCard() {
     el.append(h("p", { class: "small muted" }, t("vpn.on", { endpoint: st.endpoint || "—", address: st.address || "—" })));
     if (st.error) el.append(notice("bad", st.error));
     if (!st.helper) el.append(notice("warn", t("vpn.noHelper")));
+    else if (!st.up) el.append(notice("bad", t("vpn.down")));
 
     const add = h("button", { type: "button", class: "btn primary" }, icon("plus"), t("vpn.addDevice"));
     add.addEventListener("click", addDevice);

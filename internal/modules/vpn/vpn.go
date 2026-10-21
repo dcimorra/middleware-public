@@ -690,6 +690,56 @@ func (v *VPN) ServerAddress() (netip.Addr, bool) {
 	return wireguard.ServerAddress(v.state.Subnet), true
 }
 
+// Keep holds the interface up while the VPN is enabled: brought up only
+// on enabling, it stayed down after the machine rebooted, or when the
+// first attempt failed (the helper was broken then), and the module kept
+// saying "enabled" over a tunnel that answered nothing. Every period the
+// kernel is asked; an interface that is down gets its config written
+// again and is brought up, and a failure is said once, not every period.
+func (v *VPN) Keep(ctx context.Context, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	last := ""
+	for {
+		v.mu.Lock()
+		enabled := v.state.Enabled
+		iface := v.state.Interface
+		v.mu.Unlock()
+		if enabled {
+			msg := ""
+			ks, err := v.opts.Helper.VPNStatus(ctx, iface)
+			switch {
+			case err != nil:
+				msg = "the helper does not answer: " + err.Error()
+			case !ks.Up:
+				v.mu.Lock()
+				err := v.applyLocked(ctx)
+				if err == nil {
+					err = v.opts.Helper.VPNUp(ctx, iface)
+				}
+				if err == nil && v.state.VPNOnly {
+					_ = v.applyFirewallLocked(ctx)
+				}
+				v.mu.Unlock()
+				if err != nil {
+					msg = "the interface is down and could not be brought up: " + err.Error()
+				} else {
+					v.emit("vpn.up", iface, "warn", "the interface was down and was brought up again", nil)
+				}
+			}
+			if msg != "" && msg != last {
+				v.emit("vpn.down", iface, "error", msg, nil)
+			}
+			last = msg
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
 // PanelOnly says the panel is to answer only through the VPN. It holds
 // only while the VPN is on: off, the way in would be gone.
 func (v *VPN) PanelOnly() bool {

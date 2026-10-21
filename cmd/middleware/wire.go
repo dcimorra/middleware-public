@@ -396,6 +396,11 @@ func (w *wireHook) Run(ctx context.Context, a *app.App) error {
 	if w.updater != nil {
 		go w.updater.Run(ctx)
 	}
+	// The VPN's interface, held up while the module is enabled (the CLI
+	// builds the module too, but only the service keeps it).
+	if theVPN != nil {
+		go theVPN.Keep(ctx, 30*time.Second)
+	}
 	// The logs sites and tasks write, rotated at 10 MB with three kept.
 	go logrotate.Run(ctx, []string{filepath.Join(dataDir(a), "logs", "*", "*.log")}, func(path string, err error) {
 		if err != nil {

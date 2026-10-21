@@ -454,3 +454,35 @@ func TestTurningTheVPNOnAsksNothing(t *testing.T) {
 		t.Fatalf("endpoint %q", st.Endpoint)
 	}
 }
+
+func TestAnInterfaceFoundDownIsBroughtUpAgain(t *testing.T) {
+	f := newFixture(t)
+	f.enable(t)
+	// The machine rebooted: the interface is gone.
+	os.RemoveAll(filepath.Join(f.srv.SysNetDir, "mw0"))
+	f.rec.Reset()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { f.vpn.Keep(ctx, time.Hour); close(done) }()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		up := false
+		for _, l := range f.rec.Lines() {
+			if strings.HasPrefix(l, "wg-quick up") {
+				up = true
+			}
+		}
+		if up {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("not brought up: %v", f.rec.Lines())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if len(eventsOf(f.bus, "vpn.up")) != 1 {
+		t.Fatal("no vpn.up event")
+	}
+}

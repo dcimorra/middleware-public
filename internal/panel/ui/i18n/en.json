@@ -821,6 +821,7 @@
   "modules.needHelp.agent-gemini.api_key": "Passed to the CLI as GEMINI_API_KEY. Leave empty and sign in above to use your Google account.",
   "modules.need.agent-gemini.bin": "Binary",
   "modules.needHelp.agent-gemini.bin": "Path to the gemini executable. Empty: the one this installation keeps under modules/node, installed and updated for you.",
+  "vpn.down": "The interface is down: devices connect to nothing, and with their DNS pointing here they lose every name until they disconnect. The house tries to bring it up every 30 seconds; see Events (vpn.down) for why it cannot.",
   "nav.house": "House agent",
   "house.sub": "An agent working on the installation itself: its settings, its tasks, new sites. Existing sites are each their own conversation's.",
   "chat.queue": "Queue",
