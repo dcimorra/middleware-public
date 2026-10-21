@@ -56,9 +56,9 @@ func (m *Module) Description() string {
 
 func (m *Module) Needs() []modules.Need {
 	return []modules.Need{
-		{Key: "token", Label: "API token", Secret: true, Help: "An API token with Zone:DNS:Edit on the zones to manage and Account:Cloudflare Tunnel:Edit for routes. Created at dash.cloudflare.com/profile/api-tokens."},
+		{Key: "token", Label: "API token", Secret: true, Help: "An API token with Zone:DNS:Edit on the zones to manage, and Account:Cloudflare Tunnel:Edit if a tunnel is used. Created at dash.cloudflare.com/profile/api-tokens."},
 		{Key: "account_id", Label: "Account id", Optional: true, Help: "Found when empty, if the token sees exactly one account."},
-		{Key: "tunnel_id", Label: "Tunnel id", Optional: true, Help: "Found when empty, if the account has exactly one tunnel. Leave empty to manage DNS only."},
+		{Key: "tunnel_id", Label: "Tunnel id", Optional: true, Help: "The tunnel this server runs, to publish through it. Empty is DNS only: sites are reached on 80 and 443. Never taken by itself: a tunnel of another server would split its traffic with this one."},
 	}
 }
 
@@ -146,23 +146,25 @@ func (m *Module) Verify(ctx context.Context, cfg modules.Config) []modules.Line 
 		}
 	}
 
+	// A tunnel is used only when chosen. Taking the account's only one by
+	// itself started its connector here, and a tunnel that is another
+	// server's then splits that server's traffic with this one: nobody
+	// asked for that, and nothing would say it was happening. Without a
+	// tunnel id the module is DNS only, which is also what a house that
+	// serves on 80 and 443 wants.
 	if c.AccountID != "" && c.TunnelID == "" {
 		tunnels, err := c.Tunnels(ctx)
 		switch {
 		case err != nil:
-			lines = append(lines, modules.Fail("cannot list tunnels (Account:Cloudflare Tunnel:Read is missing, or set tunnel_id): "+err.Error()))
-		case len(tunnels) == 1:
-			c.TunnelID = tunnels[0].ID
-			cfg["tunnel_id"] = tunnels[0].ID
-			lines = append(lines, modules.OK(fmt.Sprintf("found tunnel %s (%s)", tunnels[0].Name, tunnels[0].ID)))
+			lines = append(lines, modules.Skip("no tunnel chosen: DNS only (the tunnels could not be listed: "+err.Error()+")"))
 		case len(tunnels) == 0:
-			lines = append(lines, modules.Skip("no tunnel in this account: DNS only until one exists and tunnel_id is set"))
+			lines = append(lines, modules.Skip("no tunnel chosen: DNS only. The account has no tunnel; create one in Cloudflare and set tunnel_id to route through it"))
 		default:
 			names := make([]string, 0, len(tunnels))
 			for _, t := range tunnels {
 				names = append(names, t.Name+" ("+t.ID+")")
 			}
-			lines = append(lines, modules.Fail("the account has "+fmt.Sprint(len(tunnels))+" tunnels, set tunnel_id to one of: "+strings.Join(names, ", ")))
+			lines = append(lines, modules.Skip("no tunnel chosen: DNS only. To route through a tunnel, set tunnel_id to one that is this server's: "+strings.Join(names, ", ")))
 		}
 	}
 

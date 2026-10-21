@@ -153,14 +153,24 @@ func TestVerifyReportsOneLinePerPermissionAndNamesWhatItDoesNotProbe(t *testing.
 	f := newFakeAPI()
 	defer f.srv.Close()
 	m, _ := newModule(t, f)
-	lines := m.Verify(context.Background(), modules.Config{"token": "good-token"})
+	// The account's only tunnel is named, never taken: it may be another
+	// server's.
+	cfg := modules.Config{"token": "good-token"}
+	lines := m.Verify(context.Background(), cfg)
 	text := lineTexts(lines)
+	if cfg["tunnel_id"] != "" {
+		t.Fatalf("a tunnel was taken by itself: %v", cfg)
+	}
+	if !strings.Contains(text, "[skip] no tunnel chosen: DNS only. To route through a tunnel, set tunnel_id to one that is this server's: house (tun1)") {
+		t.Fatalf("the tunnels were not offered:\n%s", text)
+	}
+	lines = m.Verify(context.Background(), modules.Config{"token": "good-token", "tunnel_id": "tun1"})
+	text = lineTexts(lines)
 	for _, want := range []string{
 		"[ok] token is valid",
 		"[ok] can list zones: 2 (example.com, shop.example.com)",
 		"[ok] can read DNS records of example.com",
 		"[ok] found account Main (acct1)",
-		"[ok] found tunnel house (tun1)",
 		"[ok] can reach tunnel tun1 and read its 1 ingress rules",
 		"[skip] write permissions",
 	} {
@@ -204,7 +214,7 @@ func TestAWrongTokenFailsOnTheFirstLine(t *testing.T) {
 	}
 }
 
-func TestEnableInstallsTheConnectorAndSavesTheDiscoveredIds(t *testing.T) {
+func TestEnableInstallsTheConnectorOfTheChosenTunnelAndSavesTheAccount(t *testing.T) {
 	f := newFakeAPI()
 	defer f.srv.Close()
 	release := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -221,7 +231,7 @@ func TestEnableInstallsTheConnectorAndSavesTheDiscoveredIds(t *testing.T) {
 
 	m, mgr := newModule(t, f)
 	var steps []string
-	lines, err := mgr.Enable(context.Background(), Key, modules.Config{"token": "good-token"}, func(s string) { steps = append(steps, s) })
+	lines, err := mgr.Enable(context.Background(), Key, modules.Config{"token": "good-token", "tunnel_id": "tun1"}, func(s string) { steps = append(steps, s) })
 	if err != nil {
 		t.Fatalf("%v\n%s", err, lineTexts(lines))
 	}
@@ -262,7 +272,7 @@ func TestWithoutATunnelTheModuleIsDNSOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, lineTexts(lines))
 	}
-	if !strings.Contains(lineTexts(lines), "[skip] no tunnel in this account") {
+	if !strings.Contains(lineTexts(lines), "[skip] no tunnel chosen: DNS only. The account has no tunnel") {
 		t.Fatalf("the absence of a tunnel must be said:\n%s", lineTexts(lines))
 	}
 	if _, err := os.Stat(filepath.Join(mgr.Root(), "modules", "bin", BinaryName)); err == nil {
