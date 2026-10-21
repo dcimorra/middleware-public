@@ -32,6 +32,9 @@ type Params struct {
 	Domain string
 	// Door is how that name is reached: "ports" (80/443) or "tunnel".
 	Door string
+	// Browser is "yes" to install a headless Chromium when there is none
+	// (for the site pictures), "no" or empty to leave it.
+	Browser string
 	// RunDir holds the helper socket; created by tmpfiles.d on boot.
 	RunDir string
 	// HelperSocket is the helper's unix socket path.

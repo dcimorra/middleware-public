@@ -12,6 +12,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/installer"
 	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/settings"
+	"github.com/dcimorra/middleware-public/internal/shots"
 )
 
 func init() {
@@ -38,6 +39,7 @@ func installParams(fs *flag.FlagSet, args []string) (installer.Params, error) {
 	installFlags(fs, &p)
 	noHelper := fs.Bool("no-helper", false, "do not install the privileged helper (firewall, vpn and sysctl stay unavailable)")
 	fs.StringVar(&p.Domain, "domain", os.Getenv("MIDDLEWARE_DOMAIN"), "the panel's domain (asked when there is a terminal; MIDDLEWARE_DOMAIN works too)")
+	fs.StringVar(&p.Browser, "browser", os.Getenv("MIDDLEWARE_BROWSER"), "yes installs a headless Chromium for the site pictures when there is none (asked when there is a terminal)")
 	fs.StringVar(&p.Door, "door", os.Getenv("MIDDLEWARE_DOOR"), "how the panel's domain is reached: ports (80/443) or tunnel (asked when there is a terminal; MIDDLEWARE_DOOR works too)")
 	if err := fs.Parse(args); err != nil {
 		return p, err
@@ -106,6 +108,17 @@ func installCmd(args []string) error {
 	if p.Door == "" {
 		p.Door = "ports"
 	}
+	// Asked only when there is none: an installed browser (the system's,
+	// Playwright's, an earlier install) is used as it is.
+	if p.Browser == "" && isTerminal(os.Stdin) && shots.FindIn(p.Root) == "" {
+		fmt.Printf("%s\nInstall Chrome for Testing's headless shell (over 100 MB, and the system libraries it loads)? [Y/n] ", installer.BrowserWhy)
+		line, _ := stdin().ReadString('\n')
+		if a := strings.TrimSpace(strings.ToLower(line)); a == "" || a == "y" || a == "yes" {
+			p.Browser = "yes"
+		} else {
+			p.Browser = "no"
+		}
+	}
 	if p.Door != "ports" && p.Door != "tunnel" {
 		return fmt.Errorf("door %q: want ports or tunnel", p.Door)
 	}
@@ -118,7 +131,15 @@ func installCmd(args []string) error {
 	if p.Domain == "" {
 		panel = "none (loopback only)"
 	}
-	fmt.Printf("middleware %s install\n  user   %s\n  group  %s\n  root   %s\n  binary %s\n  helper %v\n  panel  %s\n\n", Version, p.User, p.Group, p.Root, p.Binary, p.Helper, panel)
+	browser := shots.FindIn(p.Root)
+	switch {
+	case browser != "":
+	case p.Browser == "yes":
+		browser = "to install"
+	default:
+		browser = "none (no site pictures)"
+	}
+	fmt.Printf("middleware %s install\n  user    %s\n  group   %s\n  root    %s\n  binary  %s\n  helper  %v\n  panel   %s\n  browser %s\n\n", Version, p.User, p.Group, p.Root, p.Binary, p.Helper, panel, browser)
 	if !*yes && !confirm("Continue? Steps that need root will ask for your sudo password. [y/N] ") {
 		return errors.New("cancelled")
 	}

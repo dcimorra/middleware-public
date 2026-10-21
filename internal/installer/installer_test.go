@@ -48,6 +48,7 @@ func testInstaller(t *testing.T) (*Installer, *Recorder, *bytes.Buffer) {
 		Out:            &out,
 		Source:         src,
 		OperatorExists: func(string) bool { return true },
+		FindBrowser:    func(string) string { return "" },
 	}
 	return in, rec, &out
 }

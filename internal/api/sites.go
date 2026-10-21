@@ -643,7 +643,7 @@ func (s *Server) RegisterShots(sh *shots.Shotter) {
 			return nil, err
 		}
 		if !sh.Available() {
-			return nil, Errorf(http.StatusNotImplemented, "no headless Chromium on this machine (set MIDDLEWARE_CHROME)")
+			return nil, Errorf(http.StatusNotImplemented, "%s", shots.NoBrowser)
 		}
 		sh.Request(domain, true)
 		return OK, nil

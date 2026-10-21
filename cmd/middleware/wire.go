@@ -166,6 +166,7 @@ func buildWire(a *app.App) app.Hook {
 	srv.RegisterWAF(api.WAFOptions{WAF: theWAF, Traffic: theTraffic, Attack: theAttack})
 	srv.RegisterSecurity(api.SecurityOptions{Door: theSecurity, Country: edgeCountry})
 	w.shots = shots.New(shots.Options{
+		Root:    a.Root,
 		DataDir: dataDir(a),
 		Bus:     a.Bus,
 		Bare:    a.Proxy,

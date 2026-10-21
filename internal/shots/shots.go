@@ -30,6 +30,9 @@ import (
 	"github.com/dcimorra/middleware-public/internal/events"
 )
 
+// NoBrowser says what to do when there is no browser.
+const NoBrowser = "no headless Chromium on this machine: run the installer again and answer yes to the browser (middleware install --browser yes), or set MIDDLEWARE_CHROME"
+
 // Refresh is how often a picture is renewed while the panel is watched.
 const Refresh = 30 * time.Minute
 
@@ -48,13 +51,19 @@ type Options struct {
 	Shootable func(domain string) bool
 	// Domains lists what may be photographed.
 	Domains func() []string
-	// Binary is the browser; empty finds one (see Find).
+	// Binary is the browser; empty finds one (see FindIn), and keeps
+	// looking: a browser the installer puts there later is used without
+	// a restart.
 	Binary string
+	// Root is the installation, where the installer puts its browser.
+	Root string
 }
 
 // Shotter takes the pictures.
 type Shotter struct {
 	opts    Options
+	binMu   sync.Mutex
+	binary  string
 	queue   chan req
 	mu      sync.Mutex
 	pending map[string]bool
@@ -68,17 +77,42 @@ type req struct {
 
 // New builds a shotter; Run starts it.
 func New(opts Options) *Shotter {
-	if opts.Binary == "" {
-		opts.Binary = Find()
-	}
 	if opts.Bus == nil {
 		opts.Bus = events.New("")
 	}
-	return &Shotter{opts: opts, queue: make(chan req, 256), pending: map[string]bool{}}
+	return &Shotter{opts: opts, binary: opts.Binary, queue: make(chan req, 256), pending: map[string]bool{}}
+}
+
+// browser is the browser to use, looked for again while there is none.
+func (s *Shotter) browser() string {
+	s.binMu.Lock()
+	defer s.binMu.Unlock()
+	if s.binary == "" {
+		s.binary = FindIn(s.opts.Root)
+	}
+	return s.binary
 }
 
 // Available says whether there is a browser to take pictures with.
-func (s *Shotter) Available() bool { return s.opts.Binary != "" }
+func (s *Shotter) Available() bool { return s.browser() != "" }
+
+// BrowserDir is where the installer puts Chrome for Testing's headless
+// shell, inside the installation: no system path, nothing of root's.
+func BrowserDir(root string) string { return filepath.Join(root, "modules", "chromium") }
+
+// FindIn is Find with the installer's browser looked for first.
+func FindIn(root string) string {
+	if root != "" {
+		matches, _ := filepath.Glob(filepath.Join(BrowserDir(root), "chrome-headless-shell-linux*", "chrome-headless-shell"))
+		sort.Strings(matches)
+		for i := len(matches) - 1; i >= 0; i-- {
+			if exists(matches[i]) {
+				return matches[i]
+			}
+		}
+	}
+	return Find()
+}
 
 // Find looks for a headless Chromium: MIDDLEWARE_CHROME, the newest one
 // Playwright installed (its headless shell is the cheapest), then the
@@ -152,8 +186,7 @@ func (s *Shotter) Request(domain string, force bool) {
 // Run takes queued pictures one at a time and renews them while watched.
 func (s *Shotter) Run(ctx context.Context) {
 	if !s.Available() {
-		s.opts.Bus.Emit(events.Event{Type: "shots.off", Actor: "engine", Level: "warn", Message: "no headless Chromium found (set MIDDLEWARE_CHROME): the panel shows no site pictures"})
-		return
+		s.opts.Bus.Emit(events.Event{Type: "shots.off", Actor: "engine", Level: "warn", Message: NoBrowser + ": the panel shows no site pictures"})
 	}
 	t := time.NewTicker(5 * time.Minute)
 	defer t.Stop()
@@ -196,7 +229,11 @@ func (s *Shotter) capture(ctx context.Context, r req) {
 	out := filepath.Join(tmp, "shot.png")
 	cctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, s.opts.Binary,
+	bin := s.browser()
+	if bin == "" {
+		return
+	}
+	cmd := exec.CommandContext(cctx, bin,
 		"--headless", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--hide-scrollbars",
 		"--force-color-profile=srgb", "--user-data-dir="+filepath.Join(tmp, "profile"), "--window-size=1200,750",
 		// Page time, not wall time: reproducible, and long enough for an

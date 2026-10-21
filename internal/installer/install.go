@@ -44,6 +44,10 @@ type Installer struct {
 	// OperatorExists says whether `middleware setup` already ran. The auth
 	// package owns the file; the installer only needs a yes or no.
 	OperatorExists func(root string) bool
+	// FindBrowser looks for a headless Chromium; nil is shots.FindIn.
+	FindBrowser func(root string) string
+	// BrowserPlatform overrides the Chrome for Testing platform (tests).
+	BrowserPlatform string
 
 	// setupOutput is what `middleware setup` printed, shown after the step
 	// lines so the one-time code is the last thing on screen.
@@ -147,6 +151,7 @@ func (in *Installer) Install() (Report, error) {
 		{"system group", in.stepGroup},
 		{"user in group", in.stepUserInGroup},
 		{"root directory", in.stepRootDir},
+		{"headless browser", in.stepBrowser},
 		{"binary", func() (bool, string, error) {
 			c, d, err := in.stepBinary()
 			binaryChanged = c

@@ -177,6 +177,15 @@ the chosen one is opened; new sites go through it too.
   server's tunnel (one is never picked by itself: an account can hold
   other servers' tunnels). Until then, sign in through SSH as below.
 
+The site pictures in the panel need a headless Chromium. When the
+machine has none (the system's, Playwright's or an earlier install), the
+installer says so and asks whether to install one (`--browser yes`, or
+`MIDDLEWARE_BROWSER=yes`): Chrome for Testing's headless shell from
+Google, amd64 or arm64, unpacked under `modules/chromium/` of the root,
+plus the system libraries its own `deb.deps`/`rpm.deps` lists (Alpine and
+Arch get their `chromium` package). One already there is never installed
+again, and the running service picks a new one up without a restart.
+
 With the cloudflare module on, the panel's name is published like a
 site's: its DNS record, and its tunnel route on the tunnel door. Without
 it, the name is marked to point by hand. `middleware setup --domain <name>
