@@ -129,11 +129,11 @@ type peer struct {
 type VPN struct {
 	// loaded is state.json's time when last read or written (freshLocked).
 	loaded time.Time
-	opts  Options
-	dir   string
-	mu    sync.Mutex
-	state state
-	peers []peer
+	opts   Options
+	dir    string
+	mu     sync.Mutex
+	state  state
+	peers  []peer
 }
 
 // New loads the module's state from disk. A missing state is a module that
