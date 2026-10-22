@@ -358,7 +358,13 @@ func writeCreds(home, creds string) error {
 // audit after the turn. Paths in a shell command are still only caught by
 // the audit: the CLI has no rule that matches a path inside a command.
 func writeJail(home string, j agent.Jail) error {
-	dir := filepath.Join(home, ".gemini")
+	return WriteExclusions(filepath.Join(home, ".gemini"), j)
+}
+
+// WriteExclusions writes the jail's commands as excluded shell commands in
+// settings.json under dir: Gemini CLI's, and Qwen Code's, which forked it
+// and reads the same keys from ~/.qwen.
+func WriteExclusions(dir string, j agent.Jail) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}

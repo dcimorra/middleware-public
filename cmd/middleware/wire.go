@@ -89,7 +89,7 @@ var (
 	agentOpen   *agents.OpenCode
 	// agentVendors are the vendors' own modules (DeepSeek, Z.AI…), each
 	// an agent of the chat, run by OpenCode.
-	agentVendors []*agents.OpenCode
+	agentVendors []*agents.VendorModule
 )
 
 // theVPN is the VPN module, for the inbound hook's VPN door.

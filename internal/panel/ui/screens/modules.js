@@ -50,7 +50,7 @@ export function modulesScreen() {
   const said = (key, fallback) => { const s = t(key); return s === key ? fallback : s; };
 
   // Which command an agent module runs, for the binary line.
-  const AGENT_BIN = { "agent-claude": "claude", "agent-gemini": "gemini", "agent-opencode": "opencode", "agent-openai": "opencode", "agent-deepseek": "opencode", "agent-zai": "opencode", "agent-kimi": "opencode", "agent-qwen": "opencode", "agent-mistral": "opencode", "agent-xai": "opencode" };
+  const AGENT_BIN = { "agent-claude": "claude", "agent-gemini": "gemini", "agent-opencode": "opencode", "agent-openai": "codex", "agent-deepseek": "claude", "agent-zai": "claude", "agent-kimi": "kimi", "agent-qwen": "qwen", "agent-mistral": "vibe", "agent-xai": "grok" };
 
   function card(m, depBy) {
     const inputs = {};

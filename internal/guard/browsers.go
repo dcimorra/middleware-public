@@ -51,11 +51,23 @@ func debugPort(p *Process) int {
 	return 0
 }
 
+// agentComms are the agent CLIs by process name.
+var agentComms = map[string]bool{"claude": true, "gemini": true, "opencode": true, "codex": true, "qwen": true, "kimi": true, "grok": true, "vibe": true, "vibe-rs": true}
+
+func agentPathIn(hay string) bool {
+	for name := range agentComms {
+		if strings.Contains(hay, "/bin/"+name+" ") || strings.HasSuffix(hay, "/bin/"+name) {
+			return true
+		}
+	}
+	return false
+}
+
 // agentOf is the agent CLI process a browser descends from, or 0.
 func agentOf(p *Process, byPID map[int]*Process) int {
 	for depth, q := 0, byPID[p.PPID]; depth < 32 && q != nil; depth, q = depth+1, byPID[q.PPID] {
 		hay := strings.ToLower(q.Comm + " " + strings.Join(q.Cmdline, " "))
-		if q.Comm == "claude" || q.Comm == "gemini" || q.Comm == "opencode" || strings.Contains(hay, "/bin/claude") || strings.Contains(hay, "@anthropic-ai/claude-code") || strings.Contains(hay, "/bin/gemini") || strings.Contains(hay, "/bin/opencode") {
+		if agentComms[q.Comm] || strings.Contains(hay, "@anthropic-ai/claude-code") || strings.Contains(hay, "@openai/codex") || strings.Contains(hay, "@qwen-code/") || strings.Contains(hay, "@moonshot-ai/kimi-code") || agentPathIn(hay) {
 			return q.PID
 		}
 	}

@@ -37,9 +37,6 @@ type OpenCode struct {
 	// CLI is asked for the catalog and the models; the turns run under the
 	// site's HOME, never this one.
 	Home string
-	// vendor, for a vendor's module (vendors.go), is the one provider it
-	// runs, by OpenCode's id; empty is the module that connects any.
-	vendor string
 
 	rmu      sync.Mutex
 	cmu      sync.Mutex
@@ -92,15 +89,8 @@ func NewOpenCode(reg *agent.Registry, home string) *OpenCode {
 	return o
 }
 
-// authOf is the keys a config holds: the providers' map, or, for a
-// vendor's module, its one key under its one provider.
+// authOf is the keys a config holds, one per provider.
 func (o *OpenCode) authOf(cfg modules.Config) map[string]string {
-	if o.vendor != "" {
-		if k := strings.TrimSpace(cfg["api_key"]); k != "" {
-			return map[string]string{o.vendor: k}
-		}
-		return map[string]string{}
-	}
 	return parseAuth(cfg["providers"])
 }
 
@@ -311,9 +301,7 @@ func (o *OpenCode) Verify(ctx context.Context, cfg modules.Config) []modules.Lin
 		}
 	}
 	auth := o.authOf(cfg)
-	if len(auth) == 0 && o.vendor != "" {
-		lines = append(lines, modules.Fail("no API key"))
-	} else if len(auth) == 0 {
+	if len(auth) == 0 {
 		lines = append(lines, modules.Skip("no provider connected yet: connect one below, its models appear in the chat"))
 	} else {
 		ids := make([]string, 0, len(auth))
@@ -328,9 +316,6 @@ func (o *OpenCode) Verify(ctx context.Context, cfg modules.Config) []modules.Lin
 
 // Routes implements modules.Module.
 func (o *OpenCode) Routes() map[string]http.Handler {
-	if o.vendor != "" {
-		return o.vendorRoutes()
-	}
 	return map[string]http.Handler{
 		"GET /{$}":               http.HandlerFunc(o.handleProviders),
 		"GET /providers":         http.HandlerFunc(o.handleProviders),
@@ -345,9 +330,6 @@ func (o *OpenCode) Routes() map[string]http.Handler {
 // SetupRoutes implements modules.Setup: providers are connected before
 // the module is turned on, which is when it has anything to run with.
 func (o *OpenCode) SetupRoutes() []string {
-	if o.vendor != "" {
-		return []string{"POST /binary/sync"}
-	}
 	return []string{"GET /providers", "PUT /providers/{id}", "DELETE /providers/{id}", "POST /models/refresh", "POST /binary/sync", "GET /session"}
 }
 
@@ -495,7 +477,7 @@ func (o *OpenCode) Enable(ctx context.Context, cfg modules.Config) error {
 		return err
 	}
 	o.cmu.Lock()
-	stale := (time.Since(o.modelsAt) > 12*time.Hour || o.vendor != "") && !o.busy
+	stale := time.Since(o.modelsAt) > 12*time.Hour && !o.busy
 	o.cmu.Unlock()
 	if stale && len(o.authOf(cfg)) > 0 {
 		go func() {

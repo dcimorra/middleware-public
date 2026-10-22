@@ -49,6 +49,10 @@ type Package struct {
 	NPM string `json:"npm"`
 	// MinNode is the Node major the package needs.
 	MinNode int `json:"-"`
+	// Binary and PyPI are the other two kinds (kinds.go); NPM is empty
+	// for them.
+	Binary *Binary `json:"-"`
+	PyPI   string  `json:"pypi,omitempty"`
 }
 
 // Packages is the table. A module names its command; this is where the
@@ -59,6 +63,16 @@ var Packages = []Package{
 	// opencode-ai is a launcher; the binary comes in a per-platform
 	// optional dependency npm picks for this machine.
 	{Name: "opencode", NPM: "opencode-ai", MinNode: 20},
+	{Name: "codex", NPM: "@openai/codex", MinNode: 18},
+	{Name: "qwen", NPM: "@qwen-code/qwen-code", MinNode: 20},
+	// Kimi Code wants Node 22.19+; the Node this package fetches is 22.22.
+	{Name: "kimi", NPM: "@moonshot-ai/kimi-code", MinNode: 22},
+	{Name: "grok", Binary: &Binary{
+		Latest: "https://x.ai/cli/stable",
+		URL:    "https://x.ai/cli/grok-{version}-linux-{arch}",
+		Arch:   map[string]string{"amd64": "x86_64", "arm64": "aarch64"},
+	}},
+	{Name: "vibe", PyPI: "mistral-vibe"},
 }
 
 // Node release the installer fetches when the machine has none that will
@@ -169,6 +183,16 @@ func (m *Manager) pkg(name string) (Package, bool) {
 // Version of the managed copy, from its package.json; empty when not
 // installed there.
 func (m *Manager) installedVersion(p Package) string {
+	switch {
+	case p.Binary != nil:
+		raw, err := os.ReadFile(m.binaryVersionPath(p))
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(raw))
+	case p.PyPI != "":
+		return m.uvVersion(p)
+	}
 	raw, err := os.ReadFile(filepath.Join(m.Prefix(), "lib", "node_modules", p.NPM, "package.json"))
 	if err != nil {
 		return ""
@@ -262,6 +286,26 @@ func (m *Manager) install(ctx context.Context, name, want string, progress func(
 	p, ok := m.pkg(name)
 	if !ok {
 		return fmt.Errorf("deps: %q is not a package this installation manages", name)
+	}
+	if p.Binary != nil || p.PyPI != "" {
+		var v string
+		var err error
+		if p.Binary != nil {
+			v, err = m.installBinary(ctx, p, want, progress)
+		} else {
+			v, err = m.installUV(ctx, p, want, progress)
+		}
+		if err != nil {
+			return err
+		}
+		progress(fmt.Sprintf("%s %s installed", p.Name, v))
+		m.mu.Lock()
+		s := m.last[p.Name]
+		s.Version = v
+		m.last[p.Name] = s
+		m.mu.Unlock()
+		m.emit("deps.installed", p.Name, "", p.Name+" "+v+" installed", map[string]any{"version": v})
+		return nil
 	}
 	node, err := m.ensureNode(ctx, p.MinNode, progress)
 	if err != nil {
@@ -522,6 +566,12 @@ func (m *Manager) Check(ctx context.Context, progress func(string)) []Status {
 
 // latest asks npm's registry for the dist-tag, without npm: one GET.
 func (m *Manager) latest(ctx context.Context, p Package) (string, error) {
+	switch {
+	case p.Binary != nil:
+		return m.binaryLatest(ctx, p.Binary)
+	case p.PyPI != "":
+		return m.pypiLatest(ctx, p.PyPI)
+	}
 	url := "https://registry.npmjs.org/-/package/" + p.NPM + "/dist-tags"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

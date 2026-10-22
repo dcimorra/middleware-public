@@ -19,6 +19,15 @@ import (
 
 // Config is the command template.
 type Config struct {
+	// Key is the provider's name in the chat: "claude", or a vendor whose
+	// models Claude Code drives through an Anthropic-compatible API
+	// ("deepseek", "zai").
+	Key string
+	// Env is that vendor's: ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN and
+	// the model names. With it, the subscription and the API key of the
+	// Claude module are never passed: a turn for DeepSeek must not be able
+	// to spend on Anthropic.
+	Env map[string]string
 	// Bin is the executable; "claude" is looked up in PATH.
 	Bin string
 	// ExtraArgs are appended to every invocation, after the fixed ones.
@@ -52,6 +61,9 @@ func New(cfg Config) *Provider {
 	if cfg.Bin == "" {
 		cfg.Bin = "claude"
 	}
+	if cfg.Key == "" {
+		cfg.Key = "claude"
+	}
 	if len(cfg.Models) == 0 {
 		cfg.Models = []string{"sonnet", "opus", "haiku"}
 	}
@@ -66,7 +78,7 @@ func New(cfg Config) *Provider {
 }
 
 // Key implements agent.Provider.
-func (p *Provider) Key() string { return "claude" }
+func (p *Provider) Key() string { return p.cfg.Key }
 
 // Available implements agent.Provider.
 func (p *Provider) Available() (bool, string) {
@@ -183,16 +195,20 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 	for k, v := range req.Env {
 		env[k] = v
 	}
-	if p.cfg.APIKey != "" {
+	if len(p.cfg.Env) > 0 {
+		for k, v := range p.cfg.Env {
+			env[k] = v
+		}
+	} else if p.cfg.APIKey != "" {
 		env["ANTHROPIC_API_KEY"] = p.cfg.APIKey
 	}
 	// In print mode the CLI ends a background subagent after ten minutes
 	// unless told not to wait with a ceiling; V1 lost long agents that way.
 	env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] = "0"
-	if p.cfg.ConfigDir != "" {
+	if p.cfg.ConfigDir != "" && len(p.cfg.Env) == 0 {
 		env["CLAUDE_CONFIG_DIR"] = p.cfg.ConfigDir
 	}
-	if p.cfg.OAuthToken != "" && p.cfg.APIKey == "" {
+	if p.cfg.OAuthToken != "" && p.cfg.APIKey == "" && len(p.cfg.Env) == 0 {
 		env["CLAUDE_CODE_OAUTH_TOKEN"] = p.cfg.OAuthToken
 	}
 	return agent.StartCLIStream(ctx, &parser{}, req.Stream, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req, settingsFile)...)
@@ -220,6 +236,11 @@ type line struct {
 	IsError   bool    `json:"is_error"`
 	Result    string  `json:"result"`
 	Cost      float64 `json:"total_cost_usd"`
+	// Error is where Qwen Code, which prints this same format, puts a
+	// failed turn's reason; Claude Code puts it in Result.
+	Error struct {
+		Message string `json:"message"`
+	} `json:"error"`
 	// ParentToolUseID marks a subagent's messages: the Task call that
 	// started it.
 	ParentToolUseID string `json:"parent_tool_use_id"`
@@ -328,6 +349,9 @@ func (p *parser) Line(raw string) ([]agent.Event, bool) {
 		if l.IsError || (l.Subtype != "" && l.Subtype != "success") {
 			text := l.Result
 			if text == "" {
+				text = l.Error.Message
+			}
+			if text == "" {
 				text = l.Subtype
 			}
 			evs = append(evs, agent.Event{Kind: agent.KindError, Text: text, Cost: l.Cost, SessionID: p.sessionID})
@@ -340,3 +364,7 @@ func (p *parser) Line(raw string) ([]agent.Event, bool) {
 }
 
 func (p *parser) Flush() []agent.Event { return nil }
+
+// NewParser is the stream-json reader, for CLIs that print Claude Code's
+// format (Qwen Code does).
+func NewParser() agent.Parser { return &parser{} }

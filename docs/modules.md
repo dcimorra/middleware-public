@@ -173,15 +173,39 @@ too, is left out because it only answers its own app.
 
 ## agent-openai, agent-deepseek, agent-zai, agent-kimi, agent-qwen, agent-mistral, agent-xai
 
-The best-known model makers, each a module of its own: a card, an API key,
-its models, and an agent of the chat under the vendor's name (`openai`,
-`deepseek`, `zai`, `kimi`, `qwen`, `mistral`, `xai`). None of them ships
-an agent that runs on a server the way Claude Code does, so the turns are
-OpenCode's, fixed to that one vendor: the same tools and jail as the
-OpenCode module, a different model. The models are read with the key
-(`opencode models --refresh`, whose names are the ones a turn accepts)
-when the module is turned on. Turned off, the agent leaves the chat.
-Every other provider is in the OpenCode module's catalog.
+The best-known model makers, each a module of its own: a card, an API
+key, its models, and an agent of the chat under the vendor's name. Each
+runs the vendor's own agent when it has one that works detached, the way
+`claude -p` does; DeepSeek and Z.AI have none and document Claude Code
+against their Anthropic-compatible APIs, so that is what runs them.
+
+| Module | Agent that runs the turns | How it is installed | Key |
+| --- | --- | --- | --- |
+| agent-openai | Codex CLI, `codex exec --json` | npm `@openai/codex` | `CODEX_API_KEY` |
+| agent-qwen | Qwen Code, `qwen --output-format stream-json` | npm `@qwen-code/qwen-code` | `OPENAI_API_KEY` + `OPENAI_BASE_URL` (QwenCloud, Coding Plan, China) |
+| agent-kimi | Kimi Code, `kimi -p --output-format stream-json` | npm `@moonshot-ai/kimi-code` (Node 22.19+) | `KIMI_API_KEY`, named in a per-turn `config.toml` (`api_key_env`) |
+| agent-xai | Grok Build, `grok -p --output-format streaming-json` | binary from `x.ai/cli` by version (no checksum published; the sha256 is recorded in `deps.downloaded`) | `XAI_API_KEY` |
+| agent-mistral | Vibe, `vibe -p --output streaming` | `uv tool install mistral-vibe` (uv pinned with its sha256; it brings Python 3.12 when the machine has none) | `MISTRAL_API_KEY` |
+| agent-deepseek | Claude Code | npm `@anthropic-ai/claude-code` | `ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic`, `ANTHROPIC_AUTH_TOKEN` |
+| agent-zai | Claude Code | npm `@anthropic-ai/claude-code` | `ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic`, `ANTHROPIC_AUTH_TOKEN` |
+
+The key always travels in the environment of the turn, never in a file
+under the site's HOME. DeepSeek and Z.AI never get the Claude module's
+subscription or key: a turn for them cannot spend on Anthropic. The
+models are read from the vendor's `/models` with the key when the module
+is turned on, filtered to the ones that chat (Mistral's Vibe runs the
+model it is built around; Z.AI has no such list). Turned off, the agent
+leaves the chat.
+
+The jail, per agent: Codex runs in its own sandbox (workspace-write, or
+read-only for a level that cannot write); Kimi Code and Grok Build get it
+as their permission rules (paths denied outside the folder, the jail's
+commands denied); Qwen Code as Gemini does (excluded shell commands in
+its settings, its file tools confined to the folder); Vibe by the tools a
+level allows. What none of them can express is caught by the audit after
+the turn, as for every agent. Kimi Code prints no session id, so each
+conversation has its own data directory and a turn resumes with
+`--continue`.
 
 ## vpn
 
