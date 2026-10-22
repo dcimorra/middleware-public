@@ -141,9 +141,9 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
 .ico.muted { color: var(--text-3); }
 
 /* ---------- shell ---------- */
-.app { min-height: 100vh; display: grid; grid-template-rows: var(--topbar) 1fr; grid-template-columns: var(--sidebar) 1fr;
+.app { min-height: 100vh; display: grid; grid-template-rows: var(--topbar) 1fr; grid-template-columns: var(--sidebar) minmax(0, 1fr);
   grid-template-areas: "top top" "side main"; }
-.app[data-state="auth"], .app[data-state="loading"] { grid-template-columns: 1fr; grid-template-areas: "top" "main"; }
+.app[data-state="auth"], .app[data-state="loading"] { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "main"; }
 .topbar {
   grid-area: top; position: sticky; top: 0; z-index: 20;
   display: flex; align-items: center; gap: 8px; padding: 0 var(--gutter);
@@ -189,7 +189,10 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
 .prose { max-width: 72ch; }
 
 @media (max-width: 860px) {
-  .app, .app[data-state] { grid-template-columns: 1fr; grid-template-areas: "top" "main"; }
+  /* minmax(0, …), not 1fr: a column of 1fr is at least as wide as its
+     widest content, and the node selector with a long name made the whole
+     page wider than the phone. */
+  .app, .app[data-state] { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "main"; }
   .topbar .menu-btn { display: inline-flex; }
   .sidebar {
     position: fixed; left: 0; top: var(--topbar); z-index: 30; width: min(280px, 85vw);
@@ -741,7 +744,8 @@ svg.dash-spark .mem { stroke: var(--warn); stroke-dasharray: 3 2; }
   /* The node's name gets the room that is left, and is cut with an
      ellipsis rather than to two letters. */
   .node-pick { flex: 1 1 auto; min-width: 0; display: flex; justify-content: flex-end; }
-  .node-pick select { max-width: 100%; min-width: 0; width: auto; text-overflow: ellipsis; }
+  .node-pick select { max-width: 100%; min-width: 0; width: 100%; text-overflow: ellipsis; }
+  .topbar { min-width: 0; overflow: hidden; }
   /* "live" is the dot alone: the word wrapped onto two lines. */
   .stream-state { font-size: 0; gap: 0; padding: 6px; margin-right: 0; }
 }
