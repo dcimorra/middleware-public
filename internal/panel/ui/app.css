@@ -730,3 +730,30 @@ svg.dash-spark .mem { stroke: var(--warn); stroke-dasharray: 3 2; }
 .oc-model-list { max-height: 220px; overflow: auto; margin: 8px 0 0; padding-left: 18px; }
 .oc-models summary { cursor: pointer; }
 .model-input { min-width: 220px; max-width: 320px; }
+
+/* ---------- phones: the top bar edge to edge, and no zoom on a field ---------- */
+@media (max-width: 860px) {
+  /* The bar's own gutter was the desktop's 24px plus the notch's inset:
+     on a phone it left the bar's contents in a narrow middle strip. */
+  .topbar { gap: 4px; padding: 0 max(8px, env(safe-area-inset-right)) 0 max(6px, env(safe-area-inset-left)); }
+  .topbar .icon-btn { width: 36px; height: 36px; }
+  .brand { gap: 6px; }
+  /* The node's name gets the room that is left, and is cut with an
+     ellipsis rather than to two letters. */
+  .node-pick { flex: 1 1 auto; min-width: 0; display: flex; justify-content: flex-end; }
+  .node-pick select { max-width: 100%; min-width: 0; width: auto; text-overflow: ellipsis; }
+  /* "live" is the dot alone: the word wrapped onto two lines. */
+  .stream-state { font-size: 0; gap: 0; padding: 6px; margin-right: 0; }
+}
+@media (max-width: 420px) {
+  .brand span { display: none; }
+}
+/* iOS zooms the page into any field whose text is under 16px and leaves
+   it zoomed: every field on a touch screen is 16px. */
+@media (pointer: coarse), (max-width: 860px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea, textarea.mono, .node-pick select { font-size: 16px; }
+}
+.oc-popular { display: flex; flex-wrap: wrap; gap: 6px; }
+.oc-popular .chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.oc-popular .chip:hover { border-color: var(--accent); }
+.oc-popular .chip.on { border-color: var(--ok); color: var(--ok); }

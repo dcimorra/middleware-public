@@ -14,6 +14,10 @@ import { icon } from "../lib/icons.js";
 
 const BASE = "/modules/agent-opencode";
 
+// The best known, offered as one tap; the catalog's other two hundred are
+// one search away. Ids as OpenCode's catalog names them.
+const POPULAR = ["anthropic", "openai", "google", "deepseek", "zai", "zai-coding-plan", "moonshotai", "alibaba", "mistral", "xai", "minimax", "groq", "openrouter", "opencode", "togetherai", "fireworks-ai", "cerebras", "perplexity"];
+
 export function openCodeProviders() {
   const el = h("div", { class: "oc-providers" });
   let state = null;
@@ -75,7 +79,20 @@ export function openCodeProviders() {
         toast(t("oc.connected", { name: c.name }), "ok");
       } catch (e) { toastError(e); } finally { add.classList.remove("busy"); }
     });
+    const connectedIDs = new Set((s.connected || []).map((c) => c.id));
+    const byID = new Map(cat.map((c) => [c.id, c]));
+    const chips = h("div", { class: "oc-popular" }, ...POPULAR.map((id) => {
+      const c = byID.get(id) || { id, name: id };
+      const chip = h("button", { type: "button", class: "chip" + (connectedIDs.has(id) ? " on" : ""), title: c.id }, connectedIDs.has(id) ? icon("check", { size: 14 }) : null, c.name);
+      chip.addEventListener("click", () => {
+        pick.value = c.name + " · " + c.id;
+        pick.dispatchEvent(new Event("input"));
+        key.focus();
+      });
+      return chip;
+    }));
     el.append(h("div", { class: "oc-add" },
+      h("div", { class: "field" }, h("label", null, t("oc.popular")), chips),
       field(t("oc.provider"), pick, cat.length ? t("oc.providerHint", { n: cat.length }) : t("oc.noCatalog")), dl,
       h("div", { class: "field" }, h("label", null, t("oc.key")), key, envHint),
       h("div", { class: "form-actions" }, add)));
