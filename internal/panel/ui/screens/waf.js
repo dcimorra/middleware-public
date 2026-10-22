@@ -18,7 +18,8 @@ export function wafScreen() {
   const trafficCard = h("div", { class: "card" });
   const policyCard = h("div", { class: "card" });
   const blockedCard = h("div", { class: "card pad0" });
-  p.body.append(trafficCard, policyCard, blockedCard);
+  const banCard = h("div", { class: "card" });
+  p.body.append(trafficCard, policyCard, banCard, blockedCard);
   const subs = [];
   let timer = null;
 
@@ -159,9 +160,56 @@ export function wafScreen() {
     if (done) { toast(t("waf.blockedNow", { ip: ip.value.trim() }), "ok"); refresh(); }
   }
 
+  // ---- bans (fail2ban) ----
+  // The settings of the bans and who is being watched: addresses with
+  // strikes inside the window, not banned yet.
+  function banForm(global, ban, watched) {
+    const on = toggle(t("ban.on"), { checked: !ban.off });
+    const num = (v, min, max) => h("input", { type: "number", min: String(min), max: String(max), step: "1", inputmode: "numeric", value: String(v) });
+    const retry = num(ban.max_retry, 1, 1000), find = num(ban.find_minutes, 1, 10080), first = num(ban.ban_minutes, 1, 527040);
+    const factor = num(ban.factor, 1, 100), ceiling = num(ban.max_ban_days, 1, 366);
+    const save = h("button", { type: "submit", class: "btn primary" }, t("common.save"));
+    const err = h("div", { class: "error-box", hidden: true });
+    const form = h("form", { novalidate: true },
+      h("div", { class: "field" }, on.el, h("div", { class: "hint" }, t("ban.onHint"))),
+      h("div", { class: "form-row" },
+        field(t("ban.retry"), retry), field(t("ban.find"), find), field(t("ban.first"), first),
+        field(t("ban.factor"), factor, t("ban.factorHint")), field(t("ban.ceiling"), ceiling)),
+      h("p", { class: "small muted" }, t("ban.what")),
+      err, h("div", { class: "form-actions" }, save));
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const ints = [retry, find, first, factor, ceiling].map((i) => Number(i.value));
+      if (ints.some((n) => !Number.isInteger(n) || n < 1)) { err.textContent = t("ban.bad"); err.hidden = false; return; }
+      const [max_retry, find_minutes, ban_minutes, f, max_ban_days] = ints;
+      save.classList.add("busy");
+      err.hidden = true;
+      try {
+        await api.put("/waf", { ...global, ban: { off: !on.input.checked, max_retry, find_minutes, ban_minutes, factor: f, max_ban_days } });
+        toast(t("ban.saved"), "ok");
+      } catch (ex) { err.textContent = ex.message; err.hidden = false; }
+      finally { save.classList.remove("busy"); }
+    });
+    on.input.addEventListener("change", () => form.requestSubmit());
+    const rows = (watched || []).map((w) => {
+      const last = (w.offenses || [])[w.offenses.length - 1] || {};
+      return h("tr", null,
+        cell(h("span", { class: "mono" }, w.ip), null, "primary"),
+        cell(`${w.score} / ${ban.max_retry}`, t("ban.score"), "num"),
+        cell(h("span", { class: "small" }, last.reason || "", " ", h("span", { class: "mono muted" }, (last.host || "") + (last.path || ""))), t("ban.last")),
+        cell(h("span", { class: "small muted", title: fmtTime(w.first) }, fmtAgo(w.first, t)), t("ban.since")),
+        cell(blockQuick(w.ip)));
+    });
+    return [h("h2", null, t("ban.title")), h("p", { class: "small muted" }, t("ban.sub")), form,
+      h("h3", null, t("ban.watched")),
+      rows.length ? table([{ label: t("waf.address") }, { label: t("ban.score"), class: "num" }, { label: t("ban.last") }, { label: t("ban.since") }, { label: "" }], rows, { responsive: true }).el
+        : h("p", { class: "small muted" }, t("ban.none"))];
+  }
+
   async function refresh() {
     const d = await api.get("/waf");
     clear(policyCard).append(h("h2", null, t("waf.policy")), h("p", { class: "small muted" }, t("waf.policyHint")), policyForm(d.global || {}));
+    clear(banCard).append(...banForm(d.global || {}, d.ban || {}, d.watched).filter(Boolean));
     clear(blockedCard).append(...[blockedTable(d.blocked, d.recent)].flat(Infinity).filter(Boolean));
     return null;
   }

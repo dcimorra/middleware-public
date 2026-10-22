@@ -20,6 +20,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/engine"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/guard"
+	"github.com/dcimorra/middleware-public/internal/helper"
 	"github.com/dcimorra/middleware-public/internal/proxy"
 	"github.com/dcimorra/middleware-public/internal/security"
 	"github.com/dcimorra/middleware-public/internal/settings"
@@ -326,6 +327,13 @@ func wafCommand(args []string) error {
 		if err := w.Unblock(ip); err != nil {
 			return err
 		}
+		// The kernel's copy too: the service only rereads the file, and
+		// this is the way out of a ban for whoever is behind it.
+		hctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := helper.Dial("").FirewallUnblock(hctx, ip.String()); err != nil && !errors.Is(err, helper.ErrUnavailable) {
+			fmt.Printf("the kernel's block could not be lifted: %v\n", err)
+		}
+		cancel()
 		fmt.Printf("unblocked %s\n", ip)
 		return nil
 	case "list":

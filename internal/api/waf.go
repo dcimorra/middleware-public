@@ -46,7 +46,9 @@ func (s *Server) RegisterWAF(o WAFOptions) {
 		if o.Attack != nil {
 			att["counts"] = o.Attack.Counts()
 		}
-		return map[string]any{"global": wf.Policy(), "blocked": blocked, "recent": recent, "attack": att}, nil
+		pol := wf.Policy()
+		return map[string]any{"global": pol, "blocked": blocked, "recent": recent, "attack": att,
+			"ban": pol.Ban.Effective(), "watched": wf.Watched()}, nil
 	})
 	s.Handle("PUT", p, "Replace the global policy", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		wf, err := need()

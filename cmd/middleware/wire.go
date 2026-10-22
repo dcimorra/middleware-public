@@ -149,6 +149,7 @@ type wireHook struct {
 	fixer     *autofix.Fixer
 	updater   *update.Updater
 	mesh      *nodes.Mesh
+	fw        *firewall.Firewall
 }
 
 func buildWire(a *app.App) app.Hook {
@@ -375,6 +376,30 @@ func buildWire(a *app.App) app.Hook {
 	fw := firewall.New(helper.Dial(""), a.Bus)
 	if theWAF != nil {
 		theWAF.OnBlock = func(ip net.IP, d time.Duration) { _ = fw.OnBlock(ip.String(), d) }
+		theWAF.OnUnblock = func(ip net.IP) { _ = fw.Unblock(ip.String()) }
+		w.fw = fw
+		// The panel's logins feed the bans: a wrong password is a strike,
+		// a right one makes its address trusted for a week, so the
+		// operator's typos never lock them out.
+		go func() {
+			ch, stop := a.Bus.Subscribe()
+			defer stop()
+			for e := range ch {
+				if e.Type != "auth.login_failed" && e.Type != "auth.login" {
+					continue
+				}
+				ipStr, _ := e.Data["ip"].(string)
+				ip := net.ParseIP(ipStr)
+				if ip == nil {
+					continue
+				}
+				if e.Type == "auth.login" {
+					theWAF.Trust(ip, 7*24*time.Hour)
+				} else {
+					theWAF.Strike(ip, 1, "panel login failed", a.Proxy.PanelDomain(), "/login")
+				}
+			}
+		}()
 	}
 	return w
 }
@@ -402,6 +427,17 @@ func (w *wireHook) Run(ctx context.Context, a *app.App) error {
 	}
 	if w.publisher != nil {
 		go w.publisher.Run(ctx)
+	}
+	// The kernel forgets its blocks on a reboot; the list does not. What
+	// is still blocked goes back into the kernel at start.
+	if w.fw != nil && theWAF != nil && hc.Available() {
+		go func() {
+			for _, e := range theWAF.Blocked() {
+				if left := time.Until(e.Until); left > time.Second {
+					_ = w.fw.Block(e.IP, left, e.Reason)
+				}
+			}
+		}()
 	}
 	if w.mesh != nil {
 		go w.mesh.Run(ctx)

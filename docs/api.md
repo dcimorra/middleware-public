@@ -372,7 +372,7 @@ through the house takes names off the internet.
 
 | method | path | result |
 | --- | --- | --- |
-| GET | `/waf` | → `{global: policy, blocked: [{ip, until, reason, strikes}], recent: [{ip, hits, status}], attack: {global: rules, counts: {domain or "panel": {served, solved}}}}` |
+| GET | `/waf` | → `{global: policy, blocked: [{ip, until, reason, strikes}], recent: [{ip, hits, status}], attack: {global: rules, counts: {domain or "panel": {served, solved}}}, ban: {off, max_retry, find_minutes, ban_minutes, factor, max_ban_days}, watched: [{ip, score, first, offenses: [{at, reason, host, path}]}]}`; `policy.ban` sets the bans (defaults 5 attempts in 10 minutes, 60 minutes ×4 per repeat, at most 30 days) |
 | PUT | `/waf` | global policy → policy (400 with the field when it does not validate) |
 | POST | `/waf/block` | `{ip, duration?: "1h", reason?}` → `{ok}` (default one day; pushed to the kernel through the helper when it runs) |
 | DELETE | `/waf/block/{ip}` | → `{ok}` |

@@ -63,6 +63,8 @@ type Policy struct {
 	Allow []string `json:"allow,omitempty"`
 	// Trips is how many rate-limit hits in one minute block an address.
 	Trips int `json:"trips,omitempty"`
+	// Ban is the fail2ban part (fail2ban.go): on unless Off.
+	Ban *BanPolicy `json:"ban,omitempty"`
 }
 
 // DefaultPolicy is what a fresh installation runs with: generous enough for
@@ -94,6 +96,9 @@ func (p Policy) Validate() error {
 		if len(c) != 2 {
 			return fmt.Errorf("deny_countries: %q is not a two-letter code", c)
 		}
+	}
+	if err := p.Ban.Validate(); err != nil {
+		return fmt.Errorf("ban.%w", err)
 	}
 	if err := p.Attack.Validate(); err != nil {
 		return fmt.Errorf("attack.%w", err)
@@ -161,6 +166,14 @@ type WAF struct {
 	// OnBlock is called after an address is blocked; the privileged helper
 	// plugs in layer-3 blocking here. It runs synchronously, keep it fast.
 	OnBlock func(ip net.IP, dur time.Duration)
+	// OnUnblock is its way back: an address taken off the list here must
+	// leave the kernel's too, or it stays cut until the kernel's timer.
+	OnUnblock func(ip net.IP)
+
+	// offenders are the addresses with strikes (fail2ban.go); trusted the
+	// ones the operator logged in from.
+	offenders sync.Map
+	trusted   sync.Map
 }
 
 type compiledPolicy struct {
@@ -424,6 +437,9 @@ func (w *WAF) Unblock(ip net.IP) error {
 	if had {
 		w.emit(events.Event{Type: "waf.unblocked", Subject: key, Actor: "operator", Data: map[string]any{"ip": key}})
 	}
+	if w.OnUnblock != nil {
+		w.OnUnblock(ip)
+	}
 	return nil
 }
 
@@ -467,9 +483,10 @@ func (w *WAF) loadBlocked() error {
 	m := map[string]*Entry{}
 	for i := range f.Blocked {
 		e := f.Blocked[i]
-		// Expired entries keep their strikes for a day so a repeat
-		// offender's next block is longer, then they are forgotten.
-		if e.Until.Add(24 * time.Hour).After(now) {
+		// Expired entries keep their strikes for a week so a repeat
+		// offender's next block is longer, then they are forgotten. A day
+		// was shorter than the ban a third strike earns.
+		if e.Until.Add(7 * 24 * time.Hour).After(now) {
 			m[e.IP] = &e
 		}
 	}
@@ -613,6 +630,22 @@ func (w *WAF) Wrap(next http.Handler) http.Handler {
 			return
 		}
 		host := hostOf(r)
+		// An exploit is refused and bans at once; a scanner's path counts
+		// when the answer says it is not there (below).
+		if what := exploitOf(r); what != "" && !w.exempt(ip) {
+			w.Strike(ip, 1<<20, what, host, r.URL.RequestURI())
+			w.refuse(rw, r, ip, "forbidden", http.StatusForbidden)
+			return
+		}
+		if scan := scannerOf(r.URL.Path); scan != "" {
+			rec := &statusOf{ResponseWriter: rw}
+			defer func() {
+				if rec.code >= 400 && rec.code != http.StatusTooManyRequests && rec.code < 500 {
+					w.Strike(ip, 1, "scanner "+scan, host, r.URL.RequestURI())
+				}
+			}()
+			rw = rec
+		}
 		var site Site
 		if w.opts.Lookup != nil {
 			site, _ = w.opts.Lookup(host)
@@ -677,6 +710,7 @@ func (w *WAF) Run(ctx context.Context) {
 				n++
 				if n%12 == 0 {
 					w.evict()
+					w.pruneOffenders()
 				}
 			}
 		}

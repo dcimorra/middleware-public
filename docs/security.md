@@ -118,6 +118,29 @@ with certificates obtained for the domains this installation serves and no
 other. Headers from the edge (`X-Forwarded-For`, `CF-Connecting-IP`) are
 trusted only from the door they belong to.
 
+## Bans (fail2ban)
+
+Inside the WAF, the first layer every request crosses. A request carrying
+an exploit that is wrong on any site (Log4Shell's lookup in the target or
+a header, a climb out of the folder to `/etc/passwd`, PHP's stream
+wrappers, phpunit's `eval-stdin.php`, the routers' RCEs, command
+injection, Shellshock) is refused and bans its address at once. What
+scanners ask every server for (`/.env`, `/.git/`, `/wp-login.php`,
+`/phpmyadmin`, a `.php` on a site without PHP…) counts as one attempt
+only when the site answered with an error, so a WordPress's visitors are
+never counted; a wrong panel password counts too. Five attempts in ten
+minutes ban the address: in the WAF's block list (kept on disk) and in the
+kernel through the helper's nftables set, for an hour the first time and
+four times longer at every repeat, up to thirty days. Lifting a ban lifts
+it in the kernel too, and what is still banned goes back into the kernel
+when the supervisor starts (a reboot empties the kernel's set).
+
+Never banned: loopback, the private and CGNAT ranges (the VPN's, the
+mesh's), the allow list, and an address the operator logged in from in
+the last week. Behind the tunnel the address is the edge's
+`CF-Connecting-IP`; the kernel cannot cut those (they arrive from
+cloudflared), so for them the ban is the WAF's 403.
+
 ## What is not protected
 
 - **Sites share a Unix user.** Isolation between sites is HOME, environment,

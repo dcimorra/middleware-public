@@ -139,3 +139,8 @@ func (f *Filter) DecidePath(p string) Verdict {
 	}
 	return Verdict{Pass: true}
 }
+
+// ProbeOf is the house rule a request path falls under ("", ".env",
+// ".git/", "/etc/passwd"…): what scanners go looking for, for whoever
+// counts them (the WAF's bans).
+func ProbeOf(p string) string { return builtinMatch(clean(p)) }
