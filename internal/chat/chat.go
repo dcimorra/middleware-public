@@ -756,7 +756,9 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 		}
 	} else {
 		system = Preamble(domain, s.Workdir, s.Jail)
-		if s.Provider == "gemini" || s.Provider == "opencode" {
+		// Only Claude Code loads the skill by itself; the others are told
+		// to read it.
+		if needsSkillHint[s.Provider] {
 			system = SkillHint + "\n\n" + system
 		}
 	}

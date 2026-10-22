@@ -23,12 +23,13 @@ func fakeOpenCode(t *testing.T) string {
 	path := filepath.Join(t.TempDir(), "opencode")
 	script := `#!/bin/sh
 if [ "$1" = --version ]; then echo 1.3.17; exit 0; fi
-if [ "$1" = models ]; then
+if [ "$1" = models ] && [ "$2" = --refresh ]; then
   mkdir -p "$HOME/.cache/opencode"
   echo '{"openai":{"name":"OpenAI","env":["OPENAI_API_KEY"],"models":{"gpt-4.1":{},"gpt-4o":{}}},"groq":{"name":"Groq","env":["GROQ_API_KEY"],"models":{"llama":{}}}}' > "$HOME/.cache/opencode/models.json"
   echo "Performing one time database migration, may take a few minutes..." >&2
   echo opencode/big-pickle
   if grep -q openai "$HOME/.local/share/opencode/auth.json" 2>/dev/null; then echo openai/gpt-4.1; echo openai/gpt-4o; fi
+  if grep -q deepseek "$HOME/.local/share/opencode/auth.json" 2>/dev/null; then echo deepseek/deepseek-chat; echo deepseek/deepseek-reasoner; fi
   exit 0
 fi
 exit 1
@@ -106,4 +107,51 @@ func mux(routes map[string]http.Handler) http.Handler {
 		m.Handle(p, h)
 	}
 	return m
+}
+
+// A vendor's module is an agent of its own in the chat, with that vendor's
+// models only, and leaves the chat when it is turned off.
+func TestAVendorModuleIsAnAgentOfItsOwn(t *testing.T) {
+	root := t.TempDir()
+	mgr, err := modules.New(root, events.New(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := agent.NewRegistry()
+	var ds Vendor
+	for _, v := range Vendors {
+		if v.Key == "deepseek" {
+			ds = v
+		}
+	}
+	o := NewVendor(reg, filepath.Join(root, "data", "agents"), ds)
+	o.Store = mgr
+	mgr.Register(o)
+	if _, err := reg.Get("deepseek"); err == nil {
+		t.Fatal("in the chat before being enabled")
+	}
+	bin := fakeOpenCode(t)
+	if _, err := mgr.Enable(context.Background(), "agent-deepseek", modules.Config{"bin": bin, "api_key": "sk-ds"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.RefreshModels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	p, err := reg.Get("deepseek")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(p.Models(), ",") != "deepseek/deepseek-chat,deepseek/deepseek-reasoner" {
+		t.Fatalf("models %v", p.Models())
+	}
+	raw, _ := os.ReadFile(filepath.Join(o.Home, ".local/share/opencode/auth.json"))
+	if !strings.Contains(string(raw), `"deepseek"`) || !strings.Contains(string(raw), "sk-ds") {
+		t.Fatalf("auth %s", raw)
+	}
+	if err := mgr.Disable(context.Background(), "agent-deepseek"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reg.Get("deepseek"); err == nil {
+		t.Fatal("still in the chat after being turned off")
+	}
 }

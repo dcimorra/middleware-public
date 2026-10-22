@@ -27,6 +27,10 @@ import (
 
 // Config is the command template.
 type Config struct {
+	// Key is the name the provider has in the registry and the manifests:
+	// "opencode" for the module that connects any provider, the vendor's
+	// own ("deepseek", "zai"…) for a vendor's module run by OpenCode.
+	Key string
 	// Bin is the executable; "opencode" is looked up in PATH.
 	Bin string
 	// Auth is one API key per provider id ("openai", "openrouter"…), as
@@ -47,11 +51,14 @@ func New(cfg Config) *Provider {
 	if cfg.Bin == "" {
 		cfg.Bin = "opencode"
 	}
+	if cfg.Key == "" {
+		cfg.Key = "opencode"
+	}
 	return &Provider{cfg: cfg}
 }
 
 // Key implements agent.Provider.
-func (p *Provider) Key() string { return "opencode" }
+func (p *Provider) Key() string { return p.cfg.Key }
 
 // Available implements agent.Provider.
 func (p *Provider) Available() (bool, string) {
@@ -60,6 +67,9 @@ func (p *Provider) Available() (bool, string) {
 		return false, fmt.Sprintf("%s not found in PATH", p.cfg.Bin)
 	}
 	if len(p.cfg.Auth) == 0 {
+		if p.cfg.Key != "opencode" {
+			return false, "no API key: add it in Modules"
+		}
 		return false, "no provider connected: add a provider's key in Modules → OpenCode"
 	}
 	return true, path

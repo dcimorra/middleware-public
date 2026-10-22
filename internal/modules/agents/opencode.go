@@ -37,6 +37,9 @@ type OpenCode struct {
 	// CLI is asked for the catalog and the models; the turns run under the
 	// site's HOME, never this one.
 	Home string
+	// vendor, for a vendor's module (vendors.go), is the one provider it
+	// runs, by OpenCode's id; empty is the module that connects any.
+	vendor string
 
 	rmu      sync.Mutex
 	cmu      sync.Mutex
@@ -77,15 +80,28 @@ func NewOpenCode(reg *agent.Registry, home string) *OpenCode {
 	}
 	m.build = func(cfg modules.Config) agent.Provider {
 		return opencode.New(opencode.Config{
+			Key:    o.provider(),
 			Bin:    cfg["bin"],
-			Auth:   parseAuth(cfg["providers"]),
-			Models: modelsWith(cfg["model"], o.connectedModels(parseAuth(cfg["providers"]))),
+			Auth:   o.authOf(cfg),
+			Models: modelsWith(cfg["model"], o.connectedModels(o.authOf(cfg))),
 		})
 	}
 	o.Module = m
 	m.init()
 	o.loadCachedModels()
 	return o
+}
+
+// authOf is the keys a config holds: the providers' map, or, for a
+// vendor's module, its one key under its one provider.
+func (o *OpenCode) authOf(cfg modules.Config) map[string]string {
+	if o.vendor != "" {
+		if k := strings.TrimSpace(cfg["api_key"]); k != "" {
+			return map[string]string{o.vendor: k}
+		}
+		return map[string]string{}
+	}
+	return parseAuth(cfg["providers"])
 }
 
 func parseAuth(raw string) map[string]string {
@@ -170,13 +186,17 @@ func (o *OpenCode) RefreshModels(ctx context.Context) error {
 		err = os.MkdirAll(o.Home, 0o700)
 	}
 	if err == nil {
-		err = opencode.WriteAuth(o.Home, parseAuth(cfg["providers"]))
+		err = opencode.WriteAuth(o.Home, o.authOf(cfg))
 	}
 	var out bytes.Buffer
 	if err == nil {
 		cctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 		defer cancel()
-		cmd := exec.CommandContext(cctx, bin, "models")
+		// --refresh: without it the CLI lists from the catalog it was
+		// built with, whose names a turn (which fetches the current one)
+		// no longer accepts: deepseek-chat was listed and then "Model not
+		// found" on 22 October 2026.
+		cmd := exec.CommandContext(cctx, bin, "models", "--refresh")
 		path := os.Getenv("PATH")
 		if extra := o.extraPath(); extra != "" {
 			path = extra + string(os.PathListSeparator) + path
@@ -265,7 +285,7 @@ func (o *OpenCode) Catalog() []CatalogProvider {
 // Session implements what the panel shows: connected means some provider
 // has a key.
 func (o *OpenCode) Session() Session {
-	if len(parseAuth(o.config()["providers"])) > 0 {
+	if len(o.authOf(o.config())) > 0 {
 		return Session{Kind: "api_key"}
 	}
 	return Session{Kind: "none"}
@@ -290,8 +310,10 @@ func (o *OpenCode) Verify(ctx context.Context, cfg modules.Config) []modules.Lin
 			lines = append(lines, modules.OK(fmt.Sprintf("%s answers --version: %s", path, v)))
 		}
 	}
-	auth := parseAuth(cfg["providers"])
-	if len(auth) == 0 {
+	auth := o.authOf(cfg)
+	if len(auth) == 0 && o.vendor != "" {
+		lines = append(lines, modules.Fail("no API key"))
+	} else if len(auth) == 0 {
 		lines = append(lines, modules.Skip("no provider connected yet: connect one below, its models appear in the chat"))
 	} else {
 		ids := make([]string, 0, len(auth))
@@ -306,6 +328,9 @@ func (o *OpenCode) Verify(ctx context.Context, cfg modules.Config) []modules.Lin
 
 // Routes implements modules.Module.
 func (o *OpenCode) Routes() map[string]http.Handler {
+	if o.vendor != "" {
+		return o.vendorRoutes()
+	}
 	return map[string]http.Handler{
 		"GET /{$}":               http.HandlerFunc(o.handleProviders),
 		"GET /providers":         http.HandlerFunc(o.handleProviders),
@@ -320,6 +345,9 @@ func (o *OpenCode) Routes() map[string]http.Handler {
 // SetupRoutes implements modules.Setup: providers are connected before
 // the module is turned on, which is when it has anything to run with.
 func (o *OpenCode) SetupRoutes() []string {
+	if o.vendor != "" {
+		return []string{"POST /binary/sync"}
+	}
 	return []string{"GET /providers", "PUT /providers/{id}", "DELETE /providers/{id}", "POST /models/refresh", "POST /binary/sync", "GET /session"}
 }
 
@@ -331,7 +359,7 @@ type connected struct {
 
 func (o *OpenCode) handleProviders(w http.ResponseWriter, r *http.Request) {
 	cfg := o.config()
-	auth := parseAuth(cfg["providers"])
+	auth := o.authOf(cfg)
 	cat := o.Catalog()
 	names := map[string]string{}
 	for _, c := range cat {
@@ -380,7 +408,7 @@ func (o *OpenCode) setAuth(ctx context.Context, change func(map[string]string)) 
 	o.cmu.Lock()
 	o.busy = true
 	o.cmu.Unlock()
-	auth := parseAuth(o.config()["providers"])
+	auth := o.authOf(o.config())
 	change(auth)
 	raw, err := json.Marshal(auth)
 	if err != nil {
@@ -467,9 +495,9 @@ func (o *OpenCode) Enable(ctx context.Context, cfg modules.Config) error {
 		return err
 	}
 	o.cmu.Lock()
-	stale := time.Since(o.modelsAt) > 12*time.Hour && !o.busy
+	stale := (time.Since(o.modelsAt) > 12*time.Hour || o.vendor != "") && !o.busy
 	o.cmu.Unlock()
-	if stale && len(parseAuth(cfg["providers"])) > 0 {
+	if stale && len(o.authOf(cfg)) > 0 {
 		go func() {
 			rctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()

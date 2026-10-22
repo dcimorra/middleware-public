@@ -87,6 +87,9 @@ var (
 	agentClaude *agents.Module
 	agentGemini *agents.Module
 	agentOpen   *agents.OpenCode
+	// agentVendors are the vendors' own modules (DeepSeek, Z.AI…), each
+	// an agent of the chat, run by OpenCode.
+	agentVendors []*agents.OpenCode
 )
 
 // theVPN is the VPN module, for the inbound hook's VPN door.
@@ -126,6 +129,10 @@ func registerExtraModules(mgr *modules.Manager, root string, bus *events.Bus, dm
 	agentClaude = agents.Claude(reg)
 	agentGemini = agents.Gemini(reg)
 	agentOpen = agents.NewOpenCode(reg, filepath.Join(root, "data", "agents", "opencode"))
+	agentVendors = nil
+	for _, v := range agents.Vendors {
+		agentVendors = append(agentVendors, agents.NewVendor(reg, filepath.Join(root, "data", "agents"), v))
+	}
 	for _, m := range []*agents.Module{agentClaude, agentGemini, agentOpen.Module} {
 		m.Deps = dm
 		m.Store = mgr
@@ -133,6 +140,10 @@ func registerExtraModules(mgr *modules.Manager, root string, bus *events.Bus, dm
 	mgr.Register(agentClaude)
 	mgr.Register(agentGemini)
 	mgr.Register(agentOpen)
+	for _, v := range agentVendors {
+		v.Deps, v.Store = dm, mgr
+		mgr.Register(v)
+	}
 	return nil
 }
 
@@ -168,7 +179,7 @@ func buildWire(a *app.App) app.Hook {
 	} else {
 		w.set = set
 		srv.RegisterModules(api.ModulesOptions{Manager: set.Manager, Public: []string{"POST " + github.Key + "/hook"}})
-		if err := agents.Restore(context.Background(), set.Manager, agentClaude, agentGemini, agentOpen); err != nil {
+		if err := agents.Restore(context.Background(), set.Manager, restorable()...); err != nil {
 			a.Bus.Emit(events.Event{Type: "module.restore_failed", Actor: "engine", Level: "error", Message: err.Error()})
 		}
 		// One deployment runner for the installation: the sites' own,
@@ -932,4 +943,13 @@ func buildMesh(a *app.App, srv *api.Server) *nodes.Mesh {
 		a.Bus.Emit(events.Event{Type: "nodes.legacy_removed", Actor: "engine", Level: "warn", Message: fmt.Sprintf("%d node links over the public panel were undone: nodes now join through the WireGuard mesh", len(legacy))})
 	}
 	return m
+}
+
+// restorable is every agent module, for Restore.
+func restorable() []agents.Restorable {
+	out := []agents.Restorable{agentClaude, agentGemini, agentOpen}
+	for _, v := range agentVendors {
+		out = append(out, v)
+	}
+	return out
 }

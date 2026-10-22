@@ -125,6 +125,15 @@ func (r *Registry) Register(p Provider) {
 	r.byKey[p.Key()] = p
 }
 
+// Remove takes a provider out: a module that adds one when it is enabled
+// takes it away when it is disabled, rather than leaving a provider the
+// chat offers and nothing can run.
+func (r *Registry) Remove(key string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.byKey, key)
+}
+
 // Get looks a provider up by key.
 func (r *Registry) Get(key string) (Provider, error) {
 	r.mu.RLock()

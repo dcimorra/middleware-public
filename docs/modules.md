@@ -171,6 +171,18 @@ too, is left out because it only answers its own app.
 - Installed under modules/node from npm (`opencode-ai`) when there is no
   binary.
 
+## agent-openai, agent-deepseek, agent-zai, agent-kimi, agent-qwen, agent-mistral, agent-xai
+
+The best-known model makers, each a module of its own: a card, an API key,
+its models, and an agent of the chat under the vendor's name (`openai`,
+`deepseek`, `zai`, `kimi`, `qwen`, `mistral`, `xai`). None of them ships
+an agent that runs on a server the way Claude Code does, so the turns are
+OpenCode's, fixed to that one vendor: the same tools and jail as the
+OpenCode module, a different model. The models are read with the key
+(`opencode models --refresh`, whose names are the ones a turn accepts)
+when the module is turned on. Turned off, the agent leaves the chat.
+Every other provider is in the OpenCode module's catalog.
+
 ## vpn
 
 A WireGuard interface (`mw0`) so the panel and the service door are

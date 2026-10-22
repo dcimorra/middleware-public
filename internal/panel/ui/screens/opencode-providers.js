@@ -114,3 +114,30 @@ export function openCodeProviders() {
   load();
   return el;
 }
+
+// vendorModels is a vendor module's line: how many of its models the chat
+// offers now, the list folded, and a way to read them again.
+export function vendorModels(key) {
+  const el = h("div", { class: "oc-providers" });
+  const base = `/modules/${enc(key)}`;
+  async function load(fresh) {
+    let s;
+    try { s = fresh || await api.get(base + "/models"); } catch (e) { clear(el).append(notice("bad", e.message)); return; }
+    const models = s.models || [];
+    const refresh = h("button", { type: "button", class: "btn sm" }, icon("refresh"), t("oc.refresh"));
+    refresh.addEventListener("click", async () => {
+      refresh.classList.add("busy");
+      try { await load(await api.post(base + "/models/refresh", {})); } catch (e) { toastError(e); } finally { refresh.classList.remove("busy"); }
+    });
+    clear(el).append(...[
+      s.reading ? h("p", { class: "small muted" }, t("oc.reading")) : null,
+      h("details", { class: "oc-models" }, h("summary", null, t("oc.modelsTitle", { n: models.length })),
+        models.length ? h("ul", { class: "oc-model-list mono small" }, ...models.map((m) => h("li", null, m))) : h("p", { class: "small muted" }, t("oc.noVendorModels"))),
+      s.models_error ? notice("warn", t("oc.modelsError", { error: s.models_error })) : null,
+      h("div", { class: "form-actions" }, refresh),
+    ].filter(Boolean));
+    if (s.reading) setTimeout(() => { if (el.isConnected) load(); }, 2000);
+  }
+  load();
+  return el;
+}

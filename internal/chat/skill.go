@@ -66,6 +66,10 @@ func writeIfChanged(path string, data []byte) error {
 	return fsx.WriteAtomic(path, data, 0o644)
 }
 
+// needsSkillHint are the agents that do not load Claude skills by
+// themselves: Gemini, and OpenCode with every vendor it runs.
+var needsSkillHint = map[string]bool{"gemini": true, "opencode": true, "openai": true, "deepseek": true, "zai": true, "kimi": true, "qwen": true, "mistral": true, "xai": true}
+
 // SkillHint is what a provider that does not load Claude skills is told
 // at the top of its system context, so it reads the file anyway.
 const SkillHint = "Read ~/.claude/skills/middleware/SKILL.md first: it says how sites, workers and tasks are built, published and checked on this machine."

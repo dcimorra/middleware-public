@@ -9,7 +9,10 @@ import { api, enc } from "../lib/api.js";
 import { onEvent } from "../lib/stream.js";
 import { page, load, empty, notice } from "../components/page.js";
 import { icon } from "../lib/icons.js";
-import { openCodeProviders } from "./opencode-providers.js";
+import { openCodeProviders, vendorModels } from "./opencode-providers.js";
+
+// The vendors' own modules: a key and their models, run by OpenCode.
+const VENDORS = new Set(["agent-openai", "agent-deepseek", "agent-zai", "agent-kimi", "agent-qwen", "agent-mistral", "agent-xai"]);
 
 import { checklist } from "../components/checklist.js";
 import { confirm, field } from "../components/dialog.js";
@@ -40,14 +43,14 @@ export function modulesScreen() {
   }
 
   const GROUPS = ["connect", "deploy", "agents", "other"];
-  const GROUP_OF = { cloudflare: "connect", vpn: "connect", github: "deploy", "agent-claude": "agents", "agent-gemini": "agents", "agent-opencode": "agents" };
-  const ICON_OF = { cloudflare: "globe", vpn: "lock", github: "branch", "agent-claude": "sparkles", "agent-gemini": "sparkles", "agent-opencode": "sparkles" };
+  const GROUP_OF = { cloudflare: "connect", vpn: "connect", github: "deploy", "agent-claude": "agents", "agent-gemini": "agents", "agent-opencode": "agents", "agent-openai": "agents", "agent-deepseek": "agents", "agent-zai": "agents", "agent-kimi": "agents", "agent-qwen": "agents", "agent-mistral": "agents", "agent-xai": "agents" };
+  const ICON_OF = { cloudflare: "globe", vpn: "lock", github: "branch", "agent-claude": "sparkles", "agent-gemini": "sparkles", "agent-opencode": "sparkles", "agent-openai": "sparkles", "agent-deepseek": "sparkles", "agent-zai": "sparkles", "agent-kimi": "sparkles", "agent-qwen": "sparkles", "agent-mistral": "sparkles", "agent-xai": "sparkles" };
   // The panel's own words for a module when it has them; the module's
   // (in English, from the server) otherwise.
   const said = (key, fallback) => { const s = t(key); return s === key ? fallback : s; };
 
   // Which command an agent module runs, for the binary line.
-  const AGENT_BIN = { "agent-claude": "claude", "agent-gemini": "gemini", "agent-opencode": "opencode" };
+  const AGENT_BIN = { "agent-claude": "claude", "agent-gemini": "gemini", "agent-opencode": "opencode", "agent-openai": "opencode", "agent-deepseek": "opencode", "agent-zai": "opencode", "agent-kimi": "opencode", "agent-qwen": "opencode", "agent-mistral": "opencode", "agent-xai": "opencode" };
 
   function card(m, depBy) {
     const inputs = {};
@@ -109,7 +112,8 @@ export function modulesScreen() {
       const r = await run(enableBtn, `/modules/${enc(m.key)}/enable`, t("modules.enabled", { name: m.name }));
       if (r && r.ok !== false) {
         m.enabled = true; state.replaceWith(stateBadge(m)); enableBtn.textContent = t("modules.save"); disableBtn.hidden = false;
-        if (simple) load(body, render);
+        // A vendor's card shows its models once it is on: drawn again.
+        if (simple || VENDORS.has(m.key)) load(body, render);
       }
     });
     disableBtn.addEventListener("click", async () => {
@@ -130,7 +134,7 @@ export function modulesScreen() {
         state),
       m.installed === false && m.enabled && !agentBin ? notice("warn", t("modules.notInstalled")) : null,
       // OpenCode has no sign-in of its own: a key per provider instead.
-      m.key === "agent-opencode" ? openCodeProviders() : agentBin ? signIn(m) : null,
+      m.key === "agent-opencode" ? openCodeProviders() : VENDORS.has(m.key) ? (m.enabled ? vendorModels(m.key) : null) : agentBin ? signIn(m) : null,
       agentBin ? binaryLine(agentBin, depBy.get(agentBin)) : null,
       form,
     );

@@ -49,7 +49,10 @@ type Module struct {
 	fallback agent.Provider
 	// secretKey is the config key the signed-in session is stored under.
 	secretKey string
-	loginSpec func(bin string) loginSpec
+	// removeOnDisable takes the provider out of the chat when the module
+	// is turned off, for agents that exist only through their module.
+	removeOnDisable bool
+	loginSpec       func(bin string) loginSpec
 
 	// Deps installs and finds the CLI; nil means PATH only.
 	Deps *deps.Manager
@@ -274,6 +277,10 @@ func withBin(cfg modules.Config, m *Module) modules.Config {
 
 // Disable implements modules.Module: the default provider is put back.
 func (m *Module) Disable(ctx context.Context) error {
+	if m.removeOnDisable {
+		m.reg.Remove(m.provider())
+		return nil
+	}
 	m.reg.Register(m.fallback)
 	return nil
 }
