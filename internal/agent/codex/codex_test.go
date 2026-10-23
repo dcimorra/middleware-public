@@ -1,7 +1,9 @@
 package codex
 
 import (
+	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -58,7 +60,7 @@ func TestACommandAndAnAnswer(t *testing.T) {
 }
 
 func TestAReadOnlyLevelRunsReadOnlyAndAResumeGoesByThread(t *testing.T) {
-	p := New(Config{Models: []string{"gpt-5.5"}})
+	p := New(Config{APIKey: "k", Models: []string{"gpt-5.5"}})
 	args := strings.Join(p.Args(agent.Request{Prompt: "hola", Tools: []string{"Read"}, SessionID: "t1"}), " ")
 	for _, want := range []string{"exec resume --json", `sandbox_mode="read-only"`, "--model gpt-5.5", "t1 hola"} {
 		if !strings.Contains(args, want) {
@@ -67,5 +69,35 @@ func TestAReadOnlyLevelRunsReadOnlyAndAResumeGoesByThread(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(p.Args(agent.Request{Prompt: "x"}), " "), `sandbox_mode="workspace-write"`) {
 		t.Fatal("a full turn is not workspace-write")
+	}
+}
+
+func TestASubscriptionRunsThePlansDefaultUnlessAModelIsChosen(t *testing.T) {
+	p := New(Config{Login: "{}", Models: []string{"gpt-5.5"}})
+	if args := strings.Join(p.Args(agent.Request{Prompt: "x"}), " "); strings.Contains(args, "--model") {
+		t.Fatalf("a subscription was given a model nobody chose: %s", args)
+	}
+	if args := strings.Join(p.Args(agent.Request{Prompt: "x", Model: "gpt-6-sol"}), " "); !strings.Contains(args, "--model gpt-6-sol") {
+		t.Fatalf("the chosen model is not passed: %s", args)
+	}
+}
+
+func TestThePlansModelsAreTheListedOnesInCodexsOrder(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "codex")
+	script := `#!/bin/sh
+[ "$1 $2" = "debug models" ] || exit 2
+[ -f "$CODEX_HOME/auth.json" ] || exit 3
+echo '{"models":[{"slug":"b","visibility":"list","priority":5},{"slug":"hidden","visibility":"hide","priority":0},{"slug":"a","visibility":"list","priority":1}]}'
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := PlanModels(context.Background(), bin, "", filepath.Join(dir, "home"), `{"tokens":{}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(ids, ",") != "a,b" {
+		t.Fatalf("%v", ids)
 	}
 }

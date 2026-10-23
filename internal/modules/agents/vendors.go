@@ -60,6 +60,9 @@ type Vendor struct {
 	// Login, for a vendor whose agent signs in with a subscription (Codex
 	// with ChatGPT), is that sign-in; the API key stays the alternative.
 	Login func(bin string) loginSpec
+	// PlanModels lists the models a subscription may use, from the agent
+	// signed in as the account; home is the module's own folder.
+	PlanModels func(ctx context.Context, bin, extraPath, home, login string) ([]string, error)
 }
 
 // BuildArgs is what a vendor's agent is built from.
@@ -115,6 +118,9 @@ var Vendors = []Vendor{
 		},
 		Defaults: []string{"gpt-5.5", "gpt-5.6", "gpt-5.3-codex"},
 		Login:    codexLoginSpec,
+		PlanModels: func(ctx context.Context, bin, extraPath, home, login string) ([]string, error) {
+			return codex.PlanModels(ctx, bin, extraPath, filepath.Join(home, "codex-home"), login)
+		},
 		Build: func(a BuildArgs) agent.Provider {
 			return codex.New(codex.Config{Bin: a.Bin, APIKey: a.Key, Login: a.Login, Home: filepath.Join(a.Home, "codex-home"), Models: a.Models})
 		}},
@@ -309,12 +315,39 @@ func (vm *VendorModule) RefreshModels(ctx context.Context) error {
 	cfg["bin"] = vm.binOf(cfg)
 	key := strings.TrimSpace(cfg["api_key"])
 	if key == "" {
-		if cfg["subscription"] != "" {
-			// A subscription has no model list to read: its models are
-			// the defaults.
-			return nil
+		if cfg["subscription"] == "" || vm.V.PlanModels == nil {
+			if cfg["subscription"] != "" {
+				return nil
+			}
+			return errors.New("no API key")
 		}
-		return errors.New("no API key")
+		// A subscription's models are the plan's: the vendor's agent says
+		// which, signed in as the account.
+		bin, err := vm.binary(cfg)
+		var ids []string
+		if err == nil {
+			ids, err = vm.V.PlanModels(ctx, bin, vm.extraPath(), vm.Home, cfg["subscription"])
+		}
+		if err == nil && len(ids) == 0 {
+			err = errors.New("the plan lists no model")
+		}
+		vm.cmu.Lock()
+		vm.modelsAt = time.Now()
+		if err != nil {
+			vm.modErr = err.Error()
+		} else {
+			vm.modErr, vm.models = "", ids
+		}
+		vm.cmu.Unlock()
+		if err != nil {
+			return err
+		}
+		_ = os.MkdirAll(vm.Home, 0o700)
+		_ = fsx.WriteAtomic(vm.cachePath(), []byte(strings.Join(ids, "\n")+"\n"), 0o600)
+		if vm.Store != nil && vm.Store.Enabled(vm.key) {
+			vm.reg.Register(vm.build(withBin(cfg, vm.Module)))
+		}
+		return nil
 	}
 	url := strings.ReplaceAll(vm.V.ModelsURL, "{base}", vm.base(cfg))
 	ids, err := listModels(ctx, url, key)

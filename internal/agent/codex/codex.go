@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/dcimorra/middleware-public/internal/agent"
@@ -100,7 +101,10 @@ func (p *Provider) Args(req agent.Request) []string {
 		args = append(args, "-c", `sandbox_mode="read-only"`)
 	}
 	model := req.Model
-	if model == "" && len(p.cfg.Models) > 0 {
+	// With a ChatGPT sign-in the plan decides which models it may use, and
+	// one it does not include is a 400 on the first request: no model is
+	// imposed, and Codex runs the plan's default.
+	if model == "" && len(p.cfg.Models) > 0 && p.cfg.APIKey != "" {
 		model = p.cfg.Models[0]
 	}
 	if model != "" {
@@ -135,7 +139,7 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 		env[k] = v
 	}
 	if p.cfg.APIKey == "" && p.cfg.Login != "" && p.cfg.Home != "" {
-		if err := seed(p.cfg.Home, p.cfg.Login); err != nil {
+		if err := Seed(p.cfg.Home, p.cfg.Login); err != nil {
 			return nil, err
 		}
 		env["CODEX_HOME"] = p.cfg.Home
@@ -304,10 +308,10 @@ func (p *parser) Flush() []agent.Event {
 	return nil
 }
 
-// seed writes the sign-in's auth.json into the shared home when the
+// Seed writes the sign-in's auth.json into the shared home when the
 // sign-in is new, and leaves it alone otherwise: what is there may be a
 // refresh Codex already did, newer than what the module stored.
-func seed(home, login string) error {
+func Seed(home, login string) error {
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return err
 	}
@@ -323,4 +327,45 @@ func seed(home, login string) error {
 		return err
 	}
 	return fsx.WriteAtomic(markPath, []byte(mark+"\n"), 0o600)
+}
+
+// PlanModels asks Codex which models the signed-in account may use (`codex
+// debug models`, which reads the catalog for that account), in Codex's own
+// order. path is the binary, extraPath the managed Node for its shebang.
+func PlanModels(ctx context.Context, path, extraPath, home, login string) ([]string, error) {
+	if err := Seed(home, login); err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, path, "debug", "models")
+	envPath := os.Getenv("PATH")
+	if extraPath != "" {
+		envPath = extraPath + string(os.PathListSeparator) + envPath
+	}
+	cmd.Env = []string{"HOME=" + home, "CODEX_HOME=" + home, "PATH=" + envPath, "LANG=C.UTF-8"}
+	cmd.Dir = home
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("codex debug models: %w", err)
+	}
+	var list []struct {
+		Slug       string `json:"slug"`
+		Visibility string `json:"visibility"`
+		Priority   int    `json:"priority"`
+	}
+	if err := json.Unmarshal(out, &list); err != nil {
+		var wrapped struct {
+			Models json.RawMessage `json:"models"`
+		}
+		if json.Unmarshal(out, &wrapped) != nil || json.Unmarshal(wrapped.Models, &list) != nil {
+			return nil, fmt.Errorf("codex debug models: %w", err)
+		}
+	}
+	sort.SliceStable(list, func(i, j int) bool { return list[i].Priority < list[j].Priority })
+	var ids []string
+	for _, m := range list {
+		if m.Slug != "" && m.Visibility == "list" {
+			ids = append(ids, m.Slug)
+		}
+	}
+	return ids, nil
 }
