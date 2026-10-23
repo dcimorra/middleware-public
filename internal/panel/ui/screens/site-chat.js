@@ -56,44 +56,75 @@ export function chatTab(domain) {
   // and stopped from here, never written into: a program is on the other
   // side, and its turns follow its own rules).
   const base = `/sites/${enc(domain)}`;
-  let cur = house ? { name: domain, path: "/chat/middleware", origin: "panel" } : { name: domain, path: `${base}/chat`, origin: "panel" };
+  // Where the conversations beyond the first live: a site's, or the house's.
+  const chatsBase = house ? "/chat/middleware" : base;
+  const mainConv = () => ({ name: domain, path: house ? "/chat/middleware" : `${base}/chat`, origin: "panel" });
+  const convOf = (id, origin) => id ? { name: `${domain}#${id}`, path: `${chatsBase}/chats/${enc(id)}`, origin: origin || "panel" } : mainConv();
+  // A new conversation is a draft until its first message (or file) goes:
+  // it has no name to list yet, and the title comes from that message.
+  const draftConv = () => ({ draft: true, name: null, path: null, origin: "panel" });
+  let cur = mainConv();
   const picker = h("select", { "aria-label": t("chat.conversation") });
   const newConv = h("button", { type: "button", class: "btn ghost sm" }, icon("plus"), t("chat.newConversation"));
+  const purge = h("button", { type: "button", class: "btn ghost sm", title: t("chat.purgeHint") }, icon("trash"), t("chat.purge"));
   const readonlyNote = h("div", { class: "small muted", hidden: true }, t("chat.siteDoorNote"));
-  async function fillPicker() {
-    if (house) { picker.hidden = true; newConv.hidden = true; return; }
-    let others = [];
-    try { others = await api.get(`${base}/chats`); } catch { others = []; }
-    clear(picker).append(h("option", { value: "" }, t("chat.mainConversation")));
-    for (const c of others) {
-      const label = (c.origin === "site" ? t("chat.fromSite") + " · " : "") + (c.title || c.id) + (c.running ? " ●" : "");
-      picker.append(h("option", { value: c.id, "data-origin": c.origin }, label));
+  const idOf = (c) => (c.draft ? "__draft" : c.name === domain ? "" : c.name.split("#")[1]);
+  // The list, the last used first; the first time, the last used one is
+  // what opens.
+  async function fillPicker(first) {
+    let list = [];
+    try { list = await api.get(`${chatsBase}/chats?main=1`); } catch { list = []; }
+    if (first && list.length) cur = convOf(list[0].id, list[0].origin);
+    clear(picker);
+    const curID = idOf(cur);
+    if (!list.some((c) => c.id === curID)) picker.append(h("option", { value: curID, "data-origin": cur.origin }, t("chat.newDraft")));
+    for (const c of list) {
+      const label = (c.origin === "site" ? t("chat.fromSite") + " · " : "") + (c.title || t("chat.untitled")) + (c.running ? " ●" : "");
+      picker.append(h("option", { value: c.id, "data-origin": c.origin, title: c.updated ? new Date(c.updated).toLocaleString() : "" }, label));
     }
-    picker.value = cur.name === domain ? "" : cur.name.split("#")[1];
-    picker.hidden = others.length === 0;
+    picker.value = curID;
+    purge.hidden = list.length === 0;
+    applyOrigin();
+  }
+  function applyOrigin() {
+    form.hidden = cur.origin === "site";
+    readonlyNote.hidden = cur.origin !== "site";
   }
   picker.addEventListener("change", () => {
     const id = picker.value;
-    const origin = id ? picker.selectedOptions[0].dataset.origin : "panel";
-    cur = id ? { name: `${domain}#${id}`, path: `${base}/chats/${enc(id)}`, origin } : { name: domain, path: `${base}/chat`, origin: "panel" };
-    form.hidden = origin === "site";
-    readonlyNote.hidden = origin !== "site";
+    if (id === "__draft") return;
+    cur = convOf(id, picker.selectedOptions[0].dataset.origin);
+    applyOrigin();
     loadTurns().then(showUploads);
   });
   newConv.addEventListener("click", async () => {
+    if (cur.draft) { text.focus(); return; }
+    cur = draftConv();
+    await fillPicker();
+    loadTurns().then(showUploads);
+    text.focus();
+  });
+  purge.addEventListener("click", async () => {
+    if (!(await confirm({ title: t(house ? "chat.purgeQHouse" : "chat.purgeQ", { name: domain }), body: t("chat.purgeBody"), confirmLabel: t("chat.purge"), danger: true }))) return;
     try {
-      const r = await api.post(`${base}/chats`, {});
-      cur = { name: `${domain}#${r.id}`, path: `${base}/chats/${enc(r.id)}`, origin: "panel" };
+      const r = await api.del(`${chatsBase}/chats`);
+      toast(t("chat.purged", { n: (r && r.purged) || 0 }), "ok");
+      cur = mainConv();
       await fillPicker();
-      form.hidden = false; readonlyNote.hidden = true;
       loadTurns().then(showUploads);
     } catch (e) { toastError(e); }
   });
+  // ensure turns a draft into a conversation, when something is sent.
+  async function ensure() {
+    if (!cur.draft) return;
+    const r = await api.post(`${chatsBase}/chats`, {});
+    cur = convOf(r.id, "panel");
+  }
   // One tab per subagent of the last turn (or opened from an older one),
   // beside the main conversation.
   const tabs = h("div", { class: "chat-tabs", role: "tablist", hidden: true });
   const views = h("div", { class: "chat-views" }, turns);
-  const el = h("div", { class: "chat" }, h("div", { class: "chat-head row" }, picker, newConv, h("span", { class: "grow" }), capacity), readonlyNote, tabs, views, form);
+  const el = h("div", { class: "chat" }, h("div", { class: "chat-head row" }, picker, newConv, purge, h("span", { class: "grow" }), capacity), readonlyNote, tabs, views, form);
   let agents = [];
   let running = null; // {turnEl, textEl, textBuf}
   const subs = [];
@@ -361,7 +392,7 @@ export function chatTab(domain) {
     if (!quiet) clear(turns).append(loading());
     held = [];
     try {
-      const conv = await api.get(cur.path);
+      const conv = cur.draft ? { turns: [] } : await api.get(cur.path);
       clear(turns);
       if (conv.provider && [...provider.options].some((o) => o.value === conv.provider)) provider.value = conv.provider;
       fillModels();
@@ -519,7 +550,10 @@ export function chatTab(domain) {
       if (!house && provider.value && provider.value !== agentCfg.provider) {
         await api.patch(`/sites/${enc(domain)}/manifest`, { agent: { ...agentCfg, provider: provider.value, model: model.value } });
       }
+      await ensure();
       const r = await api.post(cur.path, { text: msg, model: model.value || undefined });
+      // The title comes from this message: the list shows it now.
+      fillPicker();
       if (r && r.queued) {
         // Kept for when the running turn ends; it goes out with any other
         // queued message as the next one.
@@ -584,6 +618,7 @@ export function chatTab(domain) {
   async function showUploads() {
     clear(chips);
     let ups = [];
+    if (cur.draft) return;
     try { ups = await api.get(`${cur.path}/files`); } catch { ups = []; }
     for (const u of ups) {
       const x = h("button", { type: "button", class: "btn sm ghost", "aria-label": t("chat.removeFile", { name: u.name }) }, "×");
@@ -592,6 +627,7 @@ export function chatTab(domain) {
     }
   }
   async function upload(files) {
+    try { await ensure(); } catch (e) { toastError(e); return; }
     for (const f of files) {
       try { await api.postRaw(`${cur.path}/files?name=${enc(f.name)}`, f, f.type || "application/octet-stream"); }
       catch (e) { toastError(e); }
@@ -603,7 +639,9 @@ export function chatTab(domain) {
   el.addEventListener("dragover", (e) => { e.preventDefault(); });
   el.addEventListener("drop", (e) => { e.preventDefault(); if (e.dataTransfer && e.dataTransfer.files.length) upload([...e.dataTransfer.files]); });
   subs.push(onEvent("agent.started", (ev) => { if (ev.subject === cur.name) showUploads(); }));
+  // The running mark beside each conversation follows the turns.
+  subs.push(onEvent("agent.", (ev) => { if (/^agent\.(started|done|error)$/.test(ev.type) && ev.subject && ev.subject.split("#")[0] === domain) fillPicker(); }));
 
-  loadAgents().then(fillPicker).then(loadTurns).then(showUploads);
+  loadAgents().then(() => fillPicker(true)).then(() => loadTurns()).then(showUploads);
   return { el, destroy() { subs.forEach((u) => u()); } };
 }

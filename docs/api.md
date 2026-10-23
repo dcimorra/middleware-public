@@ -410,8 +410,9 @@ through the manifest; these routes are what the panel reads beside them.
 | GET | `/sites/{domain}/chat/files` | → `[{name, bytes}]` attachments that go with the next message |
 | POST | `/sites/{domain}/chat/files` | `?name=file.ext`, raw body (25 MB) → `{name, bytes}` |
 | DELETE | `/sites/{domain}/chat/files/{file}` | → `{ok}` |
-| GET | `/sites/{domain}/chats` | the site's other conversations → `[{name, id, origin: panel|site, title, tools, created, turns, hidden, running}]`; `?all=1` includes those `claude_api.hide_chats` hides |
+| GET | `/sites/{domain}/chats` | the site's other conversations, the last used first → `[{name, id, origin: panel|site, title, tools, created, updated, turns, hidden, running}]`; `?all=1` includes those `claude_api.hide_chats` hides, `?main=1` the first conversation too (empty `id`). A conversation is titled by its first message; a panel one without messages is not listed |
 | POST | `/sites/{domain}/chats` | `{title?}` → `{name, id}` (201); another conversation of the panel's |
+| DELETE | `/sites/{domain}/chats` | forgets every conversation the panel holds, the first included, with their attachments → `{purged}`; the site's code's own stay; 409 while one is at work |
 | GET | `/sites/{domain}/chats/{id}` | as `/sites/{domain}/chat` |
 | POST | `/sites/{domain}/chats/{id}` | as `/sites/{domain}/chat`; 409 for a conversation the site's code opened (read and stop it, do not write into it) |
 | DELETE | `/sites/{domain}/chats/{id}` | → `{ok}` |
@@ -422,6 +423,19 @@ through the manifest; these routes are what the panel reads beside them.
 | GET | `/sites/{domain}/chats/{id}/files` | as above |
 | POST | `/sites/{domain}/chats/{id}/files` | as above |
 | DELETE | `/sites/{domain}/chats/{id}/files/{file}` | as above |
+| GET | `/chat/middleware/chats` | as for a site, for the house's conversations |
+| POST | `/chat/middleware/chats` | as for a site, for the house's conversations |
+| DELETE | `/chat/middleware/chats` | as for a site, for the house's conversations |
+| GET | `/chat/middleware/chats/{id}` | as for a site, for the house's conversations |
+| POST | `/chat/middleware/chats/{id}` | as for a site, for the house's conversations |
+| DELETE | `/chat/middleware/chats/{id}` | as for a site, for the house's conversations |
+| POST | `/chat/middleware/chats/{id}/stop` | as for a site, for the house's conversations |
+| POST | `/chat/middleware/chats/{id}/reap` | as for a site, for the house's conversations |
+| GET | `/chat/middleware/chats/{id}/processes` | as for a site, for the house's conversations |
+| POST | `/chat/middleware/chats/{id}/processes/{pid}/kill` | as for a site, for the house's conversations |
+| GET | `/chat/middleware/chats/{id}/files` | as for a site, for the house's conversations |
+| POST | `/chat/middleware/chats/{id}/files` | as for a site, for the house's conversations |
+| DELETE | `/chat/middleware/chats/{id}/files/{file}` | as for a site, for the house's conversations |
 | GET | `/chat/middleware` | the conversation about the installation itself, same shapes; it works in the root of the installation and may create new sites, but never edits one that already existed when its turn began |
 | POST | `/chat/middleware` | as above |
 | DELETE | `/chat/middleware` | as above |

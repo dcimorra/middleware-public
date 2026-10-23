@@ -93,9 +93,30 @@ type Summary struct {
 	Title   string    `json:"title,omitempty"`
 	Tools   string    `json:"tools,omitempty"`
 	Created time.Time `json:"created,omitzero"`
+	// Updated is the last turn's time, or Created without one.
+	Updated time.Time `json:"updated,omitzero"`
 	Turns   int       `json:"turns"`
 	Hidden  bool      `json:"hidden,omitempty"`
 	Running bool      `json:"running"`
+}
+
+// summaryOf is a conversation as a list shows it. One written before
+// titles were given is titled by its first message here.
+func (m *Manager) summaryOf(name string, c Conversation) Summary {
+	_, id := split(name)
+	sm := Summary{Name: name, ID: id, Origin: c.Origin, Title: c.Title, Tools: c.Tools, Created: c.Created, Updated: c.Created, Turns: len(c.Turns), Hidden: c.Hidden, Running: m.Running(name)}
+	if sm.Origin == "" {
+		sm.Origin = OriginPanel
+	}
+	for _, t := range c.Turns {
+		if sm.Title == "" && t.Role == "user" {
+			sm.Title = TitleOf(t.Text)
+		}
+		if t.At.After(sm.Updated) {
+			sm.Updated = t.At
+		}
+	}
+	return sm
 }
 
 // CreateOptions open a conversation.
@@ -155,10 +176,92 @@ func (m *Manager) List(domain string) []Summary {
 			continue
 		}
 		name := Name(domain, id)
-		out = append(out, Summary{Name: name, ID: id, Origin: c.Origin, Title: c.Title, Tools: c.Tools, Created: c.Created, Turns: len(c.Turns), Hidden: c.Hidden, Running: m.Running(name)})
+		// A panel conversation that never got a message is not one yet:
+		// the panel opens it when the first message goes, and the empty
+		// ones older panels left behind are not listed as if they were.
+		if c.Origin != OriginSite && len(c.Turns) == 0 && !m.Running(name) {
+			continue
+		}
+		out = append(out, m.summaryOf(name, c))
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Created.After(out[j].Created) })
+	sort.Slice(out, func(i, j int) bool { return out[i].Updated.After(out[j].Updated) })
 	return out
+}
+
+// Main is the panel's first conversation of domain, as a list shows it,
+// and false when it has no message yet.
+func (m *Manager) Main(domain string) (Summary, bool) {
+	var c Conversation
+	if fsx.ReadJSON(m.file(domain), &c) != nil || (len(c.Turns) == 0 && !m.Running(domain)) {
+		return Summary{}, false
+	}
+	return m.summaryOf(domain, c), true
+}
+
+// TitleOf names a conversation after its first message: its first line,
+// cut at sixty characters.
+func TitleOf(text string) string {
+	line := ""
+	for _, l := range strings.Split(text, "\n") {
+		if l = strings.Join(strings.Fields(l), " "); l != "" {
+			line = l
+			break
+		}
+	}
+	if r := []rune(line); len(r) > 60 {
+		line = strings.TrimSpace(string(r[:60])) + "…"
+	}
+	return line
+}
+
+// Purge forgets every conversation of domain the panel holds, its first
+// included, with their attachments. The ones the site's code opened
+// through its door stay: a program holds their names and would find them
+// gone on its next call. What the turns cost stays in the ledger. A
+// conversation at work stops the purge before anything is removed.
+func (m *Manager) Purge(domain string) (int, error) {
+	if _, err := m.workdir(domain); err != nil {
+		return 0, err
+	}
+	names := []string{domain}
+	ents, _ := os.ReadDir(filepath.Join(m.opts.Root, "data", "chat", domain))
+	for _, e := range ents {
+		id, ok := strings.CutSuffix(e.Name(), ".json")
+		if !ok || !validID(id) || id == "" {
+			continue
+		}
+		var c Conversation
+		if fsx.ReadJSON(filepath.Join(m.opts.Root, "data", "chat", domain, e.Name()), &c) == nil && c.Origin == OriginSite {
+			continue
+		}
+		names = append(names, Name(domain, id))
+	}
+	// Under the lock a turn cannot start between the check and the
+	// removal: Send takes the same lock to claim its slot.
+	m.mu.Lock()
+	for _, n := range names {
+		if _, busy := m.running[n]; busy {
+			m.mu.Unlock()
+			return 0, ErrBusy
+		}
+	}
+	n := 0
+	var failed error
+	for _, name := range names {
+		err := os.Remove(m.file(name))
+		if err == nil {
+			n++
+		} else if !os.IsNotExist(err) && failed == nil {
+			failed = err
+		}
+		_ = os.RemoveAll(m.uploadsDir(name))
+	}
+	m.mu.Unlock()
+	if failed != nil {
+		return n, failed
+	}
+	m.emit("chat.purged", domain, "", fmt.Sprintf("%d conversations forgotten", n), map[string]any{"count": n})
+	return n, nil
 }
 
 // Delete forgets a conversation that is not the panel's own.

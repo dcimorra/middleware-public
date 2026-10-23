@@ -475,7 +475,11 @@ dialog form.dlg { display: flex; flex-direction: column; max-height: calc(100vh 
 
 /* ---------- chat ---------- */
 .chat { display: flex; flex-direction: column; gap: 12px; min-height: 60vh; }
-.chat-head { display: flex; justify-content: flex-end; min-height: 1em; }
+.chat-head { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 6px; min-height: 1em; }
+/* The conversation's title is what tells them apart: as wide as it can be,
+   and a line of its own on a phone. */
+.chat-head select { flex: 1 1 260px; min-width: 0; max-width: 520px; }
+@media (max-width: 640px) { .chat-head select { flex-basis: 100%; max-width: none; } }
 .chat-capacity.full { color: var(--warn); font-weight: 600; }
 .chat-notice { margin: 0; }
 .chat-question { margin: 8px 0 4px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }

@@ -730,6 +730,9 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 		return "", err
 	}
 	c.Provider, c.Model = s.Provider, model
+	if c.Title == "" {
+		c.Title = TitleOf(text)
+	}
 	c.Turns = append(c.Turns, Turn{ID: turnID, Role: "user", Text: text, At: time.Now()})
 	if err := m.save(c); err != nil {
 		return fail(err)

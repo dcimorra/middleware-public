@@ -124,32 +124,45 @@ func (s *Server) RegisterAgents(o AgentsOptions) {
 	// the ones the site's code opened through the site door, which the
 	// panel reads and stops but does not write into (a program is on the
 	// other side of those, and its turns follow its own rules).
-	s.registerChat(o.Chat, Prefix+"/sites/{domain}/chats/{id}", func(r *http.Request) (string, error) {
+	s.registerChats(o.Chat, Prefix+"/sites/{domain}", domainOf)
+	s.registerChats(o.Chat, Prefix+"/chat/middleware", func(*http.Request) (string, error) { return chat.Middleware, nil })
+}
+
+// registerChats is the conversations of a site, or of the house, beyond
+// the first: the list, a new one, each by its id, and the purge.
+func (s *Server) registerChats(m *chat.Manager, base string, domainOf func(*http.Request) (string, error)) {
+	s.registerChat(m, base+"/chats/{id}", func(r *http.Request) (string, error) {
 		domain, err := domainOf(r)
 		if err != nil {
 			return "", err
 		}
 		name := chat.Name(domain, r.PathValue("id"))
-		if _, err := o.Chat.Conversation(name); err != nil || r.PathValue("id") == "" {
+		if _, err := m.Conversation(name); err != nil || r.PathValue("id") == "" {
 			return "", Errorf(http.StatusNotFound, "no such conversation")
 		}
 		return name, nil
 	})
-	s.Handle("GET", Prefix+"/sites/{domain}/chats", "The site's other conversations: the panel's and the ones its code opened (?all=1 includes those the manifest hides)", func(w http.ResponseWriter, r *http.Request) (any, error) {
+	s.Handle("GET", base+"/chats", "The other conversations, the last used first: the panel's and the ones the site's code opened (?all=1 includes those the manifest hides, ?main=1 the first conversation too, with an empty id)", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		domain, err := domainOf(r)
 		if err != nil {
 			return nil, err
 		}
 		out := []chat.Summary{}
-		for _, sm := range o.Chat.List(domain) {
+		for _, sm := range m.List(domain) {
 			if sm.Hidden && !isTrue(r.URL.Query().Get("all")) {
 				continue
 			}
 			out = append(out, sm)
 		}
+		if isTrue(r.URL.Query().Get("main")) {
+			if sm, ok := m.Main(domain); ok {
+				out = append(out, sm)
+				sort.SliceStable(out, func(i, j int) bool { return out[i].Updated.After(out[j].Updated) })
+			}
+		}
 		return out, nil
 	})
-	s.Handle("POST", Prefix+"/sites/{domain}/chats", "Open another conversation about the site (body: title?)", func(w http.ResponseWriter, r *http.Request) (any, error) {
+	s.Handle("POST", base+"/chats", "Open another conversation (body: title?); the panel opens it when its first message goes, and one without messages is not listed", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		domain, err := domainOf(r)
 		if err != nil {
 			return nil, err
@@ -162,13 +175,24 @@ func (s *Server) RegisterAgents(o AgentsOptions) {
 				return nil, err
 			}
 		}
-		name, err := o.Chat.Create(domain, chat.CreateOptions{Origin: chat.OriginPanel, Title: body.Title})
+		name, err := m.Create(domain, chat.CreateOptions{Origin: chat.OriginPanel, Title: body.Title})
 		if err != nil {
 			return nil, chatError(err)
 		}
 		_, id, _ := strings.Cut(name, "#")
 		WriteJSON(w, http.StatusCreated, map[string]string{"name": name, "id": id})
 		return Handled, nil
+	})
+	s.Handle("DELETE", base+"/chats", "Forget every conversation the panel holds, the first included, with their attachments; the site's code's own stay. 409 while one is at work", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		domain, err := domainOf(r)
+		if err != nil {
+			return nil, err
+		}
+		n, err := m.Purge(domain)
+		if err != nil {
+			return nil, chatError(err)
+		}
+		return map[string]int{"purged": n}, nil
 	})
 }
 
