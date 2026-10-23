@@ -476,7 +476,23 @@ export function chatTab(domain) {
       late.forEach(handle);
     }
   }
-  function scroll() { turns.lastElementChild && turns.lastElementChild.scrollIntoView({ block: "end" }); }
+  // Following the conversation is keeping the end of the whole chat (the
+  // box and its controls included) at the bottom of the screen. It used to
+  // bring the last turn's bottom there, which pushed the box below the
+  // screen: whoever was at the end saw the page climb by the box's height
+  // with every step the agent took. It follows while the reader is at the
+  // end (or has just sent something); scrolled up to read, it stays put.
+  let following = true;
+  const atEnd = () => el.getBoundingClientRect().bottom - window.innerHeight < 160;
+  const onScroll = () => { following = atEnd(); };
+  window.addEventListener("scroll", onScroll, { passive: true });
+  subs.push(() => window.removeEventListener("scroll", onScroll));
+  function scroll(force) {
+    if (force) following = true;
+    if (!following || !el.isConnected) return;
+    // After the layout of what was just appended.
+    requestAnimationFrame(() => el.scrollIntoView({ block: "end" }));
+  }
 
   function begin() {
     const tu = turnEl("agent", "");
@@ -583,6 +599,7 @@ export function chatTab(domain) {
     turns.querySelector(".chat-notice")?.remove();
     const mine = turnEl("user", msg).el;
     turns.append(mine);
+    scroll(true);
     text.value = "";
     send.classList.add("busy");
     try {
