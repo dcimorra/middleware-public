@@ -589,15 +589,25 @@ func (e *Engine) Hosts() map[string]string {
 		if s.Manifest == nil {
 			continue
 		}
+		taken := func(h string) bool {
+			if owner, ok := e.aliases[h]; ok && owner != domain {
+				return true
+			}
+			if _, conflict := e.aliasConflicts[h]; conflict {
+				return true
+			}
+			_, isSite := e.sites[h]
+			return isSite
+		}
 		for _, h := range s.Manifest.Hosts(domain) {
 			if h != domain {
-				if owner, ok := e.aliases[h]; ok && owner != domain {
+				if taken(h) {
 					continue
 				}
-				if _, conflict := e.aliasConflicts[h]; conflict {
-					continue
-				}
-				if _, isSite := e.sites[h]; isSite {
+				// The www an extra domain brings goes with that domain:
+				// not this site's when the domain itself is not (another
+				// site's name, or claimed twice).
+				if base, ok := strings.CutPrefix(h, "www."); ok && base != domain && taken(base) {
 					continue
 				}
 			}

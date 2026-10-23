@@ -108,7 +108,7 @@ A site object:
 | PUT | `/sites/{domain}/file` | `?path=…`, raw body → `{ok}` |
 | POST | `/sites/{domain}/deploy` | → `{ok, build}` (runs `deploy.github.build`, writes the pointer); `{ok, via: "github"}` when the github module is enabled and the manifest has `deploy.github`: the module's runner fetches the repository first and answers at once, progress on `/events/stream` as `deploy.*` |
 | GET | `/sites/{domain}/env` | → `{resolved: {…}}` what the instance was born with (secrets masked) |
-| POST | `/sites/{domain}/rename` | `{to}` → site; the folder, its HOME, logs, conversations and cost move with it; published names are taken down and the new ones published on the same door |
+| POST | `/sites/{domain}/rename` | `{to, publish?}` → site; the folder, its HOME, logs, conversations and cost move with it; published names are taken down and the new ones published on the same door. A project (no dot) is given a domain this way (`publish: true` publishes it on the door for new sites); a site becomes a project only when nothing in it answers a hostname (no `run`, `upstream`, `static` or `aliases`) |
 | GET | `/sites/{domain}/download.zip` | the folder as a streamed zip without what an install or a build gives back (`node_modules`, builds, caches); `?all=1` for everything |
 | GET | `/sites/{domain}/shot.png` | the site's picture, taken through a door that skips its password; 404 until there is one. Asking keeps pictures renewing for an hour |
 | POST | `/sites/{domain}/shot` | take it now, whatever state the site is in; 501 without a headless Chromium |
@@ -354,9 +354,10 @@ need not point here yet) and DNS only after it; the A record uses
 
 | method | path | result |
 | --- | --- | --- |
-| GET | `/publish` | → `{name: {site, door, state, error?, attempts?, next?, at?, ip?}}`; state is `published`, `pending`, `failed` (retried with backoff, 1 min doubling to 1 h), `manual` (no DNS provider, or a zone it does not manage: a person points the name) or `retiring` |
-| POST | `/publish/retry` | → `{ok}`; every name not published is tried on the next pass, manual ones included |
-| POST | `/sites/{domain}/publish` | `{door?}` → `{lines, vulnerable?}`; every name of the site (its domain, aliases and the implicit `www.` of an apex) on that door, kept there from now on |
+| GET | `/publish` | → `{name: {site, door, state, error?, attempts?, next?, at?, ip?}}`; state is `published`, `pending`, `failed` (retried with backoff, 1 min doubling to 1 h), `manual` (no DNS provider, or a zone it does not manage: a person points the name), `conflict` (the zone already has an A, AAAA or CNAME on the name pointing somewhere that is not this house, said in `found`; nothing is written until `POST /publish/takeover`) or `retiring` |
+| POST | `/publish/takeover` | `{names}` → `{lines}`; the operator's yes: names in `conflict` are published on their site's door over what the zone had (`publish.takeover` event) |
+| POST | `/publish/retry` | → `{ok}`; every name not published is tried on the next pass, manual and conflict ones included (a conflict that is still there comes back as one) |
+| POST | `/sites/{domain}/publish` | `{door?}` → `{lines, vulnerable?}`; every name of the site (its domain, aliases and the implicit `www.` of every apex among them) on that door, kept there from now on |
 | POST | `/sites/{domain}/unpublish` | → `{lines}`; tunnel rules and the records that point at this house are removed, nothing else |
 
 `POST /sites` publishes the new site on the door for new sites when a DNS

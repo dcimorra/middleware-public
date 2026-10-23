@@ -597,6 +597,10 @@ func (s *Server) sitesRename(w http.ResponseWriter, r *http.Request) (any, error
 	}
 	var body struct {
 		To string `json:"to"`
+		// Publish puts the new name on the door for new sites even when
+		// the old one was not published: a project being given a domain
+		// was never published, and the domain is what it is given for.
+		Publish bool `json:"publish"`
 	}
 	if err := ReadJSON(r, &body); err != nil {
 		return nil, err
@@ -617,6 +621,9 @@ func (s *Server) sitesRename(w http.ResponseWriter, r *http.Request) (any, error
 	site, err := m.Rename(ctx, from, to)
 	if err != nil {
 		return nil, err
+	}
+	if body.Publish && !published && s.publisher != nil && !manifest.IsProject(to) {
+		published = true
 	}
 	if published {
 		go func() {

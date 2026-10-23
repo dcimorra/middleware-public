@@ -625,6 +625,14 @@ func (d cloudflareDNS) Unpublish(ctx context.Context, domain, ip string) error {
 	return c.Unpublish(ctx, domain, ip)
 }
 
+func (d cloudflareDNS) Foreign(ctx context.Context, domain string, ips ...string) (string, error) {
+	c, err := d.client()
+	if err != nil {
+		return "", err
+	}
+	return c.Foreign(ctx, domain, ips...)
+}
+
 func (d cloudflareDNS) Covers(ctx context.Context, domain string) (bool, error) {
 	c, err := d.client()
 	if err != nil {
@@ -634,8 +642,9 @@ func (d cloudflareDNS) Covers(ctx context.Context, domain string) (bool, error) 
 }
 
 var (
-	_ api.DNSProvider = cloudflareDNS{}
-	_ publish.DNS     = cloudflareDNS{}
+	_ api.DNSProvider   = cloudflareDNS{}
+	_ publish.DNS       = cloudflareDNS{}
+	_ publish.Inspector = cloudflareDNS{}
 )
 
 // dns01For is the ACME dns-01 solver over the cloudflare module, asked

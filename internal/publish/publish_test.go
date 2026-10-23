@@ -349,3 +349,47 @@ func TestAVPNOnlySiteIsNeverPublishedAndOneThatBecomesItIsTakenDown(t *testing.T
 		t.Fatalf("its record was not written again (want 2 writes):\n%s", f.dns.log())
 	}
 }
+
+// inspectingDNS is a provider that can say what a name points at.
+type inspectingDNS struct {
+	*fakeDNS
+	foreign map[string]string
+	asked   []string
+}
+
+func (d *inspectingDNS) Foreign(_ context.Context, name string, ips ...string) (string, error) {
+	d.asked = append(d.asked, name+" "+strings.Join(ips, ","))
+	return d.foreign[name], nil
+}
+
+func TestANameThatPointsElsewhereWaitsForTheOperatorsYes(t *testing.T) {
+	f := newFixture(t)
+	ins := &inspectingDNS{fakeDNS: f.dns, foreign: map[string]string{"www.a.example.com": "CNAME shop.elsewhere.net"}}
+	f.p.opts.DNS = func() DNS { return ins }
+	ctx := context.Background()
+	f.p.Publish(ctx, "a.example.com", "")
+	if got := f.dns.log(); strings.Contains(got, "www.a.example.com") || !strings.Contains(got, "publish a.example.com tunnel") {
+		t.Fatalf("calls:\n%s", got)
+	}
+	r := f.p.Records()["www.a.example.com"]
+	if r.State != StateConflict || r.Found != "CNAME shop.elsewhere.net" {
+		t.Fatalf("record %+v", r)
+	}
+	// The loop leaves it alone; only the operator takes it.
+	f.dns.calls = nil
+	f.p.Reconcile(ctx)
+	if f.dns.log() != "" {
+		t.Fatalf("a conflict was touched by the loop: %s", f.dns.log())
+	}
+	f.p.Takeover(ctx, []string{"www.a.example.com"})
+	if got := f.dns.log(); got != "door www.a.example.com tunnel\npublish www.a.example.com tunnel " {
+		t.Fatalf("takeover calls:\n%s", got)
+	}
+	if r := f.p.Records()["www.a.example.com"]; r.State != StatePublished || r.Found != "" || r.Takeover {
+		t.Fatalf("after takeover %+v", r)
+	}
+	// The house's own address counts as the house's: asked with it.
+	if !strings.Contains(strings.Join(ins.asked, "\n"), "a.example.com 203.0.113.10") {
+		t.Fatalf("asked %v", ins.asked)
+	}
+}

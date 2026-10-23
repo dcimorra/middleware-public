@@ -537,8 +537,31 @@ func TestARenamedSiteKeepsItsThingsAndRunsAgain(t *testing.T) {
 		}
 	}
 	waitSite(t, f.m, "new.test", func(s Site) bool { return s.Alive })
-	if _, err := f.m.Rename(context.Background(), "new.test", "tools"); err != ErrBadDomain {
-		t.Fatalf("a site renamed to a project: %v", err)
+	// It runs a process for a hostname: it cannot become a project, and
+	// says why.
+	if _, err := f.m.Rename(context.Background(), "new.test", "tools"); err == nil || !strings.Contains(err.Error(), "project") {
+		t.Fatalf("a site that serves a hostname renamed to a project: %v", err)
 	}
 	f.m.Delete(context.Background(), "new.test", false)
+}
+
+// A project is given a domain by renaming it: its things come along.
+func TestAProjectIsGivenADomain(t *testing.T) {
+	f := newFixture(t, false)
+	if _, err := f.m.Create("tools", &manifest.Manifest{Version: manifest.Version}, ""); err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(f.m.Root, "data", "homes", "tools"), 0o700)
+	os.WriteFile(filepath.Join(f.m.Root, "data", "homes", "tools", "mark"), []byte("1"), 0o600)
+	if _, err := f.m.Rename(context.Background(), "tools", "tools.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(f.m.Root, "data", "homes", "tools.example.com", "mark")); err != nil {
+		t.Fatal("its HOME did not come along")
+	}
+	// And back: with nothing that answers a hostname, it may be a project
+	// again.
+	if _, err := f.m.Rename(context.Background(), "tools.example.com", "tools"); err != nil {
+		t.Fatalf("back to a project: %v", err)
+	}
 }

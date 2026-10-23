@@ -109,6 +109,64 @@ function overviewTab(domain) {
   }
   subs.push(onEvent("publish.", () => loadPublished()));
 
+  // The names the site answers to: its own, the www of an apex (published
+  // and certified, and sent to the apex), and the extra domains, added and
+  // taken away here. Each one is published like the site's own name; one
+  // the zone already points elsewhere waits for a yes in the list above.
+  function domainsCard(m) {
+    const aliases = [...(m.aliases || [])];
+    const apex = domain.split(".").length === 2;
+    const list = h("div", { class: "stack-sm" });
+    const save = async (next, www) => {
+      const patch = { aliases: next.length ? next : null };
+      if (www !== undefined) patch.www = www ? null : false;
+      try {
+        await api.patch(`/sites/${enc(domain)}/manifest`, patch);
+        toast(t("site.domainsSaved"), "ok");
+      } catch (e) { toastError(e); }
+    };
+    const rows = [h("div", null, h("code", null, domain), " ", h("span", { class: "badge" }, t("site.domainMain")))];
+    if (apex) {
+      const www = checkbox(t("site.wwwToo", { name: "www." + domain }), { checked: m.www !== false });
+      www.input.addEventListener("change", () => save(aliases, www.input.checked));
+      rows.push(www.el);
+    }
+    for (const a of aliases) {
+      const x = h("button", { type: "button", class: "btn sm ghost", "aria-label": t("site.domainRemove", { name: a }) }, "×");
+      x.addEventListener("click", async () => {
+        if (!(await confirm({ title: t("site.domainRemoveQ", { name: a }), body: t("site.domainRemoveBody", { name: a }), confirmLabel: t("site.domainRemoveBtn"), danger: true }))) return;
+        save(aliases.filter((y) => y !== a));
+      });
+      rows.push(h("div", { class: "row" }, h("code", { class: "grow" }, a), x));
+    }
+    list.append(...rows);
+    const input = h("input", { type: "text", placeholder: "otro-dominio.com", autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
+    const add = h("button", { type: "submit", class: "btn" }, icon("plus"), t("site.domainAdd"));
+    const form = h("form", { class: "row", novalidate: true }, input, add);
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const v = input.value.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+      if (!v || v === domain || aliases.includes(v)) return;
+      save([...aliases, v]);
+    });
+    return h("div", { class: "card" }, h("h2", null, t("site.domains")), h("p", { class: "small muted" }, t("site.domainsHint")), list, form);
+  }
+
+  // A name the zone already points somewhere else: said, and taken only
+  // with an explicit yes, because the record may be somebody's shop or mail.
+  function conflictEl(name, r) {
+    const take = h("button", { type: "button", class: "btn sm danger" }, t("publish.takeover"));
+    take.addEventListener("click", async () => {
+      if (!(await confirm({ title: t("publish.takeoverQ", { name }), body: t("publish.takeoverBody", { name, found: r.found, site: domain }), confirmLabel: t("publish.takeover"), danger: true }))) return;
+      try {
+        await api.post("/publish/takeover", { names: [name] });
+        toast(t("publish.takenOver", { name }), "ok");
+        loadPublished();
+      } catch (e) { toastError(e); }
+    });
+    return h("div", { class: "small" }, h("span", { class: "dim" }, t("publish.conflictSays", { found: r.found })), " ", take);
+  }
+
   function render() {
     const s = store.site(domain);
     clear(el);
@@ -142,7 +200,7 @@ function overviewTab(domain) {
       // A plain link: the browser downloads with the session cookie, and a
       // site of gigabytes streams instead of passing through memory.
       actions.append(h("a", { class: "btn", href: apiURL(`/sites/${enc(domain)}/download.zip`), download: `${domain}.zip`, title: t("site.downloadHint") }, icon("download"), t("site.download")));
-      actions.append(btn(t("site.rename"), "edit", rename));
+      actions.append(btn(t(mode === "project" ? "site.giveDomain" : "site.rename"), "edit", rename));
       actions.append(btn(t("site.exec"), "terminal", runCommand));
     }
     actions.append(btn(t("site.delete"), "trash", del, "danger"));
@@ -162,15 +220,16 @@ function overviewTab(domain) {
       [t("site.picture"), mode === "project" || unmanaged ? null : sitePicture()],
       [t("site.published"), published.length ? h("div", { class: "stack-sm" }, ...published.map(([name, r]) => h("div", null,
         h("code", null, name), " ",
-        h("span", { class: "badge " + ({ published: "ok", failed: "bad", manual: "warn", retiring: "warn" }[r.state] || ""), title: r.error || "" }, t("publish.state." + r.state)),
+        h("span", { class: "badge " + ({ published: "ok", failed: "bad", manual: "warn", retiring: "warn", conflict: "bad" }[r.state] || ""), title: r.error || "" }, t("publish.state." + r.state)),
         " ", h("span", { class: "small muted" }, t("inbound.door." + r.door)),
-        r.error ? h("div", { class: "small dim" }, r.error) : null,
+        r.state === "conflict" ? conflictEl(name, r) : r.error ? h("div", { class: "small dim" }, r.error) : null,
       ))) : (mode === "project" ? null : h("span", { class: "muted" }, t("site.notPublished")))],
     ];
 
     append(el, [
       h("div", { class: "card" }, h("h2", null, t("site.tab.overview")), kv(pairs), h("hr"), actions),
       unmanaged ? notice("warn", t("site.unmanagedNotice")) : null,
+      unmanaged || mode === "project" ? null : domainsCard(m),
       workersCard(s),
       unmanaged ? null : door,
       unmanaged ? null : h("div", { class: "card" }, h("h2", null, t("site.env")), h("p", { class: "small muted" }, t("site.envHint")), envBox),
@@ -344,13 +403,17 @@ function overviewTab(domain) {
   }
 
   async function rename() {
-    const to = h("input", { type: "text", value: domain, autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
+    // A project (no dot) is given a domain the same way, and published on
+    // it unless the box is cleared.
+    const project = !domain.includes(".");
+    const to = h("input", { type: "text", value: project ? "" : domain, placeholder: project ? "example.com" : "", autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
+    const pub = checkbox(t("site.renamePublish"), { checked: true });
     const made = await open({
-      title: t("site.renameQ", { domain }),
-      body: [h("p", { class: "dim" }, t("site.renameBody")), field(t("site.renameTo"), to)],
-      buttons: [{ label: t("common.cancel"), value: null }, { label: t("site.rename"), submit: true, primary: true }],
+      title: t(project ? "site.giveDomainQ" : "site.renameQ", { domain }),
+      body: [h("p", { class: "dim" }, t(project ? "site.giveDomainBody" : "site.renameBody")), field(t(project ? "site.giveDomainTo" : "site.renameTo"), to), project ? pub.el : null],
+      buttons: [{ label: t("common.cancel"), value: null }, { label: t(project ? "site.giveDomain" : "site.rename"), submit: true, primary: true }],
       onSubmit: async () => {
-        const r = await api.post(`/sites/${enc(domain)}/rename`, { to: to.value.trim().toLowerCase() });
+        const r = await api.post(`/sites/${enc(domain)}/rename`, { to: to.value.trim().toLowerCase(), publish: project && pub.input.checked });
         store.dropSite(domain);
         if (r && r.domain) store.putSite(r);
         return r.domain;

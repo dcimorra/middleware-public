@@ -556,13 +556,23 @@ func (m *Manager) DeleteArchive(name string) error {
 // conversations and its cost record, so the site under its new name is
 // the same site and not a stranger with the old one's files. It is
 // stopped first and comes back as it was.
+//
+// A project (a name without a dot) may be given a domain this way, and a
+// site may become a project when nothing in it answers a hostname: the
+// manifest has to hold under the new name, and the reason is said when it
+// does not.
 func (m *Manager) Rename(ctx context.Context, from, to string) (Site, error) {
-	if !manifest.ValidName(to) || manifest.IsProject(from) != manifest.IsProject(to) {
+	if !manifest.ValidName(to) {
 		return Site{}, ErrBadDomain
 	}
 	dir, err := m.managedDir(from)
 	if err != nil {
 		return Site{}, err
+	}
+	if manifest.IsProject(to) && !manifest.IsProject(from) {
+		if mf, err := manifest.Load(dir); err == nil && (mf.Run != nil || mf.Upstream != "" || mf.Static != nil || len(mf.Aliases) > 0) {
+			return Site{}, fmt.Errorf("%s serves a hostname (run, upstream, static or aliases): a project answers none, so it cannot become %s; take those out of its manifest first", from, to)
+		}
 	}
 	if fsx.Exists(m.Dir(to)) {
 		return Site{}, ErrExists

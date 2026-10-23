@@ -49,7 +49,7 @@ export function inboundScreen() {
         cell(h("a", { class: "cell-link", href: `#/sites/${enc(d.domain)}` }, d.domain), null, "primary"),
         cell(doorBadge(d.door), t("inbound.col.door")),
         cell(dnsBadge(d.dns), t("inbound.col.dns")),
-        cell(d.published ? h("span", { class: "badge " + ({ published: "ok", failed: "bad", manual: "warn", retiring: "warn" }[d.published] || ""), title: d.publish_error || "" }, t("publish.state." + d.published)) : h("span", { class: "muted" }, "—"), t("inbound.col.published")),
+        cell(d.published ? h("span", { class: "badge " + ({ published: "ok", failed: "bad", manual: "warn", retiring: "warn", conflict: "bad" }[d.published] || ""), title: d.publish_error || "" }, t("publish.state." + d.published)) : h("span", { class: "muted" }, "—"), t("inbound.col.published")),
         // Renewal is automatic, thirty days before expiry (checked hourly):
         // the hover says when, so nobody wonders whether to press Renew.
         cell(exp ? h("span", { class: "status", title: t("inbound.certAuto", { expires: fmtTime(exp), renews: fmtTime(new Date(new Date(exp) - 30 * 86400000)) }) },

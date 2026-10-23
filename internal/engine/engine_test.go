@@ -389,6 +389,12 @@ func TestAnAliasServesItsSiteUnlessAnotherSiteHasThatName(t *testing.T) {
 	if sn, _ := e.Lookup("l.test"); sn.Domain != "l.test" {
 		t.Fatalf("an alias took over a site of its own: %s", sn.Domain)
 	}
+	// The www of an extra domain goes with it, and not with a site that
+	// only tried to claim another site's name.
+	hosts := e.Hosts()
+	if hosts["www.k-alias.test"] != "k.test" || hosts["www.l.test"] != "l.test" {
+		t.Fatalf("www owners: k-alias %q, l %q", hosts["www.k-alias.test"], hosts["www.l.test"])
+	}
 }
 
 func TestAProjectRunsItsWorkersAndServesNothing(t *testing.T) {

@@ -54,6 +54,12 @@ type DNS interface {
 	Unpublish(ctx context.Context, name, ip string) error
 }
 
+// Inspector is a provider that can say what a name already points at
+// that is not this house; empty is nothing, or only this house.
+type Inspector interface {
+	Foreign(ctx context.Context, name string, ips ...string) (string, error)
+}
+
 // Doors is what the inbound hook offers: certificates and recorded doors.
 type Doors interface {
 	Move(ctx context.Context, domains []string, to inbound.Door) []inbound.Line
@@ -93,6 +99,10 @@ const (
 	StateManual = "manual"
 	// StateRetiring is a name being unpublished that has not finished.
 	StateRetiring = "retiring"
+	// StateConflict is a name whose zone already points it somewhere
+	// else (Record.Found): nothing is written until the operator says
+	// to take it (Takeover).
+	StateConflict = "conflict"
 )
 
 // Record is what the house knows about one published name.
@@ -107,6 +117,11 @@ type Record struct {
 	// IP is the A record's address when published on the ports door, so
 	// unpublishing knows which record is the house's.
 	IP string `json:"ip,omitempty"`
+	// Found is what the zone had on the name, pointing elsewhere, when it
+	// was found in conflict; Takeover is the operator's yes to replacing
+	// it.
+	Found    string `json:"found,omitempty"`
+	Takeover bool   `json:"takeover,omitempty"`
 }
 
 // Intent is a site the operator published.
@@ -430,7 +445,7 @@ func (p *Publisher) reconcileSiteLocked(ctx context.Context, site string) []inbo
 		if (!published || !current[h]) && r.State != StateRetiring {
 			r.State, r.Next = StateRetiring, time.Time{}
 		}
-		if r.State == StatePublished || r.State == StateManual || now.Before(r.Next) {
+		if r.State == StatePublished || r.State == StateManual || r.State == StateConflict || now.Before(r.Next) {
 			continue
 		}
 		todo = append(todo, h)
@@ -488,6 +503,23 @@ func (p *Publisher) publish(ctx context.Context, name string, r *Record) inbound
 			return p.failed(name, r, err)
 		}
 	}
+	if in, ok := dns.(Inspector); ok && !r.Takeover {
+		// What points at this house is the house's to move (another door,
+		// an address it published before): only what points elsewhere
+		// stops here. Before the certificate, which would be asked for a
+		// name the operator may not give.
+		now := ip
+		if now == "" {
+			now, _ = p.publicIP(ctx)
+		}
+		found, err := in.Foreign(ctx, name, now, r.IP)
+		if err != nil {
+			return p.failed(name, r, err)
+		}
+		if found != "" {
+			return p.conflict(name, r, found)
+		}
+	}
 	for _, l := range p.opts.Doors.Move(ctx, []string{name}, r.Door) {
 		if l.Status == "fail" {
 			return p.failed(name, r, errors.New(strings.TrimPrefix(l.Text, name+": ")))
@@ -497,6 +529,7 @@ func (p *Publisher) publish(ctx context.Context, name string, r *Record) inbound
 		return p.failed(name, r, err)
 	}
 	r.State, r.Error, r.Attempts, r.Next, r.At, r.IP = StatePublished, "", 0, time.Time{}, p.opts.Now(), ip
+	r.Found, r.Takeover = "", false
 	p.emit("publish.published", name, "", "on the "+string(r.Door)+" door", map[string]any{"site": r.Site})
 	return inbound.Line{Status: "ok", Text: name + ": published on the " + string(r.Door) + " door"}
 }
@@ -520,6 +553,43 @@ func (p *Publisher) retire(ctx context.Context, name string, r *Record) (inbound
 	_ = p.opts.Doors.Forget(name)
 	p.emit("publish.unpublished", name, "", "route and records removed", map[string]any{"site": r.Site})
 	return inbound.Line{Status: "ok", Text: name + ": unpublished"}, true
+}
+
+func (p *Publisher) conflict(name string, r *Record, found string) inbound.Line {
+	why := name + " already points elsewhere (" + found + "): nothing was changed; take it to point it at this site"
+	if r.State != StateConflict || r.Found != found {
+		p.emit("publish.conflict", name, "warn", why, map[string]any{"site": r.Site, "found": found})
+	}
+	r.State, r.Error, r.Found, r.Next = StateConflict, why, found, time.Time{}
+	return inbound.Line{Status: "skip", Text: why}
+}
+
+// Takeover is the operator's yes to replacing what the zone has on names
+// found in conflict: they are published on their site's door now, over
+// whatever they pointed at. A name not in conflict is left as it is.
+func (p *Publisher) Takeover(ctx context.Context, names []string) []inbound.Line {
+	p.work.Lock()
+	defer p.work.Unlock()
+	p.mu.Lock()
+	sites := map[string]bool{}
+	var lines []inbound.Line
+	for _, n := range names {
+		n = strings.ToLower(strings.TrimSpace(n))
+		r := p.f.Names[n]
+		if r == nil || r.State != StateConflict {
+			lines = append(lines, inbound.Line{Status: "skip", Text: n + ": not in conflict"})
+			continue
+		}
+		r.Takeover, r.State, r.Next = true, StatePending, time.Time{}
+		sites[r.Site] = true
+		p.emit("publish.takeover", n, "warn", "the operator took "+n+" from "+r.Found, map[string]any{"site": r.Site, "found": r.Found})
+	}
+	_ = p.saveLocked()
+	p.mu.Unlock()
+	for s := range sites {
+		lines = append(lines, p.reconcileSiteLocked(ctx, s)...)
+	}
+	return lines
 }
 
 func (p *Publisher) manual(name string, r *Record, why string) inbound.Line {
@@ -564,7 +634,9 @@ func (p *Publisher) Retry() {
 	p.mu.Lock()
 	for _, r := range p.f.Names {
 		if r.State != StatePublished {
-			if r.State == StateManual {
+			if r.State == StateManual || r.State == StateConflict {
+				// A conflict is looked at again, not taken: if the zone
+				// still points elsewhere it comes back as one.
 				r.State = StatePending
 			}
 			r.Next = time.Time{}

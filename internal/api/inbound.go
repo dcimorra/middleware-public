@@ -200,6 +200,20 @@ func (s *Server) registerPublish(pub *publish.Publisher, h *inbound.Hook) {
 	s.Handle("GET", Prefix+"/publish", "What the house published: every name, its door and its state", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		return pub.Records(), nil
 	})
+	s.Handle("POST", Prefix+"/publish/takeover", "Point names found in conflict at their site, replacing what the zone had on them (body: names); only the operator's yes does this", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		var body struct {
+			Names []string `json:"names"`
+		}
+		if err := ReadJSON(r, &body); err != nil {
+			return nil, err
+		}
+		if len(body.Names) == 0 {
+			return nil, Errorf(http.StatusBadRequest, "names: empty")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		return map[string]any{"lines": pub.Takeover(ctx, body.Names)}, nil
+	})
 	s.Handle("POST", Prefix+"/publish/retry", "Retry every name that is not published now, manual ones included", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		pub.Retry()
 		return OK, nil

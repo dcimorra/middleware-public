@@ -165,8 +165,13 @@ func TestHostsCarryTheAliasesAndTheImplicitWww(t *testing.T) {
 	if got := strings.Join(m.Hosts("a.example"), ","); got != "a.example,shop.example.org,www.a.example" {
 		t.Fatalf("apex: %s", got)
 	}
-	if got := strings.Join(m.Hosts("sub.a.example"), ","); got != "sub.a.example,shop.example.org,a.example" {
+	// An extra domain that is an apex brings its www too.
+	if got := strings.Join(m.Hosts("sub.a.example"), ","); got != "sub.a.example,shop.example.org,a.example,www.a.example" {
 		t.Fatalf("subdomain: %s", got)
+	}
+	m2, _ := Parse([]byte(`{"version":2,"aliases":["patata.es","www.patata.org"]}`))
+	if got := strings.Join(m2.Hosts("patata.com"), ","); got != "patata.com,patata.es,www.patata.org,www.patata.com,www.patata.es" {
+		t.Fatalf("apex aliases: %s", got)
 	}
 	no := false
 	m.WWW = &no

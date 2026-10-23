@@ -362,3 +362,28 @@ func TestAnAccountTokenIsVerifiedAgainstItsAccount(t *testing.T) {
 		t.Fatal("an account token verified without its account")
 	}
 }
+
+func TestForeignNamesWhatPointsElsewhereAndNotWhatIsTheHouses(t *testing.T) {
+	f := newFakeAPI()
+	defer f.srv.Close()
+	f.records["z1"] = []Record{
+		{ID: "r1", Type: "CNAME", Name: "www.example.com", Content: "shops.myshopify.com"},
+		{ID: "r2", Type: "CNAME", Name: "app.example.com", Content: "tun1.cfargotunnel.com"},
+		{ID: "r3", Type: "A", Name: "api.example.com", Content: "203.0.113.10"},
+		{ID: "r4", Type: "MX", Name: "example.com", Content: "mail.example.net"},
+	}
+	ctx := context.Background()
+	c := f.client()
+	if got, err := c.Foreign(ctx, "www.example.com", "203.0.113.10"); err != nil || got != "CNAME shops.myshopify.com" {
+		t.Fatalf("www: %q %v", got, err)
+	}
+	for _, name := range []string{"app.example.com", "api.example.com", "new.example.com"} {
+		if got, _ := c.Foreign(ctx, name, "203.0.113.10"); got != "" {
+			t.Errorf("%s is the house's or empty, got %q", name, got)
+		}
+	}
+	// A mail record on the apex is not a record Publish would replace.
+	if got, _ := c.Foreign(ctx, "example.com", "203.0.113.10"); got != "" {
+		t.Fatalf("apex: %q", got)
+	}
+}

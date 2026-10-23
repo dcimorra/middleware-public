@@ -660,12 +660,23 @@ func (m *Manifest) Hosts(name string) []string {
 			out = append(out, h)
 		}
 	}
+	// The www of every apex the site answers to, its own name's and an
+	// extra domain's alike: whoever registers patata.com means
+	// www.patata.com too. It is published and certified, and the proxy
+	// sends it to the site's name.
+	www := m.WWW == nil || *m.WWW
+	apex := func(h string) {
+		if www && strings.Count(h, ".") == 1 && !strings.HasPrefix(h, "www.") {
+			add("www." + strings.ToLower(strings.TrimSuffix(strings.TrimSpace(h), ".")))
+		}
+	}
 	add(name)
 	for _, a := range m.Aliases {
 		add(a)
 	}
-	if (m.WWW == nil || *m.WWW) && strings.Count(name, ".") == 1 && !strings.HasPrefix(name, "www.") {
-		add("www." + name)
+	apex(name)
+	for _, a := range m.Aliases {
+		apex(a)
 	}
 	return out
 }

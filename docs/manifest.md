@@ -332,7 +332,11 @@ process.
 - `autofix: false` keeps the automatic repair (Settings) away from this
   site, whatever the installation says; the panel cannot override it.
 - `aliases` are served exactly like the site. A name that is already a site,
-  or that two sites claim, is served by neither, and an event says so.
+  or that two sites claim, is served by neither, and an event says so. An
+  alias that is an apex (`patata.es`) brings its `www.` with it, as the
+  site's own apex name does: published, certified and sent to the site
+  (`"www": false` turns both off). A name the zone already points
+  elsewhere is not taken without the operator's yes (api.md, Publishing).
 
 ## Workers
 

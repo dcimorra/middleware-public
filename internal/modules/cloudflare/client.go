@@ -560,6 +560,46 @@ func (c *Client) Publish(ctx context.Context, domain, mode, ip string) error {
 	}
 }
 
+// Foreign says which A, AAAA or CNAME records on domain point somewhere
+// that is not this house (the tunnel, or one of ips), as "A 1.2.3.4,
+// CNAME x.example"; empty when there are none. Publish replaces whatever
+// is on the name, so the publisher asks this first: a record somebody else
+// pointed (a mail host's www, a shop on another server) is never taken
+// without the operator saying so.
+func (c *Client) Foreign(ctx context.Context, domain string, ips ...string) (string, error) {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	zone, err := c.FindZone(ctx, domain)
+	if err != nil {
+		return "", err
+	}
+	recs, err := c.DNSRecords(ctx, zone.ID)
+	if err != nil {
+		return "", err
+	}
+	ours := map[string]bool{}
+	if c.TunnelID != "" {
+		ours[strings.ToLower(c.TunnelTarget())] = true
+	}
+	for _, ip := range ips {
+		if ip != "" {
+			ours[ip] = true
+		}
+	}
+	var found []string
+	for _, r := range recs {
+		if !strings.EqualFold(r.Name, domain) {
+			continue
+		}
+		switch r.Type {
+		case "A", "AAAA", "CNAME":
+			if !ours[strings.ToLower(strings.TrimSuffix(r.Content, "."))] {
+				found = append(found, r.Type+" "+r.Content)
+			}
+		}
+	}
+	return strings.Join(found, ", "), nil
+}
+
 // Unpublish undoes Publish for domain: the tunnel rule goes, and the A or
 // CNAME record goes only when it points at this house (the tunnel's
 // target, or ip). A record pointing anywhere else was written by someone
