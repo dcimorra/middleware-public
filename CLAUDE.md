@@ -54,3 +54,29 @@ go vet ./...
 go test -race ./...
 go build -o middleware ./cmd/middleware
 ```
+
+Use the `gofmt` of the Go version CI runs (the `go` line in `go.mod`): an
+older local one disagrees with CI on formatting. The full `-race` run takes
+minutes; where a session can be cut short, run it detached with its output
+in a file and read the file.
+
+## After every change: test, push, then ask before releasing
+
+A change is not finished when the code is written. Every time, without
+being asked:
+
+1. Run the checks above, the full test suite included. A failure is
+   fixed, not reported and left.
+2. Commit (conventional commit) and push to `main`.
+3. Wait for the `ci` workflow on that commit and confirm it is green.
+4. Say what changed and **ask whether to publish a new version**. Never
+   tag on your own: a release reaches every server with automatic updates
+   on.
+5. On yes: an annotated tag with the next prerelease number
+   (`git tag -a v2.0.0-alpha.N -m v2.0.0-alpha.N`, N one above the last
+   tag), pushed. The `release` workflow builds and publishes it; wait for
+   it and check that the release has its four assets (the amd64 and arm64
+   binaries and a `.sha256` for each) before saying it is out.
+
+The person may batch several changes into one release, or say not yet:
+then the next change asks again.
