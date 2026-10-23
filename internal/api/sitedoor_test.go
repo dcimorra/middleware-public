@@ -325,7 +325,7 @@ func TestTheStreamSendsAConversationsMessagesAndItsEnd(t *testing.T) {
 func TestTheGatewayRunsTheAgentItsManifestNamesWithThePermissionsItGrants(t *testing.T) {
 	codex := &answeringProvider{answer: "from codex", key: "openai", cost: -1}
 	f, keys, claude, _ := doorFixture(t, map[string]string{
-		"o.test": `{"version":2,"claude_api":{"provider":"openai","permissions":["read","edit"],"model":"gpt-5.5","daily_turns":2}}`,
+		"o.test": `{"version":2,"claude_api":{"provider":"openai","permissions":["read","edit"],"model":"gpt-5.5","daily_turns":3}}`,
 		"c.test": `{"version":2,"claude_api":{"permissions":["web"]}}`,
 	}, codex)
 	code, out := f.asSite(keys, "o.test", "POST", "/api/v1/site/claude/ask", map[string]any{"prompt": "hi"})
@@ -336,8 +336,9 @@ func TestTheGatewayRunsTheAgentItsManifestNamesWithThePermissionsItGrants(t *tes
 	if strings.Join(r.Tools, ",") != "Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit" || strings.Join(r.Disallowed, ",") != "Task" {
 		t.Fatalf("codex ran with %v / %v", r.Tools, r.Disallowed)
 	}
-	// Another agent's model is refused before anything runs.
-	if code, out := f.asSite(keys, "o.test", "POST", "/api/v1/site/claude/ask", map[string]any{"prompt": "x", "model": "sonnet"}); code != 400 {
+	// A site written for Claude names "sonnet" in every call: the agent and
+	// model chosen in the panel run instead, and the answer says so.
+	if code, out := f.asSite(keys, "o.test", "POST", "/api/v1/site/claude/ask", map[string]any{"prompt": "x", "model": "sonnet"}); code != 200 || out["model"] != "gpt-5.5" || out["model_ignored"] != "sonnet" {
 		t.Fatalf("a model of another agent: %d %v", code, out)
 	}
 	// Its turns cost nothing that can be read: they are counted, and the
@@ -393,5 +394,21 @@ func TestOpeningTheGatewayGivesEveryPermissionAndRefusesWhatTheAgentCannotHoldAp
 	mf, _ = manifest.Load(filepath.Join(f.root, "sites", "g.test"))
 	if mf.ClaudeAPI.Provider != "openai" || strings.Join(mf.ClaudeAPI.Permissions, ",") != "read" || mf.ClaudeAPI.Model != "gpt-5.5" {
 		t.Fatalf("written: %+v", mf.ClaudeAPI)
+	}
+}
+
+func TestAConversationOpenedUnderClaudeMovesWithTheGateway(t *testing.T) {
+	codex := &answeringProvider{answer: "from codex", key: "openai", cost: -1}
+	f, keys, claude, _ := doorFixture(t, map[string]string{"m.test": `{"version":2,"claude_api":{"tools":"read"}}`}, codex)
+	code, out := f.asSite(keys, "m.test", "POST", "/api/v1/site/claude/chats", map[string]any{"prompt": "first"})
+	if code != 200 || len(claude.reqs) != 1 {
+		t.Fatalf("first: %d %v", code, out)
+	}
+	id := out["chat"].(string)
+	// The operator moves the door to Codex with a model of its own.
+	os.WriteFile(filepath.Join(f.root, "sites", "m.test", "site.json"), []byte(`{"version":2,"claude_api":{"provider":"openai","permissions":["read"],"model":"gpt-5.5"}}`), 0o644)
+	code, out = f.asSite(keys, "m.test", "POST", "/api/v1/site/claude/chats/"+id+"/messages", map[string]any{"prompt": "second", "model": "sonnet"})
+	if code != 200 || out["text"] != "from codex" || out["model"] != "gpt-5.5" || len(codex.reqs) != 1 {
+		t.Fatalf("second: %d %v", code, out)
 	}
 }

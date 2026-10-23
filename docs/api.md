@@ -611,7 +611,11 @@ polled or streamed. A file named in `files` must be inside the site's folder;
 it is copied, so it works with tools `none` too. With `format: "json"` the
 instruction goes in the conversation's brief and the answer is read back as
 JSON (`json`), or says why not (`json_error`). An unknown model is refused
-(400) before anything is spent. The manifest decides on every request: a site whose door was closed
+(400) before anything is spent; a model of another agent than the door's
+(a site written for Claude still naming `sonnet` after its door moved to
+Codex) is not: the model chosen in the panel runs, and the answer says
+`model_ignored`. A conversation opened under another agent carries on
+with the door's agent and model as they are now. The manifest decides on every request: a site whose door was closed
 is refused even with its token.
 
 **Permissions** (`claude_api.permissions`): `read` (the site's folder),

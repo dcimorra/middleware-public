@@ -173,6 +173,7 @@ func (s *Server) RegisterSiteDoor(o SiteDoorOptions) {
 		if b.said() == "" && len(b.Files) == 0 {
 			return nil, Errorf(http.StatusBadRequest, "prompt: empty")
 		}
+		o.fitModel(c.Rules.Provider, &b)
 		name, err := o.open(c, b)
 		if err != nil {
 			return nil, err
@@ -196,6 +197,7 @@ func (s *Server) RegisterSiteDoor(o SiteDoorOptions) {
 				return nil, err
 			}
 		}
+		o.fitModel(c.Rules.Provider, &b)
 		name, err := o.open(c, b)
 		if err != nil {
 			return nil, err
@@ -250,9 +252,7 @@ func (s *Server) RegisterSiteDoor(o SiteDoorOptions) {
 				return nil, err
 			}
 		}
-		if err := o.knownModel(o.chatProvider(name, c), b.Model); err != nil {
-			return nil, err
-		}
+		o.fitModel(c.Rules.Provider, &b)
 		return o.sendAndAnswer(w, r, c, name, b)
 	})
 	route("GET", p+"/claude/chats/{id}/stream", "The conversation as it happens, as server-sent events: a message per event, and the conversation's state after each turn", func(w http.ResponseWriter, r *http.Request, c doorCaller) (any, error) {
@@ -437,20 +437,39 @@ func (o SiteDoorOptions) agents() []string {
 	return out
 }
 
-// chatProvider is the agent a site's conversation runs with: the one it
-// was opened with, which may not be the door's now.
-func (o SiteDoorOptions) chatProvider(name string, c doorCaller) string {
-	if conv, err := o.Chat.Conversation(name); err == nil && conv.Provider != "" {
-		return conv.Provider
-	}
-	return c.Rules.Provider
-}
-
 func (o SiteDoorOptions) turns(domain string) int {
 	if o.Chat == nil {
 		return 0
 	}
 	return o.Chat.Ledger().DayTurns(chat.SiteDoorBook(domain), time.Now())
+}
+
+// fitModel drops a model the site's code asks for that the door's agent
+// does not have, and the door runs the one chosen in the panel. A site
+// written when the door was Claude's names "sonnet" in every call; the
+// operator who moved its door to Codex had chosen a model there, and a
+// 400 on every call said that choice did not count. What was dropped is
+// said back (model_ignored), so the code can tell. Only another agent's
+// model: one that no agent has is a typo, and still a 400 before
+// anything is spent.
+func (o SiteDoorOptions) fitModel(provider string, b *askBody) {
+	m := strings.TrimSpace(b.Model)
+	if m == "" || o.knownModel(provider, m) == nil {
+		return
+	}
+	// Every agent the house knows, running or not: a site written for
+	// Claude names Claude's model even on a machine where Claude's module
+	// is off now.
+	others := o.agents()
+	if o.Chat != nil {
+		others = o.Chat.Providers()
+	}
+	for _, other := range others {
+		if other != provider && o.knownModel(other, m) == nil && len(o.models(other)) > 0 {
+			b.ignored, b.Model = m, ""
+			return
+		}
+	}
 }
 
 // knownModel refuses a model that is not on the agent's list: a typo
@@ -538,6 +557,9 @@ type askBody struct {
 	System string `json:"system"`
 	Model  string `json:"model"`
 	Title  string `json:"title"`
+	// ignored is a model the site asked for that its agent does not have;
+	// said back in the answer (model_ignored).
+	ignored string
 	// Format "json" asks for an answer that is only JSON; with Schema,
 	// one that fits it.
 	Format string          `json:"format"`
@@ -618,7 +640,13 @@ func (o SiteDoorOptions) sendAndAnswer(w http.ResponseWriter, r *http.Request, c
 		}
 	}
 	_, id, _ := strings.Cut(name, "#")
-	if _, err := o.Chat.SendWith(name, text, chat.SendOptions{Model: strings.TrimSpace(b.Model)}); err != nil {
+	// The door's agent and model as the panel says them now: a
+	// conversation opened under another agent carries on with this one.
+	model := strings.TrimSpace(b.Model)
+	if conv, err := o.Chat.Conversation(name); err == nil && model == "" && conv.Provider != c.Rules.Provider {
+		model = o.model(c, "")
+	}
+	if _, err := o.Chat.SendWith(name, text, chat.SendOptions{Model: model, Provider: c.Rules.Provider}); err != nil {
 		if errors.Is(err, chat.ErrBusy) {
 			WriteJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "chat": id})
 			return Handled, nil
@@ -629,6 +657,9 @@ func (o SiteDoorOptions) sendAndAnswer(w http.ResponseWriter, r *http.Request, c
 		out := map[string]any{"chat": id, "state": "running"}
 		if why != "" {
 			out["why"] = why
+		}
+		if b.ignored != "" {
+			out["model_ignored"] = b.ignored
 		}
 		WriteJSON(w, http.StatusAccepted, out)
 		return Handled, nil
@@ -664,6 +695,10 @@ func answerOf(conv chat.Conversation, b askBody) map[string]any {
 	}
 	if n := len(conv.Turns); n > 0 && conv.Turns[n-1].Role == "error" {
 		out["error"] = conv.Turns[n-1].Text
+	}
+	if b.ignored != "" {
+		out["model_ignored"] = b.ignored
+		out["warn"] = "model " + b.ignored + " is not one of " + conv.Provider + "'s: the gateway ran " + conv.Model + ", the one chosen in the panel"
 	}
 	if b.wantsJSON() {
 		if v, err := looseJSON(text); err == nil {

@@ -678,12 +678,16 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 		s.Provider, s.Model = o.Provider, ""
 	}
 	if c.Origin == OriginSite {
-		// The site door runs the agent its manifest chose when the
-		// conversation was opened (Claude for one opened before there was
-		// a choice), not the one the site's panel conversation uses: the
-		// levels are said in Claude Code's tool names and every adapter
-		// translates them.
+		// The site door runs the agent its manifest names now (the caller
+		// says it in Provider), not the one the site's panel conversation
+		// uses: a door moved to another agent moves its old conversations
+		// too, each agent keeping its own session. Without it, the one
+		// the conversation last ran with (Claude for one from before
+		// there was a choice).
 		door := c.Provider
+		if o.Provider != "" {
+			door = o.Provider
+		}
 		if door == "" {
 			door = "claude"
 		}
