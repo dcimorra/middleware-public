@@ -91,6 +91,7 @@ func StartCLIStream(ctx context.Context, p Parser, stream, dir string, env []str
 		return nil, err
 	}
 	defer errf.Close()
+	path, args = withoutAmbientCaps(path, args)
 	cmd := exec.Command(path, args...)
 	cmd.Dir = dir
 	cmd.Env = env
@@ -339,4 +340,50 @@ func (r *CLIRun) send(ev Event) {
 		// A consumer that stopped reading must not pin the process: the
 		// event is dropped and the run goes on to its end.
 	}
+}
+
+// The supervisor runs with CAP_NET_BIND_SERVICE as an ambient capability
+// (the unit's AmbientCapabilities), and ambient capabilities pass to every
+// child across exec. An agent needs none of it, and one of them breaks on
+// it: Codex sandboxes its shell with bubblewrap, which refuses to start
+// when it holds capabilities without being setuid ("bwrap: Unexpected
+// capabilities but not setuid"), so every command of a Codex turn failed
+// on a server installed with the unit while Claude, which has no such
+// sandbox, worked. Go can only raise ambient capabilities in a child, not
+// clear them, so the turn starts through setpriv, which drops them and
+// execs the agent in the same process.
+
+// procStatus is /proc/self/status; tests point it elsewhere.
+var procStatus = "/proc/self/status"
+
+// setprivPaths are where util-linux puts setpriv.
+var setprivPaths = []string{"/usr/bin/setpriv", "/bin/setpriv"}
+
+// hasAmbientCaps says this process holds ambient capabilities.
+func hasAmbientCaps() bool {
+	raw, err := os.ReadFile(procStatus)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if v, ok := strings.CutPrefix(line, "CapAmb:"); ok {
+			return strings.Trim(strings.TrimSpace(v), "0") != ""
+		}
+	}
+	return false
+}
+
+// withoutAmbientCaps is the command line that starts path without them:
+// itself when there are none, or when setpriv is not there (the turn then
+// runs as before, and an agent that minds says so in its own words).
+func withoutAmbientCaps(path string, args []string) (string, []string) {
+	if !hasAmbientCaps() {
+		return path, args
+	}
+	for _, sp := range setprivPaths {
+		if info, err := os.Stat(sp); err == nil && !info.IsDir() {
+			return sp, append([]string{"--ambient-caps", "-all", "--inh-caps", "-all", "--", path}, args...)
+		}
+	}
+	return path, args
 }

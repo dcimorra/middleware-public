@@ -293,3 +293,36 @@ func TestASiteInsideAnotherIsNotLockedOutOfItself(t *testing.T) {
 		}
 	}
 }
+
+// A supervisor holding an ambient capability starts its agents through
+// setpriv, which drops it: the real setpriv, with this process's status
+// said to carry one, and the agent reading its own.
+func TestAnAgentStartsWithoutTheSupervisorsAmbientCapabilities(t *testing.T) {
+	if _, err := os.Stat("/usr/bin/setpriv"); err != nil {
+		t.Skip("no setpriv here")
+	}
+	dir := t.TempDir()
+	status := filepath.Join(dir, "status")
+	os.WriteFile(status, []byte("Name:\tmiddleware\nCapAmb:\t0000000000000400\n"), 0o644)
+	old := procStatus
+	procStatus = status
+	defer func() { procStatus = old }()
+	if p, a := withoutAmbientCaps("/bin/agent", []string{"-p", "x"}); p != "/usr/bin/setpriv" || strings.Join(a, " ") != "--ambient-caps -all --inh-caps -all -- /bin/agent -p x" {
+		t.Fatalf("%s %v", p, a)
+	}
+	script := filepath.Join(dir, "fake.sh")
+	os.WriteFile(script, []byte("#!/bin/sh\ngrep CapAmb /proc/self/status\necho \"args:$*\"\necho END\n"), 0o755)
+	run, err := StartCLI(context.Background(), &echoParser{}, dir, Jail{Home: dir}.Env(nil), script, "one", "two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evs := Collect(context.Background(), run)
+	if len(evs) != 3 || !strings.HasSuffix(evs[0].Text, "0000000000000000") || evs[1].Text != "args:one two" {
+		t.Fatalf("events = %+v", evs)
+	}
+	// Without one, nothing changes.
+	os.WriteFile(status, []byte("CapAmb:\t0000000000000000\n"), 0o644)
+	if p, _ := withoutAmbientCaps("/bin/agent", nil); p != "/bin/agent" {
+		t.Fatalf("wrapped without a reason: %s", p)
+	}
+}
