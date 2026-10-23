@@ -122,10 +122,45 @@ export function sitesScreen({ query }) {
     const isProject = () => !domain.value.includes(".");
     const syncPublish = () => {
       publish.input.disabled = isProject();
+      // From a repository the template is the repository's to say.
+      if (typeof source !== "undefined" && source.value === "repo") return;
       if (isProject()) template.value = "project";
       else if (template.value === "project") template.value = "static";
     };
     domain.addEventListener("input", syncPublish);
+    // Where the code comes from: a template, or a GitHub repository (only
+    // with the GitHub module on). From a repository, the template is what
+    // its root says unless chosen.
+    const source = h("select", null, h("option", { value: "template" }, t("sites.fromTemplate")), h("option", { value: "repo" }, t("sites.fromRepo")));
+    const repoListID = "repos-" + Math.random().toString(36).slice(2, 8);
+    const repo = h("input", { type: "text", list: repoListID, placeholder: t("sites.repoPlaceholder"), autocomplete: "off", spellcheck: "false" });
+    const repoList = h("datalist", { id: repoListID });
+    const repoHint = h("div", { class: "hint" }, t("sites.repoHint"));
+    const branch = h("input", { type: "text", placeholder: t("sites.branchPlaceholder"), autocomplete: "off", spellcheck: "false" });
+    const auto = h("option", { value: "auto", hidden: true }, t("template.auto"));
+    template.prepend(auto);
+    const repoFields = h("div", { hidden: true }, h("div", { class: "field" }, h("label", null, t("sites.repo")), repo, repoList, repoHint), field(t("sites.branch"), branch, t("sites.branchHint")));
+    let githubOn = false;
+    api.get("/modules").then((list) => {
+      const gh = (Array.isArray(list) ? list : list.modules || []).find((m) => m.key === "github");
+      githubOn = Boolean(gh && gh.enabled);
+      source.options[1].disabled = !githubOn;
+      if (!githubOn) source.options[1].textContent = t("sites.fromRepoOff");
+    }).catch(() => {});
+    const syncSource = async () => {
+      const fromRepo = source.value === "repo";
+      repoFields.hidden = !fromRepo;
+      auto.hidden = !fromRepo;
+      template.value = fromRepo ? "auto" : (isProject() ? "project" : "static");
+      if (fromRepo && !repoList.childElementCount) {
+        try {
+          const r = await api.get("/modules/github/repos");
+          for (const x of r.repos || []) repoList.append(h("option", { value: x.full_name }, (x.private ? "🔒 " : "") + (x.description || "")));
+          repoHint.textContent = r.error ? t("sites.repoNoToken") : t("sites.repoHint", { n: (r.repos || []).length });
+        } catch (e) { repoHint.textContent = e.message; }
+      }
+    };
+    source.addEventListener("change", syncSource);
     // Where it is made: the node being viewed unless another is chosen.
     const nodes_ = store.get("nodes");
     const where = h("select", null);
@@ -139,6 +174,8 @@ export function sitesScreen({ query }) {
       body: [
         field(t("sites.domain"), domain, t("sites.domainHint")),
         where.options.length ? field(t("sites.node"), where, t("sites.nodeHint")) : null,
+        field(t("sites.source"), source),
+        repoFields,
         field(t("sites.template"), template, t("sites.templateHint")),
         h("div", { class: "field" }, publish.el, h("div", { class: "hint" }, t("sites.publishHint"))),
       ],
@@ -147,6 +184,12 @@ export function sitesScreen({ query }) {
         const d = domain.value.trim().toLowerCase();
         if (!/^[a-z0-9-]+(\.[a-z0-9-]+)*$/.test(d)) { showError(t("sites.badDomain")); return false; }
         const body = { domain: d, template: template.value };
+        if (source.value === "repo") {
+          if (!repo.value.trim()) { showError(t("sites.repoNeeded")); return false; }
+          body.repository = repo.value.trim();
+          if (branch.value.trim()) body.branch = branch.value.trim();
+          if (body.template === "auto") delete body.template;
+        }
         if (!isProject()) body.publish = publish.input.checked;
         const target = where.options.length ? where.value : currentNode();
         const site = await api.at(target).post("/sites", body);

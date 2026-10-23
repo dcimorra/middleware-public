@@ -211,3 +211,20 @@ func TestSigningInForRealPrintsAnAddress(t *testing.T) {
 	}
 	_ = context.Background
 }
+
+// What `codex login --device-auth` 0.163 prints: the address has no
+// "oauth" in it, and the code is on the line after the prompt for it.
+func TestCodexDeviceSignInShowsTheLinkAndTheCode(t *testing.T) {
+	out := "\x1b[0m\nWelcome to Codex [v\x1b[90m0.163.0\x1b[0m]\n\nFollow these steps to sign in with ChatGPT using device code authorization:\n\n1. Open this link in your browser and sign in to your account\n   \x1b[94mhttps://auth.openai.com/codex/device\x1b[0m\n\n2. Enter this one-time code \x1b[90m(expires in 15 minutes)\x1b[0m\n   \x1b[94mCS7W-9CFUS\x1b[0m\n"
+	l := &Login{spec: codexLoginSpec("codex"), state: LoginStarting, buf: []byte(out)}
+	l.parseLocked()
+	if l.state != LoginAuthorize || l.url != "https://auth.openai.com/codex/device" || l.userCode != "CS7W-9CFUS" {
+		t.Fatalf("%q %q %q", l.state, l.url, l.userCode)
+	}
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".codex"), 0o700)
+	os.WriteFile(filepath.Join(home, ".codex", "auth.json"), []byte(`{"tokens":{"refresh_token":"r"}}`), 0o600)
+	if l.spec.fromDisk(home) == "" {
+		t.Fatal("the session on disk is not found")
+	}
+}

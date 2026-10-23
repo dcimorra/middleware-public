@@ -20,7 +20,7 @@ func TestClaudeCodeTakesDeepSeekAndZAIToTheirAPIs(t *testing.T) {
 	}
 	for _, key := range []string{"deepseek", "zai"} {
 		v := vendor(key)
-		p := v.Build("sk-bogus-0000000000", v.BaseURL, bin, v.Defaults)
+		p := v.Build(BuildArgs{Key: "sk-bogus-0000000000", Base: v.BaseURL, Bin: bin, Models: v.Defaults})
 		dir := t.TempDir()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		run, err := p.Start(ctx, agent.Request{Workdir: dir, Prompt: "hola", Stream: dir + "/stream", Jail: agent.Jail{SiteDir: dir, Home: t.TempDir()}})

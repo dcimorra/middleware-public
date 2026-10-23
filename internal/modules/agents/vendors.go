@@ -56,7 +56,19 @@ type Vendor struct {
 	ModelsURL string
 	Keep      func(id string) bool
 	Defaults  []string
-	Build     func(key, base, bin string, models []string) agent.Provider
+	Build     func(a BuildArgs) agent.Provider
+	// Login, for a vendor whose agent signs in with a subscription (Codex
+	// with ChatGPT), is that sign-in; the API key stays the alternative.
+	Login func(bin string) loginSpec
+}
+
+// BuildArgs is what a vendor's agent is built from.
+type BuildArgs struct {
+	Key, Base, Bin string
+	Models         []string
+	// Login is the stored sign-in, and Home a folder of the module's own
+	// for an agent that keeps its session there.
+	Login, Home string
 }
 
 func excludes(id string, words ...string) bool {
@@ -96,14 +108,15 @@ func anthropicVendor(base, key string, models []string) map[string]string {
 var Vendors = []Vendor{
 	{Key: "openai", Name: "OpenAI (Codex)", Bin: "codex",
 		Desc:      "OpenAI's models run by Codex CLI, OpenAI's own agent, with an OpenAI API key.",
-		KeyHelp:   "From platform.openai.com → API keys.",
+		KeyHelp:   "From platform.openai.com → API keys. Or leave it empty and sign in with ChatGPT below.",
 		ModelsURL: "https://api.openai.com/v1/models",
 		Keep: func(id string) bool {
 			return (strings.HasPrefix(id, "gpt-5") || strings.Contains(id, "codex")) && excludes(id, "image", "audio", "realtime", "tts", "transcribe", "search", "chat-latest")
 		},
 		Defaults: []string{"gpt-5.5", "gpt-5.6", "gpt-5.3-codex"},
-		Build: func(key, base, bin string, models []string) agent.Provider {
-			return codex.New(codex.Config{Bin: bin, APIKey: key, Models: models})
+		Login:    codexLoginSpec,
+		Build: func(a BuildArgs) agent.Provider {
+			return codex.New(codex.Config{Bin: a.Bin, APIKey: a.Key, Login: a.Login, Home: filepath.Join(a.Home, "codex-home"), Models: a.Models})
 		}},
 	{Key: "deepseek", Name: "DeepSeek", Bin: "claude",
 		Desc:      "DeepSeek's models run by Claude Code against DeepSeek's Anthropic-compatible API, as DeepSeek documents it.",
@@ -111,16 +124,16 @@ var Vendors = []Vendor{
 		BaseURL:   "https://api.deepseek.com/anthropic",
 		ModelsURL: "https://api.deepseek.com/models",
 		Defaults:  []string{"deepseek-flash", "deepseek-v4-pro"},
-		Build: func(key, base, bin string, models []string) agent.Provider {
-			return claude.New(claude.Config{Key: "deepseek", Bin: bin, Env: anthropicVendor(base, key, models), Models: models})
+		Build: func(a BuildArgs) agent.Provider {
+			return claude.New(claude.Config{Key: "deepseek", Bin: a.Bin, Env: anthropicVendor(a.Base, a.Key, a.Models), Models: a.Models})
 		}},
 	{Key: "zai", Name: "Z.AI (GLM)", Bin: "claude",
 		Desc:     "Zhipu's GLM models run by Claude Code against Z.AI's Anthropic-compatible API, as Z.AI documents it for the GLM Coding Plan.",
 		KeyHelp:  "From z.ai → API keys. A GLM Coding Plan key works too.",
 		BaseURL:  "https://api.z.ai/api/anthropic",
 		Defaults: []string{"glm-5.3", "glm-5.3-flash"},
-		Build: func(key, base, bin string, models []string) agent.Provider {
-			return claude.New(claude.Config{Key: "zai", Bin: bin, Env: anthropicVendor(base, key, models), Models: models})
+		Build: func(a BuildArgs) agent.Provider {
+			return claude.New(claude.Config{Key: "zai", Bin: a.Bin, Env: anthropicVendor(a.Base, a.Key, a.Models), Models: a.Models})
 		}},
 	{Key: "kimi", Name: "Kimi (Kimi Code)", Bin: "kimi",
 		Desc:        "Moonshot's Kimi models run by Kimi Code, Moonshot's own agent.",
@@ -130,8 +143,8 @@ var Vendors = []Vendor{
 		ModelsURL:   "{base}/models",
 		Keep:        func(id string) bool { return strings.HasPrefix(id, "kimi") && excludes(id, "vision", "latest-8k") },
 		Defaults:    []string{"kimi-k3", "kimi-k2.7-code"},
-		Build: func(key, base, bin string, models []string) agent.Provider {
-			return kimi.New(kimi.Config{Bin: bin, APIKey: key, BaseURL: base, Models: models})
+		Build: func(a BuildArgs) agent.Provider {
+			return kimi.New(kimi.Config{Bin: a.Bin, APIKey: a.Key, BaseURL: a.Base, Models: a.Models})
 		}},
 	{Key: "qwen", Name: "Qwen (Qwen Code)", Bin: "qwen",
 		Desc:        "Alibaba's Qwen models run by Qwen Code, Alibaba's own agent.",
@@ -143,16 +156,16 @@ var Vendors = []Vendor{
 			return strings.HasPrefix(id, "qwen") && excludes(id, "omni", "-vl", "audio", "tts", "asr", "embedding", "image", "mt-", "realtime")
 		},
 		Defaults: []string{"qwen3.8-max", "qwen3-coder-plus"},
-		Build: func(key, base, bin string, models []string) agent.Provider {
-			return qwen.New(qwen.Config{Bin: bin, APIKey: key, BaseURL: base, Models: models})
+		Build: func(a BuildArgs) agent.Provider {
+			return qwen.New(qwen.Config{Bin: a.Bin, APIKey: a.Key, BaseURL: a.Base, Models: a.Models})
 		}},
 	{Key: "mistral", Name: "Mistral (Vibe)", Bin: "vibe",
 		Desc:    "Mistral's model run by Vibe, Mistral's own agent (installed with uv, which brings its own Python).",
 		KeyHelp: "From console.mistral.ai → API keys.",
 		// Vibe runs the model it is built around.
 		Defaults: []string{"mistral-medium-3.5"},
-		Build: func(key, base, bin string, models []string) agent.Provider {
-			return vibe.New(vibe.Config{Bin: bin, APIKey: key, Models: models})
+		Build: func(a BuildArgs) agent.Provider {
+			return vibe.New(vibe.Config{Bin: a.Bin, APIKey: a.Key, Models: a.Models})
 		}},
 	{Key: "xai", Name: "xAI (Grok Build)", Bin: "grok",
 		Desc:      "xAI's Grok models run by Grok Build, xAI's own agent (a binary downloaded from x.ai).",
@@ -162,8 +175,8 @@ var Vendors = []Vendor{
 			return strings.HasPrefix(id, "grok") && excludes(id, "imagine", "image", "vision")
 		},
 		Defaults: []string{"grok-4.7", "grok-build-0.1"},
-		Build: func(key, base, bin string, models []string) agent.Provider {
-			return grok.New(grok.Config{Bin: bin, APIKey: key, Models: models})
+		Build: func(a BuildArgs) agent.Provider {
+			return grok.New(grok.Config{Bin: a.Bin, APIKey: a.Key, Models: a.Models})
 		}},
 }
 
@@ -184,7 +197,7 @@ type VendorModule struct {
 // NewVendor builds a vendor's module over reg; homes is data/agents.
 func NewVendor(reg *agent.Registry, homes string, v Vendor) *VendorModule {
 	vm := &VendorModule{V: v, Home: filepath.Join(homes, v.Key)}
-	needs := []modules.Need{{Key: "api_key", Label: "API key", Secret: true, Help: v.KeyHelp}}
+	needs := []modules.Need{{Key: "api_key", Label: "API key", Secret: true, Help: v.KeyHelp, Optional: v.Login != nil}}
 	if v.BaseURLHelp != "" {
 		needs = append(needs, modules.Need{Key: "base_url", Label: "API address", Optional: true, Help: v.BaseURLHelp})
 	}
@@ -196,8 +209,13 @@ func NewVendor(reg *agent.Registry, homes string, v Vendor) *VendorModule {
 		key: "agent-" + v.Key, name: v.Name, desc: v.Desc, bin: v.Bin, needs: needs,
 		reg: reg, secretKey: "api_key", removeOnDisable: true,
 	}
+	if v.Login != nil {
+		// The sign-in is stored apart from the key; with both, the key wins.
+		m.secretKey, m.loginSpec = "subscription", v.Login
+		m.needs = append(m.needs, modules.Need{Key: "subscription", Secret: true, Optional: true, Hidden: true}, modules.Need{Key: "oauth_since", Optional: true, Hidden: true})
+	}
 	m.build = func(cfg modules.Config) agent.Provider {
-		return v.Build(strings.TrimSpace(cfg["api_key"]), vm.base(cfg), vm.binOf(cfg), modelsWith(cfg["model"], vm.list()))
+		return v.Build(BuildArgs{Key: strings.TrimSpace(cfg["api_key"]), Base: vm.base(cfg), Bin: vm.binOf(cfg), Models: modelsWith(cfg["model"], vm.list()), Login: cfg["subscription"], Home: vm.Home})
 	}
 	vm.Module = m
 	m.init()
@@ -291,6 +309,11 @@ func (vm *VendorModule) RefreshModels(ctx context.Context) error {
 	cfg["bin"] = vm.binOf(cfg)
 	key := strings.TrimSpace(cfg["api_key"])
 	if key == "" {
+		if cfg["subscription"] != "" {
+			// A subscription has no model list to read: its models are
+			// the defaults.
+			return nil
+		}
 		return errors.New("no API key")
 	}
 	url := strings.ReplaceAll(vm.V.ModelsURL, "{base}", vm.base(cfg))
@@ -393,10 +416,7 @@ func listModels(ctx context.Context, url, key string) ([]string, error) {
 
 // Session is "api_key" once there is one.
 func (vm *VendorModule) Session() Session {
-	if strings.TrimSpace(vm.config()["api_key"]) != "" {
-		return Session{Kind: "api_key"}
-	}
-	return Session{Kind: "none"}
+	return sessionOf(vm.config(), vm.secretKey)
 }
 
 // Verify implements modules.Module.
@@ -421,6 +441,10 @@ func (vm *VendorModule) Verify(ctx context.Context, cfg modules.Config) []module
 	}
 	key := strings.TrimSpace(cfg["api_key"])
 	switch {
+	case key == "" && vm.V.Login != nil && strings.TrimSpace(cfg["subscription"]) != "":
+		lines = append(lines, modules.OK("signed in with a subscription since "+cfg["oauth_since"]+"; not probed here, the first turn says if it still works"))
+	case key == "" && vm.V.Login != nil:
+		lines = append(lines, modules.Fail("no API key and no sign-in: give a key, or sign in below"))
 	case key == "":
 		lines = append(lines, modules.Fail("no API key"))
 	case vm.V.ModelsURL == "":
@@ -468,16 +492,30 @@ func (vm *VendorModule) Install(ctx context.Context, cfg modules.Config, progres
 
 // Routes implements modules.Module.
 func (vm *VendorModule) Routes() map[string]http.Handler {
-	return map[string]http.Handler{
+	out := map[string]http.Handler{
 		"GET /{$}":             http.HandlerFunc(vm.handleModels),
 		"GET /models":          http.HandlerFunc(vm.handleModels),
 		"POST /models/refresh": http.HandlerFunc(vm.handleRefresh),
 		"POST /binary/sync":    http.HandlerFunc(vm.handleBinarySync),
 	}
+	if vm.V.Login != nil {
+		for k, h := range vm.Module.Routes() {
+			if strings.Contains(k, "/login") || strings.Contains(k, "/session") {
+				out[k] = h
+			}
+		}
+	}
+	return out
 }
 
-// SetupRoutes implements modules.Setup.
-func (vm *VendorModule) SetupRoutes() []string { return []string{"POST /binary/sync"} }
+// SetupRoutes implements modules.Setup: the sign-in is how a module with
+// one gets enabled.
+func (vm *VendorModule) SetupRoutes() []string {
+	if vm.V.Login != nil {
+		return vm.Module.SetupRoutes()
+	}
+	return []string{"POST /binary/sync"}
+}
 
 func (vm *VendorModule) handleModels(w http.ResponseWriter, r *http.Request) {
 	cfg := vm.config()

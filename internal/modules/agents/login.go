@@ -60,6 +60,8 @@ type Login struct {
 	// the credentials file for Gemini.
 	secret string
 	fail   string
+	// userCode is a device sign-in's code, shown beside the address.
+	userCode string
 	// stale is the address a rejected code came from; the next one must
 	// differ from it or the panel would show an address nobody waits on.
 	stale string
@@ -91,6 +93,13 @@ type loginSpec struct {
 	exitsWhenDone bool
 	// prepareHome seeds the temporary HOME before the program starts.
 	prepareHome func(home string) error
+	// urlOK says an address printed is the one to authorize at; nil is
+	// an OAuth address.
+	urlOK func(u string) bool
+	// device, for a device-code sign-in (Codex): the code the person types
+	// on the vendor's page. Nothing is pasted back; the program finishes
+	// by itself once the code is entered there.
+	device *regexp.Regexp
 }
 
 // The states the panel sees. In this order, and never back, except
@@ -127,7 +136,32 @@ var (
 	claudeRe  = regexp.MustCompile(`Press Enter to retry|to retry\.`)
 	geminiOut = regexp.MustCompile(`Enter the authorization code`)
 	geminiRe  = regexp.MustCompile(`Failed to authenticate|invalid_grant|Authentication failed`)
+	codexCode = regexp.MustCompile(`one-time code[^\n]*\n\s*([A-Z0-9]{4}-[A-Z0-9]{4,6})`)
 )
+
+// codexLoginSpec is ChatGPT's device-code sign-in: `codex login
+// --device-auth` prints an address and a code, polls until the code is
+// entered at the address, writes auth.json and exits.
+func codexLoginSpec(bin string) loginSpec {
+	return loginSpec{
+		provider:   "openai",
+		args:       []string{bin, "login", "--device-auth"},
+		fromOutput: func([]byte) string { return "" },
+		fromDisk: func(home string) string {
+			raw, err := os.ReadFile(filepath.Join(home, ".codex", "auth.json"))
+			if err != nil || !strings.Contains(string(raw), "refresh_token") {
+				return ""
+			}
+			return string(raw)
+		},
+		exitsWhenDone: true,
+		urlOK:         func(u string) bool { return strings.Contains(u, "auth.openai.com") },
+		device:        codexCode,
+		// Codex refuses a CODEX_HOME that does not exist.
+		prepareHome: func(home string) error { return os.MkdirAll(filepath.Join(home, ".codex"), 0o700) },
+		env:         []string{"CODEX_HOME={home}/.codex"},
+	}
+}
 
 func claudeLoginSpec(bin string) loginSpec {
 	return loginSpec{
@@ -261,14 +295,17 @@ func startLogin(spec loginSpec, path, extraPath string) (*Login, error) {
 	// A clean environment but for what a program needs to exist: no API
 	// key (with one set, neither CLI has a reason to ask for a session)
 	// and no HOME but this one.
-	cmd.Env = append([]string{
+	cmd.Env = []string{
 		"HOME=" + home,
 		"PATH=" + p,
 		"TERM=xterm-256color",
 		"LANG=C.UTF-8",
 		// No browser to open: this is a server.
 		"BROWSER=true",
-	}, spec.env...)
+	}
+	for _, e := range spec.env {
+		cmd.Env = append(cmd.Env, strings.ReplaceAll(e, "{home}", home))
+	}
 	for _, k := range []string{"HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS"} {
 		if v := os.Getenv(k); v != "" {
 			cmd.Env = append(cmd.Env, k+"="+v)
@@ -365,7 +402,18 @@ func (l *Login) parseLocked() {
 	}
 	if n := len(urls); n > 0 {
 		u := urls[n-1]
-		if u != l.stale && strings.Contains(u, "oauth") {
+		ok := strings.Contains(u, "oauth")
+		if l.spec.urlOK != nil {
+			ok = l.spec.urlOK(u)
+		}
+		if l.spec.device != nil {
+			plain := ansi.ReplaceAll(l.buf, nil)
+			if m := l.spec.device.FindAllSubmatch(plain, -1); len(m) > 0 {
+				l.userCode = string(m[len(m)-1][1])
+			}
+			ok = ok && l.userCode != ""
+		}
+		if u != l.stale && ok {
 			l.url = u
 			if l.state == LoginStarting {
 				l.state = LoginAuthorize
@@ -551,6 +599,16 @@ func (l *Login) Live() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.state == LoginStarting || l.state == LoginAuthorize || l.state == LoginChecking
+}
+
+// UserCode is a device sign-in's code, once printed.
+func (l *Login) UserCode() string {
+	if l == nil {
+		return ""
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.userCode
 }
 
 // State is what the panel reads.

@@ -99,6 +99,15 @@ pointer ([deploy.md](deploy.md)).
   ls-remote` works with its key (`skip` with the key to paste when it does
   not yet).
 - **Installs**: nothing; `git` is a system package the installer put there.
+- **Sites from a repository**: with the module on, a new site can be made
+  from a repository (the panel's "New site" → Code → A GitHub repository).
+  `GET repos` lists the ones the token can see (none without a token: a
+  public one is still given by name or address); `GET repos/{owner}/{name}`
+  says what its root holds and what site it would make: Node (`npm ci` or
+  `npm install`, `npm run build` when there is one, `npm start`), a built
+  front end (a `build` script and no `start`: served from `dist`, or
+  `build` for Create React App), Go (`go run .`) or files (the root, or
+  `public`). The site gets `deploy.github`, so every push deploys it.
 
 ## agent-claude
 
@@ -181,7 +190,7 @@ against their Anthropic-compatible APIs, so that is what runs them.
 
 | Module | Agent that runs the turns | How it is installed | Key |
 | --- | --- | --- | --- |
-| agent-openai | Codex CLI, `codex exec --json` | npm `@openai/codex` | `CODEX_API_KEY` |
+| agent-openai | Codex CLI, `codex exec --json` | npm `@openai/codex` | `CODEX_API_KEY`, or a ChatGPT sign-in (`codex login --device-auth`: a link and a code, from the card) kept in one CODEX_HOME every turn shares, because Codex refreshes it and copies would drift |
 | agent-qwen | Qwen Code, `qwen --output-format stream-json` | npm `@qwen-code/qwen-code` | `OPENAI_API_KEY` + `OPENAI_BASE_URL` (QwenCloud, Coding Plan, China) |
 | agent-kimi | Kimi Code, `kimi -p --output-format stream-json` | npm `@moonshot-ai/kimi-code` (Node 22.19+) | `KIMI_API_KEY`, named in a per-turn `config.toml` (`api_key_env`) |
 | agent-xai | Grok Build, `grok -p --output-format streaming-json` | binary from `x.ai/cli` by version (no checksum published; the sha256 is recorded in `deps.downloaded`) | `XAI_API_KEY` |

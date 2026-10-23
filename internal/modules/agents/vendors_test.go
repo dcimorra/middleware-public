@@ -31,7 +31,7 @@ func TestEachVendorRunsItsOwnAgent(t *testing.T) {
 		if v.Bin != bin {
 			t.Fatalf("%s runs %s, want %s", key, v.Bin, bin)
 		}
-		if p := v.Build("k", v.BaseURL, "", v.Defaults); p.Key() != key {
+		if p := v.Build(BuildArgs{Key: "k", Base: v.BaseURL, Models: v.Defaults}); p.Key() != key {
 			t.Fatalf("%s's agent is called %s", key, p.Key())
 		}
 	}

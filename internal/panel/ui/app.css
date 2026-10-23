@@ -761,3 +761,4 @@ svg.dash-spark .mem { stroke: var(--warn); stroke-dasharray: 3 2; }
 .oc-popular .chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
 .oc-popular .chip:hover { border-color: var(--accent); }
 .oc-popular .chip.on { border-color: var(--ok); color: var(--ok); }
+.device-code { font-size: 18px; letter-spacing: 1px; padding: 2px 8px; }

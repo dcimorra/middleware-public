@@ -44,6 +44,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/repos"
 	"github.com/dcimorra/middleware-public/internal/settings"
 	"github.com/dcimorra/middleware-public/internal/shots"
+	"github.com/dcimorra/middleware-public/internal/sites"
 	"github.com/dcimorra/middleware-public/internal/sitetoken"
 	"github.com/dcimorra/middleware-public/internal/update"
 )
@@ -189,6 +190,9 @@ func buildWire(a *app.App) app.Hook {
 			set.GitHub.UseRunner(mgr.Deploys)
 		}
 		srv.SetDeployer(githubDeployer(a, set))
+		if set.GitHub != nil {
+			srv.SetRepoSource(githubRepos{set: set})
+		}
 		srv.RegisterDeps(api.DepsOptions{Manager: set.Deps})
 		// The CLIs a turn runs come first in its PATH, with their Node.
 		if chatManager != nil {
@@ -952,4 +956,13 @@ func restorable() []agents.Restorable {
 		out = append(out, v)
 	}
 	return out
+}
+
+// githubRepos is the github module as the place sites are made from.
+type githubRepos struct{ set *moduleSet }
+
+func (g githubRepos) Enabled() bool { return g.set.Manager.Enabled(github.Key) }
+
+func (g githubRepos) Inspect(ctx context.Context, ref string) (sites.Repo, error) {
+	return g.set.GitHub.Inspect(ctx, ref)
 }

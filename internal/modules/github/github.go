@@ -197,8 +197,10 @@ func (m *Module) Disable(ctx context.Context) error { return nil }
 // every site and the hook's path for the panel to show.
 func (m *Module) Routes() map[string]http.Handler {
 	return map[string]http.Handler{
-		"hook":   http.HandlerFunc(m.handleHook),
-		"status": http.HandlerFunc(m.handleStatus),
+		"POST /hook":                http.HandlerFunc(m.handleHook),
+		"GET /status":               http.HandlerFunc(m.handleStatus),
+		"GET /repos":                http.HandlerFunc(m.handleRepos),
+		"GET /repos/{owner}/{name}": http.HandlerFunc(m.handleInspect),
 	}
 }
 

@@ -111,6 +111,9 @@ type Server struct {
 	public map[string]bool
 	// deployer, when set, is asked first by POST /sites/{domain}/deploy.
 	deployer Deployer
+	// repos, when set, is where a site made from a repository is read
+	// (SetRepoSource).
+	repos RepoSource
 	// publisher, when set, publishes sites on creation and unpublishes
 	// them on deletion (RegisterInbound sets it).
 	publisher *publish.Publisher
@@ -140,6 +143,20 @@ func (s *Server) Auth() *auth.Store { return s.opts.Auth }
 
 // Sites is the sites manager the server works on.
 func (s *Server) Sites() *sites.Manager { return s.opts.Sites }
+
+// RepoSource reads a GitHub repository for a site made from it: the
+// GitHub module, when it is on.
+type RepoSource interface {
+	Enabled() bool
+	Inspect(ctx context.Context, ref string) (sites.Repo, error)
+}
+
+// SetRepoSource installs the RepoSource.
+func (s *Server) SetRepoSource(r RepoSource) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.repos = r
+}
 
 // SetDeployer installs a Deployer. The github module, when enabled,
 // deploys by fetching the repository first; without it the manager's

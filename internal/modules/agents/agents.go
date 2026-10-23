@@ -416,6 +416,9 @@ func (m *Module) loginState(l *Login) map[string]any {
 	if url != "" {
 		out["url"] = url
 	}
+	if c := l.UserCode(); c != "" {
+		out["device_code"] = c
+	}
 	if fail != "" {
 		out["error"] = fail
 	}

@@ -13,6 +13,8 @@ package codex
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -21,12 +23,20 @@ import (
 	"strings"
 
 	"github.com/dcimorra/middleware-public/internal/agent"
+	"github.com/dcimorra/middleware-public/internal/fsx"
 )
 
 // Config is the command template.
 type Config struct {
 	Bin    string
 	APIKey string
+	// Login is the auth.json a ChatGPT sign-in produced, for a turn with no
+	// API key; Home is the one CODEX_HOME every such turn shares. Codex
+	// refreshes the session and rewrites auth.json itself, so copies per
+	// site would drift apart and the old ones stop working: there is one,
+	// seeded from Login only when Login changes (a new sign-in).
+	Login  string
+	Home   string
 	Models []string
 }
 
@@ -51,8 +61,8 @@ func (p *Provider) Available() (bool, string) {
 	if err != nil {
 		return false, fmt.Sprintf("%s not found in PATH", p.cfg.Bin)
 	}
-	if p.cfg.APIKey == "" {
-		return false, "no API key: add it in Modules"
+	if p.cfg.APIKey == "" && p.cfg.Login == "" {
+		return false, "no API key and no ChatGPT sign-in: add one in Modules"
 	}
 	return true, path
 }
@@ -123,6 +133,13 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 	env := map[string]string{}
 	for k, v := range req.Env {
 		env[k] = v
+	}
+	if p.cfg.APIKey == "" && p.cfg.Login != "" && p.cfg.Home != "" {
+		if err := seed(p.cfg.Home, p.cfg.Login); err != nil {
+			return nil, err
+		}
+		env["CODEX_HOME"] = p.cfg.Home
+		return agent.StartCLIStream(ctx, &parser{}, req.Stream, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req)...)
 	}
 	// CODEX_API_KEY is what `codex exec` reads; nothing is written to
 	// auth.json under the site's HOME.
@@ -285,4 +302,25 @@ func (p *parser) Flush() []agent.Event {
 		return []agent.Event{{Kind: agent.KindError, Text: p.lastErr, SessionID: p.thread}}
 	}
 	return nil
+}
+
+// seed writes the sign-in's auth.json into the shared home when the
+// sign-in is new, and leaves it alone otherwise: what is there may be a
+// refresh Codex already did, newer than what the module stored.
+func seed(home, login string) error {
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return err
+	}
+	sum := sha256.Sum256([]byte(login))
+	mark := hex.EncodeToString(sum[:])
+	markPath := filepath.Join(home, ".seeded")
+	if cur, err := os.ReadFile(markPath); err == nil && strings.TrimSpace(string(cur)) == mark {
+		if _, err := os.Stat(filepath.Join(home, "auth.json")); err == nil {
+			return nil
+		}
+	}
+	if err := fsx.WriteAtomic(filepath.Join(home, "auth.json"), []byte(login), 0o600); err != nil {
+		return err
+	}
+	return fsx.WriteAtomic(markPath, []byte(mark+"\n"), 0o600)
 }

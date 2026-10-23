@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -129,14 +130,51 @@ func (s *Server) sitesCreate(w http.ResponseWriter, r *http.Request) (any, error
 		// door to publish on; empty is the door for new sites.
 		Publish *bool        `json:"publish"`
 		Door    inbound.Door `json:"door"`
+		// Repository makes the site from a GitHub repository (owner/name
+		// or its address): the GitHub module must be on. Template then
+		// overrides what the repository's root says it is; Branch, its
+		// default branch.
+		Repository string `json:"repository"`
+		Branch     string `json:"branch"`
 	}
 	if err := ReadJSON(r, &body); err != nil {
 		return nil, err
 	}
 	domain := strings.ToLower(strings.TrimSpace(body.Domain))
+	fromRepo := strings.TrimSpace(body.Repository) != ""
+	if fromRepo {
+		s.mu.Lock()
+		src := s.repos
+		s.mu.Unlock()
+		if src == nil || !src.Enabled() {
+			return nil, Errorf(http.StatusConflict, "making a site from a repository needs the GitHub module on")
+		}
+		if body.Manifest != nil {
+			return nil, Errorf(http.StatusBadRequest, "a site from a repository takes its manifest from the repository")
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		repo, err := src.Inspect(ctx, body.Repository)
+		cancel()
+		if err != nil {
+			return nil, Errorf(http.StatusBadGateway, "%v", err)
+		}
+		body.Manifest, _ = sites.RepoManifest(repo, strings.TrimSpace(body.Branch), body.Template)
+	}
 	site, err := m.Create(domain, body.Manifest, body.Template)
 	if err != nil {
 		return nil, err
+	}
+	if fromRepo {
+		// The folder has its site.json and nothing else: the first deploy
+		// clones the repository into it, builds it and starts it.
+		s.mu.Lock()
+		deployer := s.deployer
+		s.mu.Unlock()
+		if deployer != nil {
+			if _, handled, err := deployer(domain); !handled || err != nil {
+				s.opts.Bus.Emit(events.Event{Type: "deploy.failed", Subject: domain, Actor: "operator", Level: "error", Message: fmt.Sprintf("the first deploy from %s did not start: %v", body.Repository, err)})
+			}
+		}
 	}
 	out := map[string]any{}
 	raw, _ := json.Marshal(site)

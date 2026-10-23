@@ -12,6 +12,7 @@ import { icon } from "../lib/icons.js";
 import { openCodeProviders, vendorModels } from "./opencode-providers.js";
 
 // The vendors' own modules: a key and their models, run by OpenCode.
+const LOGIN_VENDORS = new Set(["agent-openai"]);
 const VENDORS = new Set(["agent-openai", "agent-deepseek", "agent-zai", "agent-kimi", "agent-qwen", "agent-mistral", "agent-xai"]);
 
 import { checklist } from "../components/checklist.js";
@@ -134,7 +135,11 @@ export function modulesScreen() {
         state),
       m.installed === false && m.enabled && !agentBin ? notice("warn", t("modules.notInstalled")) : null,
       // OpenCode has no sign-in of its own: a key per provider instead.
-      m.key === "agent-opencode" ? openCodeProviders() : VENDORS.has(m.key) ? (m.enabled ? vendorModels(m.key) : null) : agentBin ? signIn(m) : null,
+      m.key === "agent-opencode" ? openCodeProviders() : null,
+      // A vendor with a subscription sign-in (OpenAI's Codex) offers it,
+      // beside its models.
+      LOGIN_VENDORS.has(m.key) || (!VENDORS.has(m.key) && agentBin && m.key !== "agent-opencode") ? signIn(m) : null,
+      VENDORS.has(m.key) && m.enabled ? vendorModels(m.key) : null,
       agentBin ? binaryLine(agentBin, depBy.get(agentBin)) : null,
       form,
     );
@@ -162,7 +167,17 @@ export function modulesScreen() {
       flow.hidden = false;
       if (st.error && st.state !== "authorize") flow.append(notice("bad", st.error));
       if (st.state === "starting") flow.append(h("p", { class: "small muted" }, t("modules.signInStarting")));
-      if (st.state === "authorize") {
+      if (st.state === "authorize" && st.device_code) {
+        // A device sign-in (Codex with ChatGPT): a link and a code to type
+        // there; nothing comes back here, the program notices by itself.
+        const copyCode = h("button", { type: "button", class: "btn sm" }, icon("copy"), t("common.copy"));
+        copyCode.addEventListener("click", async () => { toast((await copy(st.device_code)) ? t("common.copied") : st.device_code, "ok"); });
+        flow.append(h("ol", { class: "steps small" },
+          h("li", null, t("modules.deviceStep1"), " ", h("a", { href: st.url, target: "_blank", rel: "noopener" }, icon("external", { size: 14 }), st.url)),
+          h("li", null, t("modules.deviceStep2"), " ", h("code", { class: "device-code" }, st.device_code), " ", copyCode),
+          h("li", null, t("modules.deviceStep3"))));
+      }
+      if (st.state === "authorize" && !st.device_code) {
         const code = h("input", { type: "text", class: "mono", placeholder: t("modules.signInCodePlaceholder"), autocomplete: "off", spellcheck: "false" });
         const send = h("button", { type: "button", class: "btn primary sm" }, icon("send"), t("modules.signInSend"));
         const copyBtn = h("button", { type: "button", class: "btn sm" }, icon("copy"), t("common.copy"));
