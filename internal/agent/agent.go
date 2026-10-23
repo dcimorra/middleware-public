@@ -1,6 +1,6 @@
 // Package agent is the contract a conversation runs on. A Provider turns a
 // prompt and a working directory into a stream of events; the adapters in
-// agent/claude and agent/gemini drive the vendor's CLI as a subprocess so
+// agent/claude, agent/agy and the rest drive the vendor's CLI as a subprocess so
 // no SDK enters the core. What an agent may touch is decided here, by the
 // Jail, and verified here, by the audit: the adapter only translates the
 // jail into whatever flags its CLI understands, and a flag it does not
@@ -102,7 +102,7 @@ type Run interface {
 
 // Provider is one agent CLI.
 type Provider interface {
-	// Key names the provider in manifests ("claude", "gemini").
+	// Key names the provider in manifests ("claude", "agy").
 	Key() string
 	// Available reports whether a run could start, with a reason when not.
 	Available() (bool, string)

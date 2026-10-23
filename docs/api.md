@@ -258,7 +258,7 @@ The settings object (`data/settings.json`):
   "agents": {
     "max_concurrent": 8,
     "reserved_for_house": 1,
-    "per_provider": { "claude": 0, "gemini": 0 },
+    "per_provider": { "claude": 0, "agy": 0 },
     "default_provider": "claude"
   }
 }
@@ -296,7 +296,7 @@ the module is disabled. `POST /modules/github/hook` is public: GitHub
 authenticates it with the HMAC signature of the webhook secret.
 
 The modules an installation has: `cloudflare`, `github`, `vpn`,
-`agent-claude` and `agent-gemini` ([modules.md](modules.md)). The agent
+`agent-claude` and `agent-agy` ([modules.md](modules.md)). The agent
 modules take `model`, `api_key` and `bin`, all optional; enabling one
 replaces the provider the conversations run with, disabling it puts the
 CLI's own login back. Their sign-in with a subscription:
@@ -446,7 +446,7 @@ through the manifest; these routes are what the panel reads beside them.
 | GET | `/chat/middleware/files` | as above |
 | POST | `/chat/middleware/files` | as above |
 | DELETE | `/chat/middleware/files/{file}` | as above |
-| GET | `/agents/usage` | each subscription's windows → `[{provider, name, module, supported, usage: {plan?, windows: [{name, used, resets_at, status?}], at, source}, error?}]`: asked of the vendor (Anthropic's `/api/oauth/usage`, ChatGPT's `/backend-api/wham/usage`), cached a minute, `?refresh=1` asks now; `source: "turn"` is what the last turn's stream said. `used` is a percentage, negative when unknown |
+| GET | `/agents/usage` | each subscription's windows → `[{provider, name, module, supported, usage: {plan?, windows: [{name, label?, used, resets_at, status?}], at, source}, error?}]`: asked of the vendor (Anthropic's `/api/oauth/usage`, ChatGPT's `/backend-api/wham/usage`, Antigravity's `agy -p /usage`), cached a minute, `?refresh=1` asks now, `?provider=agy` only that agent's; `source: "turn"` is what the last turn's stream said. `used` is a percentage, negative when unknown; `label` is the vendor's name for a window the house has no word for. A figure that moves is also sent on the event stream as `agent.usage` (`subject` the provider, `data: {provider, usage}`) |
 | GET | `/agents/cost` | `?days=30` → `{days, books: [{book, total_usd, turns, days: {date: usd}, models: {model: usd}}]}`; a site door's spending is the book `<domain>#door` |
 
 A message sent while a turn runs is queued (202 `{queued: true}`) and sent,

@@ -44,8 +44,8 @@ func InstallSkill(dir string) error {
 
 // installSkillFor puts the skill where the provider's CLI will read it
 // from the run's HOME. Claude Code loads skills from ~/.claude/skills;
-// Gemini CLI does not read those, but it does read ~/.gemini/GEMINI.md
-// as global context, so the same text goes there too.
+// the Antigravity CLI from ~/.gemini/config/skills, so the same file goes
+// there too.
 func installSkillFor(home, provider string) error {
 	if home == "" {
 		return nil
@@ -53,8 +53,8 @@ func installSkillFor(home, provider string) error {
 	if err := InstallSkill(filepath.Join(home, ".claude", "skills", SkillName)); err != nil {
 		return err
 	}
-	if provider == "gemini" {
-		return writeIfChanged(filepath.Join(home, ".gemini", "GEMINI.md"), SkillContent())
+	if provider == "agy" {
+		return InstallSkill(filepath.Join(home, ".gemini", "config", "skills", SkillName))
 	}
 	return nil
 }
@@ -67,9 +67,10 @@ func writeIfChanged(path string, data []byte) error {
 }
 
 // needsSkillHint are the agents that do not load Claude skills by
-// themselves: Gemini, OpenCode and the vendors' own CLIs. DeepSeek and Z.AI
+// themselves: OpenCode and the vendors' own CLIs, and Antigravity, which
+// loads its own skills but only when it thinks one applies. DeepSeek and Z.AI
 // run Claude Code, which does.
-var needsSkillHint = map[string]bool{"gemini": true, "opencode": true, "openai": true, "kimi": true, "qwen": true, "mistral": true, "xai": true}
+var needsSkillHint = map[string]bool{"agy": true, "opencode": true, "openai": true, "kimi": true, "qwen": true, "mistral": true, "xai": true}
 
 // SkillHint is what a provider that does not load Claude skills is told
 // at the top of its system context, so it reads the file anyway.

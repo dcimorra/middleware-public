@@ -47,7 +47,7 @@ func TestVerifyRunsTheBinaryAndSaysTheKeyIsNotProbed(t *testing.T) {
 }
 
 func TestVerifyFailsWhenTheBinaryIsMissing(t *testing.T) {
-	m := Gemini(agent.NewRegistry())
+	m := Agy(agent.NewRegistry(), t.TempDir())
 	m.LookPath = func(string) (string, error) { return "", os.ErrNotExist }
 	lines := m.Verify(context.Background(), modules.Config{})
 	if !modules.Failed(lines) {
@@ -85,14 +85,14 @@ func TestEnableReplacesTheProviderAndDisableRestoresIt(t *testing.T) {
 func TestRestoreReappliesAnEnabledModuleAfterARestart(t *testing.T) {
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "data"), 0o755)
-	bin := fakeCLI(t, "gemini", "0.5")
+	bin := fakeCLI(t, "agy", "1.4.6")
 	mgr, err := modules.New(root, events.New(""))
 	if err != nil {
 		t.Fatal(err)
 	}
 	reg := agent.NewRegistry()
-	mgr.Register(Gemini(reg))
-	if _, err := mgr.Enable(context.Background(), GeminiKey, modules.Config{"bin": bin, "model": "gemini-x"}, nil); err != nil {
+	mgr.Register(Agy(reg, t.TempDir()))
+	if _, err := mgr.Enable(context.Background(), AgyKey, modules.Config{"bin": bin, "model": "gemini-x"}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -102,12 +102,12 @@ func TestRestoreReappliesAnEnabledModuleAfterARestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg2 := agent.NewRegistry()
-	m2 := Gemini(reg2)
+	m2 := Agy(reg2, t.TempDir())
 	mgr2.Register(m2)
 	if err := Restore(context.Background(), mgr2, m2); err != nil {
 		t.Fatal(err)
 	}
-	p, err := reg2.Get("gemini")
+	p, err := reg2.Get("agy")
 	if err != nil {
 		t.Fatal(err)
 	}

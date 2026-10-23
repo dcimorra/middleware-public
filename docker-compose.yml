@@ -1,7 +1,7 @@
 # middleware in a container. Good for trying it out, for a development
 # machine and for hosts without systemd. The image ships Node, Claude
-# Code, the Gemini CLI and wireguard-tools, and keeps the CLIs current on
-# its own. With the three "helper" lines below uncommented the privileged
+# Code and wireguard-tools, fetches the other agent CLIs when their module
+# is enabled, and keeps them current on its own. With the three "helper" lines below uncommented the privileged
 # helper runs inside the container too, so the layer-3 firewall and the
 # WireGuard vpn work; without them only the port reservation sysctl is
 # missing. On a real server prefer `middleware install`; see

@@ -108,9 +108,9 @@ func TestACheckFindsTheNewerVersionAndUpdatesTheManagedCopy(t *testing.T) {
 	if !found {
 		t.Fatalf("npm install was not run: %v", ran)
 	}
-	// gemini is not managed here: reported, never installed on its own.
+	// qwen is not managed here: reported, never installed on its own.
 	for _, r := range ran {
-		if strings.Contains(r, "gemini-cli") {
+		if strings.Contains(r, "qwen-code") {
 			t.Fatalf("an unmanaged package must not be installed by a check: %v", ran)
 		}
 	}

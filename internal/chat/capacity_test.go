@@ -106,15 +106,15 @@ func TestTheDefaultProviderComesFromTheSettingsUnlessPinned(t *testing.T) {
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "sites", "x.test"), 0o755)
 	reg := agent.NewRegistry()
-	m := New(Options{Root: root, Registry: reg, Limits: settings.Agents{MaxConcurrent: 1, DefaultProvider: "gemini"}})
-	if s, _ := m.Resolve("x.test"); s.Provider != "gemini" {
+	m := New(Options{Root: root, Registry: reg, Limits: settings.Agents{MaxConcurrent: 1, DefaultProvider: "agy"}})
+	if s, _ := m.Resolve("x.test"); s.Provider != "agy" {
 		t.Fatalf("provider = %s", s.Provider)
 	}
 	m.SetLimits(settings.Agents{MaxConcurrent: 1, DefaultProvider: "claude"})
 	if s, _ := m.Resolve("x.test"); s.Provider != "claude" {
 		t.Fatalf("after SetLimits: %s", s.Provider)
 	}
-	pinned := New(Options{Root: root, Registry: reg, DefaultProvider: "fake", Limits: settings.Agents{MaxConcurrent: 1, DefaultProvider: "gemini"}})
+	pinned := New(Options{Root: root, Registry: reg, DefaultProvider: "fake", Limits: settings.Agents{MaxConcurrent: 1, DefaultProvider: "agy"}})
 	if s, _ := pinned.Resolve("x.test"); s.Provider != "fake" {
 		t.Fatalf("pinned provider = %s", s.Provider)
 	}

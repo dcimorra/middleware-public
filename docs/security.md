@@ -43,11 +43,11 @@ than running as root.
 
 **Subscription sessions.** Signing in with a Claude subscription or a
 Google account runs the vendor's own interactive flow on a pty with a
-temporary HOME; what comes out (a long-lived token, a credentials file) is
+temporary HOME; what comes out (a long-lived token, a token file) is
 stored in the encrypted credentials store like any other secret and never
 shown again: the panel's "what the program printed" view blanks it. A
 turn receives it in its environment (`CLAUDE_CODE_OAUTH_TOKEN`) or under
-its HOME (`.gemini/oauth_creds.json`, mode 0600), which an agent running
+its HOME (`.gemini/antigravity-cli/antigravity-oauth-token`, mode 0600), which an agent running
 there could read; a site's own process never does.
 
 **Per-site HOME and environment.** Each site runs with `HOME` under

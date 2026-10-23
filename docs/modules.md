@@ -145,16 +145,31 @@ the card, passed as `ANTHROPIC_API_KEY`, and it wins over a stored session
 Without the module the conversations still run: the `claude` CLI is looked
 up in PATH and uses its own login under each site's home.
 
-## agent-gemini
+## agent-agy
 
-Same shape, Google's Gemini CLI. "Sign in with your Google account" runs
-the CLI with `NO_BROWSER=true` on a terminal of the server's: it prints
-the Google authorization link, takes the code, and writes
-`~/.gemini/oauth_creds.json` in the temporary HOME. That file (it holds
-the refresh token) is what gets stored encrypted, and before every turn it
-is written under the run's HOME with a `settings.json` that selects that
-login, which is the only way the CLI reads a session. `api_key` is passed
-as `GEMINI_API_KEY` and wins over it.
+Same shape, Google's Antigravity CLI (`agy`), which took the Gemini CLI's
+place when Google stopped serving that one to individual accounts. The
+binary is not on npm: it is downloaded from the manifest Google's own
+`install.sh` reads, checked against the sha512 the manifest gives, and
+kept current by the daily check; turns run it with
+`AGY_CLI_DISABLE_AUTO_UPDATE=1` so it never rewrites itself mid-turn.
+
+"Sign in with your Google account" runs the CLI bare on a terminal of the
+server's: it asks how to sign in (the Google account is taken), prints the
+authorization link, takes the code, and writes
+`~/.gemini/antigravity-cli/antigravity-oauth-token` in the temporary HOME.
+That file (it holds the refresh token) is stored encrypted and written
+under each run's HOME, unless the copy there is already of the same
+sign-in: the CLI refreshes it every hour and the stale copy is not put
+back. There is no API key.
+
+The jail is written as Antigravity's own permission rules in
+`~/.gemini/antigravity-cli/settings.json`, which it enforces even with
+permissions skipped: `read_file(…)` and `write_file(…)` denied for every
+path the jail denies, `write_file(…)` for what is lent, `command(…)` for
+the jail's commands. The usage windows (one weekly limit per model group)
+come from the CLI's own `/usage`, run with a HOME of the module's own; it
+spends no tokens.
 
 ## agent-opencode
 
@@ -209,7 +224,7 @@ leaves the chat.
 The jail, per agent: Codex runs in its own sandbox (workspace-write, or
 read-only for a level that cannot write); Kimi Code and Grok Build get it
 as their permission rules (paths denied outside the folder, the jail's
-commands denied); Qwen Code as Gemini does (excluded shell commands in
+commands denied); Qwen Code as Gemini CLI did (excluded shell commands in
 its settings, its file tools confined to the folder); Vibe by the tools a
 level allows. What none of them can express is caught by the audit after
 the turn, as for every agent. Kimi Code prints no session id, so each

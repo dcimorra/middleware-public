@@ -1,20 +1,22 @@
 // Package qwen drives Qwen Code, Alibaba's agent CLI, as a subprocess.
 // It forked Gemini CLI and prints Claude Code's stream-json, so this is
-// the shortest adapter: Gemini's way of writing the jail into settings,
+// the shortest adapter: Gemini CLI's way of writing the jail into settings,
 // Claude's reader of the stream. The key and the endpoint go in the
 // environment (OpenAI-compatible), as Qwen Code documents for scripts.
 package qwen
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/dcimorra/middleware-public/internal/agent"
 	"github.com/dcimorra/middleware-public/internal/agent/claude"
-	"github.com/dcimorra/middleware-public/internal/agent/gemini"
+	"github.com/dcimorra/middleware-public/internal/fsx"
 )
 
 // DefaultBaseURL is QwenCloud's international pay-as-you-go endpoint.
@@ -135,7 +137,7 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 		return nil, err
 	}
 	if req.Jail.Home != "" {
-		if err := gemini.WriteExclusions(filepath.Join(req.Jail.Home, ".qwen"), req.Jail); err != nil {
+		if err := WriteExclusions(filepath.Join(req.Jail.Home, ".qwen"), req.Jail); err != nil {
 			return nil, err
 		}
 	}
@@ -168,4 +170,38 @@ func firstModel(req agent.Request, models []string) string {
 // Adopt implements agent.Adopter.
 func (p *Provider) Adopt(ctx context.Context, pid int, stream string) agent.Run {
 	return agent.AdoptCLI(ctx, claude.NewParser(), pid, stream)
+}
+
+// WriteExclusions writes the jail's commands as excluded shell commands in
+// settings.json under dir: Qwen Code's, which forked Gemini CLI and reads
+// its keys from ~/.qwen.
+func WriteExclusions(dir string, j agent.Jail) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, "settings.json")
+	var st map[string]any
+	if raw, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(raw, &st)
+	}
+	if st == nil {
+		st = map[string]any{}
+	}
+	var exclude []any
+	for _, c := range j.Commands {
+		exclude = append(exclude, "run_shell_command("+c+")")
+	}
+	tools, _ := st["tools"].(map[string]any)
+	if tools == nil {
+		tools = map[string]any{}
+	}
+	tools["exclude"] = exclude
+	st["tools"] = tools
+	// The older name, read by releases before the settings were nested.
+	st["excludeTools"] = exclude
+	data, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		return err
+	}
+	return fsx.WriteAtomic(path, data, 0o600)
 }

@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Installs Grok Build (a vendor binary) and Mistral Vibe (through uv) for
+// Installs Grok Build and Antigravity (vendor binaries) and Mistral Vibe (through uv) for
 // real into a temporary root, and checks they answer --version. Only with
 // DEPS=1: it downloads a couple of hundred megabytes.
 func TestTheBinaryAndTheUVToolInstallForReal(t *testing.T) {
@@ -19,7 +19,7 @@ func TestTheBinaryAndTheUVToolInstallForReal(t *testing.T) {
 	m := New(root, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
-	for _, name := range []string{"grok", "vibe"} {
+	for _, name := range []string{"grok", "vibe", "agy"} {
 		if err := m.Install(ctx, name, func(s string) { t.Log(name, s) }); err != nil {
 			t.Fatal(err)
 		}
@@ -39,7 +39,7 @@ func TestTheBinaryAndTheUVToolInstallForReal(t *testing.T) {
 
 func TestBinaryAndPyPIPackagesSayWhereTheyComeFrom(t *testing.T) {
 	m := New(t.TempDir(), nil)
-	for _, name := range []string{"grok", "vibe", "codex", "qwen", "kimi"} {
+	for _, name := range []string{"grok", "vibe", "agy", "codex", "qwen", "kimi"} {
 		if _, ok := m.pkg(name); !ok {
 			t.Fatalf("%s is not managed", name)
 		}

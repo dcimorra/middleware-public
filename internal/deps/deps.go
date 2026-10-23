@@ -1,5 +1,5 @@
 // Package deps keeps the external programs the modules run: the agent
-// CLIs (Claude Code, Gemini CLI) and the Node they need. They are not
+// CLIs (Claude Code, Codex, Antigravity…) and the Node they need. They are not
 // Go imports and never will be; they are npm packages with release
 // channels of their own, so they live outside the binary, in
 // <root>/modules/node, and this package installs them when a module is
@@ -9,7 +9,7 @@
 //
 // Node itself is fetched from nodejs.org as a tarball verified against
 // the published SHASUMS256, because a distribution's nodejs is often too
-// old for the CLIs (Debian 12 ships 18, Gemini CLI wants 20). The
+// old for the CLIs (Debian 12 ships 18, Qwen Code wants 20). The
 // container image ships both already; what this package adds there is
 // the update.
 package deps
@@ -43,7 +43,7 @@ import (
 
 // Package is one npm package that provides one command.
 type Package struct {
-	// Name is the command (claude, gemini): what modules look for.
+	// Name is the command (claude, agy): what modules look for.
 	Name string `json:"name"`
 	// NPM is the package name on the registry.
 	NPM string `json:"npm"`
@@ -59,7 +59,6 @@ type Package struct {
 // command comes from.
 var Packages = []Package{
 	{Name: "claude", NPM: "@anthropic-ai/claude-code", MinNode: 18},
-	{Name: "gemini", NPM: "@google/gemini-cli", MinNode: 20},
 	// opencode-ai is a launcher; the binary comes in a per-platform
 	// optional dependency npm picks for this machine.
 	{Name: "opencode", NPM: "opencode-ai", MinNode: 20},
@@ -73,6 +72,12 @@ var Packages = []Package{
 		Arch:   map[string]string{"amd64": "x86_64", "arm64": "aarch64"},
 	}},
 	{Name: "vibe", PyPI: "mistral-vibe"},
+	// Google's Antigravity CLI: the manifest its own install.sh reads.
+	{Name: "agy", Binary: &Binary{
+		Manifest: "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_{arch}.json",
+		Member:   "antigravity",
+		Arch:     map[string]string{"amd64": "amd64", "arm64": "arm64"},
+	}},
 }
 
 // Node release the installer fetches when the machine has none that will

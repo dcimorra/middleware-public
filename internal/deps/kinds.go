@@ -1,8 +1,11 @@
 package deps
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -26,7 +29,8 @@ import (
 //     address (xAI's Grok Build). No checksums are published beside it, so
 //     the trust is the vendor's HTTPS, as with its own installer; the
 //     download's sha256 is recorded in the event so a later look can tell
-//     what ran.
+//     what ran. Or a manifest naming the latest build and its sha512
+//     (Google's Antigravity CLI), checked as its own installer checks it.
 //   - PyPI: a Python tool installed with uv (Mistral's Vibe). uv is one
 //     static binary fetched by pinned version and checked against the
 //     sha256 this file carries, as Node is; it brings its own Python when
@@ -40,6 +44,38 @@ type Binary struct {
 	URL string
 	// Arch maps GOARCH to the vendor's name for it.
 	Arch map[string]string
+	// Manifest, instead of Latest and URL, answers {"version", "url",
+	// "sha512"} for the latest build ({arch} in it); only the latest can be
+	// installed. Member is the executable inside the .tar.gz it points to.
+	Manifest string
+	Member   string
+}
+
+// manifest is what a Binary's Manifest answers.
+type manifest struct {
+	Version string `json:"version"`
+	URL     string `json:"url"`
+	SHA512  string `json:"sha512"`
+}
+
+func (m *Manager) manifestOf(ctx context.Context, b *Binary) (manifest, error) {
+	arch := b.Arch[runtime.GOARCH]
+	if arch == "" || runtime.GOOS != "linux" {
+		return manifest{}, fmt.Errorf("no build for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	url := strings.ReplaceAll(b.Manifest, "{arch}", arch)
+	raw, err := m.get(ctx, url, 64<<10)
+	if err != nil {
+		return manifest{}, err
+	}
+	var mf manifest
+	if err := json.Unmarshal(raw, &mf); err != nil {
+		return manifest{}, fmt.Errorf("%s: %w", url, err)
+	}
+	if !versionRe.MatchString(mf.Version) || !strings.HasPrefix(mf.URL, "https://") || len(mf.SHA512) != 128 {
+		return manifest{}, fmt.Errorf("%s answered a manifest without a version, an https address and a sha512", url)
+	}
+	return mf, nil
 }
 
 // uv's release, pinned, with the sha256 its release publishes.
@@ -76,6 +112,10 @@ func (m *Manager) get(ctx context.Context, url string, limit int64) ([]byte, err
 }
 
 func (m *Manager) binaryLatest(ctx context.Context, b *Binary) (string, error) {
+	if b.Manifest != "" {
+		mf, err := m.manifestOf(ctx, b)
+		return mf.Version, err
+	}
 	raw, err := m.get(ctx, b.Latest, 256)
 	if err != nil {
 		return "", err
@@ -126,6 +166,9 @@ func (m *Manager) download(ctx context.Context, url, dst string, mode os.FileMod
 
 func (m *Manager) installBinary(ctx context.Context, p Package, want string, progress func(string)) (string, error) {
 	b := p.Binary
+	if b.Manifest != "" {
+		return m.installManifest(ctx, p, want, progress)
+	}
 	arch := b.Arch[runtime.GOARCH]
 	if arch == "" || runtime.GOOS != "linux" {
 		return "", fmt.Errorf("deps: %s publishes no build for %s/%s", p.Name, runtime.GOOS, runtime.GOARCH)
@@ -261,4 +304,124 @@ func (m *Manager) pypiLatest(ctx context.Context, name string) (string, error) {
 		return "", errors.New("pypi has no version for " + name)
 	}
 	return doc.Info.Version, nil
+}
+
+// installManifest installs the build a manifest names, after checking the
+// archive against the sha512 the manifest gives.
+func (m *Manager) installManifest(ctx context.Context, p Package, want string, progress func(string)) (string, error) {
+	mf, err := m.manifestOf(ctx, p.Binary)
+	if err != nil {
+		return "", fmt.Errorf("deps: %s: %w", p.Name, err)
+	}
+	if want != "" && want != "latest" && want != mf.Version {
+		return "", fmt.Errorf("deps: %s: only the latest build (%s) is published, not %s", p.Name, mf.Version, want)
+	}
+	archive := filepath.Join(m.BinDir(), "."+p.Name+".download")
+	progress("downloading " + mf.URL)
+	if err := m.fetchTo(ctx, mf.URL, archive); err != nil {
+		return "", fmt.Errorf("deps: %s: %w", p.Name, err)
+	}
+	defer os.Remove(archive)
+	f, err := os.Open(archive)
+	if err != nil {
+		return "", err
+	}
+	h := sha512.New()
+	_, err = io.Copy(h, f)
+	f.Close()
+	if err != nil {
+		return "", err
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); !strings.EqualFold(got, mf.SHA512) {
+		return "", fmt.Errorf("deps: %s: sha512 %s, the manifest says %s: the download is not what was published", p.Name, got, mf.SHA512)
+	}
+	progress("sha512 matches the manifest")
+	dst := filepath.Join(m.BinDir(), p.Name)
+	if strings.Contains(mf.URL, ".tar.gz") {
+		if err := extractMember(archive, p.Binary.Member, dst); err != nil {
+			return "", fmt.Errorf("deps: %s: %w", p.Name, err)
+		}
+	} else {
+		if err := os.Chmod(archive, 0o755); err != nil {
+			return "", err
+		}
+		if err := os.Rename(archive, dst); err != nil {
+			return "", err
+		}
+	}
+	if err := fsx.WriteAtomic(m.binaryVersionPath(p), []byte(mf.Version+"\n"), 0o644); err != nil {
+		return "", err
+	}
+	m.emit("deps.downloaded", p.Name, "", fmt.Sprintf("%s %s downloaded from %s", p.Name, mf.Version, mf.URL), map[string]any{"version": mf.Version, "sha512": mf.SHA512, "url": mf.URL})
+	return mf.Version, nil
+}
+
+// fetchTo downloads url into dst as it is.
+func (m *Manager) fetchTo(ctx context.Context, url, dst string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := Download.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%s answered %s", url, resp.Status)
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+// extractMember writes the one regular file called member in a .tar.gz to
+// dst, executable, replacing what was there in one rename: a turn running
+// the old binary keeps it, the next one gets the new.
+func extractMember(archive, member, dst string) error {
+	f, err := os.Open(archive)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return fmt.Errorf("%s is not in the archive", member)
+		}
+		if err != nil {
+			return err
+		}
+		if hdr.Typeflag != tar.TypeReg || strings.TrimPrefix(hdr.Name, "./") != member {
+			continue
+		}
+		tmp, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+".*")
+		if err != nil {
+			return err
+		}
+		defer os.Remove(tmp.Name())
+		if _, err := io.Copy(tmp, tr); err != nil {
+			tmp.Close()
+			return err
+		}
+		tmp.Close()
+		if err := os.Chmod(tmp.Name(), 0o755); err != nil {
+			return err
+		}
+		return os.Rename(tmp.Name(), dst)
+	}
 }

@@ -43,8 +43,9 @@ or `make build && ./middleware install`.
 ## Docker
 
 For trying it out, for a development machine, or for hosts without
-systemd. The image ships Node, Claude Code, the Gemini CLI and
-wireguard-tools, and keeps the CLIs current on its own. The privileged
+systemd. The image ships Node, Claude Code and wireguard-tools, fetches
+the other agent CLIs when their module is enabled, and keeps them current
+on its own. The privileged
 helper runs inside the container when `docker-compose.yml` says so
 (`MIDDLEWARE_HELPER: "1"` with `cap_add: [NET_ADMIN]`), which brings the
 layer-3 firewall and the WireGuard vpn; the port reservation sysctl is the

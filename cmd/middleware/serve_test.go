@@ -127,7 +127,7 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 	// The modules the wiring adds are listed, and the module routes
 	// resolve through the mount rather than through the catch-all.
 	_, body := get("/modules")
-	for _, key := range []string{"cloudflare", "github", "vpn", "agent-claude", "agent-gemini"} {
+	for _, key := range []string{"cloudflare", "github", "vpn", "agent-claude", "agent-agy"} {
 		if !strings.Contains(body, `"key": "`+key+`"`) {
 			t.Errorf("module %s is not listed:\n%s", key, body)
 		}

@@ -16,6 +16,7 @@ import { loading, errorBox } from "../components/page.js";
 import { confirm, open } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 import { render as renderMd } from "../lib/markdown.js";
+import { usageLine } from "../components/usage.js";
 
 // chatTab is a site's chat. For the house's own conversation, domain is
 // "middleware": no other conversations, no site manifest to write the
@@ -50,7 +51,9 @@ export function chatTab(domain) {
   const fileInput = h("input", { type: "file", multiple: true, hidden: true });
   const attachBtn = h("button", { type: "button", class: "btn ghost sm", title: t("chat.attachHint") }, icon("plus"), t("chat.attach"));
   const chips = h("div", { class: "chat-chips row" });
-  const form = h("form", { class: "chat-form" }, chips, text, h("div", { class: "row" }, provider, modelSel, modelIn, modelList, attachBtn, fileInput, h("span", { class: "grow" }), status, procsBtn, reset, stop, send));
+  // The usage windows of the agent picked, under the box.
+  let usageEl = usageLine(null);
+  const form = h("form", { class: "chat-form" }, chips, text, h("div", { class: "row" }, provider, modelSel, modelIn, modelList, attachBtn, fileInput, h("span", { class: "grow" }), status, procsBtn, reset, stop, send), usageEl);
   // Which conversation is open: the site's first one, another of the
   // panel's, or one the site's code opened through the site door (read
   // and stopped from here, never written into: a program is on the other
@@ -154,6 +157,39 @@ export function chatTab(domain) {
     showCapacity();
     syncCapacity();
   }));
+
+  // --- usage -------------------------------------------------------------
+
+  // What the agent picked has spent of its subscription's windows. Read
+  // when the agent changes; told by the bus when a figure moves (Claude
+  // says it on every turn's stream); and asked every minute while a turn
+  // of this conversation runs, for the agents whose stream says nothing
+  // (Codex, Antigravity): a long turn moves the window with nobody typing.
+  // The server keeps the vendor's answer a minute, so tabs open on the
+  // same agent ask it once.
+  function showUsage(st) {
+    const n = usageLine(st);
+    usageEl.replaceWith(n);
+    usageEl = n;
+  }
+  async function loadUsage() {
+    const p = provider.value;
+    if (!p) { showUsage(null); return; }
+    try {
+      const list = await api.get(`/agents/usage?provider=${enc(p)}`);
+      if (provider.value === p) showUsage((list || []).find((x) => x.provider === p) || null);
+    } catch { /* the line keeps what it showed */ }
+  }
+  let usageTimer = null;
+  function followUsage(on) {
+    clearInterval(usageTimer);
+    usageTimer = on ? setInterval(loadUsage, 60000) : null;
+  }
+  subs.push(onEvent("agent.usage", (ev) => {
+    const d = ev.data || {};
+    if (d.provider && d.provider === provider.value && d.usage) showUsage({ provider: d.provider, usage: d.usage });
+  }));
+  subs.push(() => followUsage(false));
 
   // --- steps -------------------------------------------------------------
 
@@ -425,10 +461,12 @@ export function chatTab(domain) {
         begin();
         for (const lv of conv.live || []) handle({ type: lv.type, subject: cur.name, data: lv.data });
       } else {
+        followUsage(false);
         stop.hidden = true;
         send.textContent = t("chat.send");
         status.textContent = "";
       }
+      loadUsage();
       scroll();
     } catch (e) {
       clear(turns).append(errorBox(e));
@@ -446,6 +484,7 @@ export function chatTab(domain) {
     tu.el.append(working);
     turns.append(tu.el);
     running = { ...tu, working };
+    followUsage(true);
     stop.hidden = false;
     send.textContent = t("chat.queue");
     status.textContent = t("chat.working");
@@ -457,6 +496,8 @@ export function chatTab(domain) {
     const cost = ev && ev.data && (ev.data.cost ?? ev.data.cost_usd ?? ev.data.usd);
     if (cost !== undefined) running.who.append(h("span", { class: "cost" }, fmtCost(cost)));
     running = null;
+    followUsage(false);
+    loadUsage();
     stop.hidden = true;
     send.textContent = t("chat.send");
     status.textContent = "";
@@ -580,7 +621,7 @@ export function chatTab(domain) {
   text.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); form.requestSubmit(); }
   });
-  provider.addEventListener("change", fillModels);
+  provider.addEventListener("change", () => { fillModels(); loadUsage(); });
   stop.addEventListener("click", async () => {
     try { await api.post(`${cur.path}/stop`); status.textContent = t("chat.stopping"); } catch (err) { toastError(err); }
   });

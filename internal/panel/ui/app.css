@@ -481,6 +481,12 @@ dialog form.dlg { display: flex; flex-direction: column; max-height: calc(100vh 
 .chat-head select { flex: 1 1 260px; min-width: 0; max-width: 520px; }
 @media (max-width: 640px) { .chat-head select { flex-basis: 100%; max-width: none; } }
 .chat-capacity.full { color: var(--warn); font-weight: 600; }
+/* The agent's usage windows under the message box: a thin bar each. */
+.chat-usage { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 6px; }
+.chat-usage-w { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.chat-usage .meter { width: 72px; height: 5px; margin: 0; }
+.chat-usage-src { margin-left: auto; }
+@media (max-width: 640px) { .chat-usage-src { margin-left: 0; flex-basis: 100%; } }
 .chat-notice { margin: 0; }
 .chat-question { margin: 8px 0 4px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .chat-question .q { font-weight: 600; margin-bottom: 6px; }

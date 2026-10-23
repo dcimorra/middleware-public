@@ -2,7 +2,7 @@
 // it, using nothing but syscalls.
 //
 // A real PTY is not optional for what this is for. Claude Code and the
-// Gemini CLI, like vim or top, ask the terminal how big it is, switch to
+// Antigravity CLI, like vim or top, ask the terminal how big it is, switch to
 // the alternate screen, read keys one at a time and paint with escape
 // sequences. Given a pipe instead they turn into programs that print logs
 // and ignore the keyboard, and a sign-in that waits for a pasted code

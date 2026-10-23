@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/agent"
+	"github.com/dcimorra/middleware-public/internal/agent/agy"
 	"github.com/dcimorra/middleware-public/internal/modules"
 )
 
@@ -20,8 +21,8 @@ import (
 // again. Two sources, and neither is enough alone:
 //
 //   - The vendor, asked: Anthropic's /api/oauth/usage (what Claude Code's
-//     /usage reads) and ChatGPT's /backend-api/wham/usage (what Codex's
-//     /status reads). Neither spends anything, but a `claude setup-token`
+//     /usage reads), ChatGPT's /backend-api/wham/usage (what Codex's
+//     /status reads), and Antigravity's own `/usage`, run through the CLI. Neither spends anything, but a `claude setup-token`
 //     session may lack the scope the first one asks for.
 //   - The turn, listened to: Claude Code prints a rate_limit_event on its
 //     stream, and the chat keeps it in the usage book. Free, but only as
@@ -198,6 +199,21 @@ func (m *Module) usageFetch(cfg modules.Config) func(context.Context) (string, [
 			login = string(raw)
 		}
 		return func(ctx context.Context) (string, []agent.Window, error) { return codexUsage(ctx, login) }
+	case "agy":
+		if m.home == "" {
+			return nil
+		}
+		return func(ctx context.Context) (string, []agent.Window, error) {
+			bin, err := m.binary(cfg)
+			if err != nil {
+				return "", nil, err
+			}
+			home := filepath.Join(m.home, "usage-home")
+			if err := agy.SeedToken(agy.Dir(home), login); err != nil {
+				return "", nil, err
+			}
+			return agy.Usage(ctx, bin, m.extraPath(), home)
+		}
 	}
 	return nil
 }
@@ -255,10 +271,15 @@ func (m *Module) handleUsage(w http.ResponseWriter, r *http.Request) {
 
 // UsageOf is every subscription's usage, for /agents/usage: the modules
 // that can ask their vendor, and the ones a turn told something about.
-func UsageOf(ctx context.Context, refresh bool, mods ...*Module) []map[string]any {
+// With provider, only that agent's: what a chat asks while its turn runs,
+// so the other vendors are not asked every minute for nothing.
+func UsageOf(ctx context.Context, refresh bool, provider string, mods ...*Module) []map[string]any {
 	out := []map[string]any{}
 	for _, m := range mods {
 		if m == nil || m.Store == nil || !m.Store.Enabled(m.key) {
+			continue
+		}
+		if provider != "" && m.provider() != provider {
 			continue
 		}
 		st := m.usageState(ctx, m.config(), refresh)

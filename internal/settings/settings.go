@@ -157,7 +157,7 @@ const MaxAgents = 64
 
 // DefaultAgents is the section a fresh installation runs with.
 func DefaultAgents() Agents {
-	return Agents{MaxConcurrent: 8, ReservedForHouse: 1, PerProvider: map[string]int{"claude": 0, "gemini": 0, "opencode": 0}, DefaultProvider: "claude"}
+	return Agents{MaxConcurrent: 8, ReservedForHouse: 1, PerProvider: map[string]int{"claude": 0, "agy": 0, "opencode": 0}, DefaultProvider: "claude"}
 }
 
 // Validate says what is wrong with the section, if anything.

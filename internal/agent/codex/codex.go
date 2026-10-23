@@ -8,7 +8,7 @@
 // folder and /tmp, network allowed, because installing a dependency is
 // part of the work); one that may not runs read-only. Codex cannot be told
 // "do not read that folder", so reading another site is caught by the
-// audit after the turn, as with Gemini.
+// audit after the turn, as with Qwen Code.
 package codex
 
 import (

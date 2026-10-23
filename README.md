@@ -48,9 +48,10 @@ registration, no port to pick.
   killed and switched off, and the incident is on record.
 - **Deploys from GitHub.** A signed webhook fetches, builds and writes the
   pointer. Rollback is writing the previous build's name.
-- **Talks to agents.** One conversation per site with Claude or Gemini,
-  driven through their CLIs, jailed to the site's folder, with a cost ledger
-  and a monthly cap. Sign in with your Claude subscription or your Google
+- **Talks to agents.** One conversation per site with Claude, Codex,
+  Antigravity and more, driven through their CLIs, jailed to the site's
+  folder, with a cost ledger, a monthly cap and the subscription's usage
+  windows under the message box. Sign in with your Claude subscription or your Google
   account from the panel; the CLIs install themselves and stay current.
 - **Reaches the panel privately.** A WireGuard VPN module, peers created
   from the panel, and a switch that makes the panel reachable only through
@@ -81,7 +82,7 @@ reasoning behind it.
 | [`docs/install.md`](docs/install.md) | One-liner, from source, Docker, what gets installed where |
 | [`docs/manifest.md`](docs/manifest.md) | Every field of `site.json` and `tasks/<name>.json` |
 | [`docs/deploy.md`](docs/deploy.md) | Deploying by pointer, with GitHub, rollback, the zero-downtime guarantee |
-| [`docs/modules.md`](docs/modules.md) | Cloudflare, GitHub, Claude, Gemini, VPN, the inbound doors |
+| [`docs/modules.md`](docs/modules.md) | Cloudflare, GitHub, Claude, Antigravity, VPN, the inbound doors |
 | [`docs/cli.md`](docs/cli.md) | Every subcommand |
 | [`docs/api.md`](docs/api.md) | The JSON API the panel and the CLI use |
 | [`docs/security.md`](docs/security.md) | Threat model: what is protected and what is not |

@@ -52,7 +52,7 @@ func debugPort(p *Process) int {
 }
 
 // agentComms are the agent CLIs by process name.
-var agentComms = map[string]bool{"claude": true, "gemini": true, "opencode": true, "codex": true, "qwen": true, "kimi": true, "grok": true, "vibe": true, "vibe-rs": true}
+var agentComms = map[string]bool{"claude": true, "agy": true, "antigravity": true, "opencode": true, "codex": true, "qwen": true, "kimi": true, "grok": true, "vibe": true, "vibe-rs": true}
 
 func agentPathIn(hay string) bool {
 	for name := range agentComms {

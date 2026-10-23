@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/agent"
+	"github.com/dcimorra/middleware-public/internal/agent/agy"
 	"github.com/dcimorra/middleware-public/internal/agent/claude"
-	"github.com/dcimorra/middleware-public/internal/agent/gemini"
 	"github.com/dcimorra/middleware-public/internal/agent/opencode"
 	"github.com/dcimorra/middleware-public/internal/api"
 	"github.com/dcimorra/middleware-public/internal/app"
@@ -89,7 +89,7 @@ func providers() *agent.Registry {
 	providersOnce.Do(func() {
 		providersCur = agent.NewRegistry()
 		providersCur.Register(claude.New(claude.Config{}))
-		providersCur.Register(gemini.New(gemini.Config{}))
+		providersCur.Register(agy.New(agy.Config{}))
 		// Without its module there are no keys, and it says so.
 		providersCur.Register(opencode.New(opencode.Config{}))
 	})
@@ -118,6 +118,11 @@ type chatHook struct{}
 
 func newChatHook(a *app.App) app.Hook {
 	chatManager = chat.New(chat.Options{Root: a.Root, Bus: a.Bus, Registry: providers(), Limits: a.Settings.Agents, Usage: usageBook(a.Root)})
+	// A figure that moved reaches the chats open on the panel at once:
+	// a long turn moves the window while nobody types.
+	usageBook(a.Root).OnChange(func(provider string, u agent.Usage) {
+		a.Bus.Emit(events.Event{Type: "agent.usage", Subject: provider, Actor: "agent", Data: map[string]any{"provider": provider, "usage": u}})
+	})
 	// Agent turns start in a cgroup of their own with a low CPU weight and
 	// a ceiling, so a conversation's browsers cannot starve the sites.
 	if tree, err := cgroups.Setup(cgroups.SelfPath(), cgroups.DefaultLimits()); err != nil {

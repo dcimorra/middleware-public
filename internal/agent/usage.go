@@ -14,6 +14,9 @@ import (
 // and when it starts again. Name is the house's: "5h", "7d", "7d_opus"…
 type Window struct {
 	Name string `json:"name"`
+	// Label is the vendor's own name for a window the house has no word
+	// for (Antigravity's "Gemini Models"); empty for 5h, 7d…
+	Label string `json:"label,omitempty"`
 	// Used is a percentage, 0 to 100; negative when the vendor said the
 	// window exists but not how much of it is gone.
 	Used     float64   `json:"used"`
@@ -36,9 +39,21 @@ type Usage struct {
 // UsageBook keeps the last usage seen per provider, on disk, so the panel
 // shows what the last turn said even after a restart.
 type UsageBook struct {
-	mu   sync.Mutex
-	path string
-	m    map[string]Usage
+	mu       sync.Mutex
+	path     string
+	m        map[string]Usage
+	onChange func(provider string, u Usage)
+}
+
+// OnChange is called after a record that moved a figure or a reset, so a
+// chat open on the panel follows a long turn without asking.
+func (b *UsageBook) OnChange(f func(provider string, u Usage)) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	b.onChange = f
+	b.mu.Unlock()
 }
 
 // OpenUsageBook reads the book at path; one that is not there is empty.
@@ -56,8 +71,8 @@ func (b *UsageBook) Record(provider, plan, source string, ws []Window) {
 		return
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	u := b.m[provider]
+	before := u.Windows
 	byName := map[string]Window{}
 	for _, w := range u.Windows {
 		byName[w.Name] = w
@@ -68,7 +83,7 @@ func (b *UsageBook) Record(provider, plan, source string, ws []Window) {
 		}
 		byName[w.Name] = w
 	}
-	u.Windows = u.Windows[:0]
+	u.Windows = nil
 	for _, w := range byName {
 		u.Windows = append(u.Windows, w)
 	}
@@ -82,6 +97,34 @@ func (b *UsageBook) Record(provider, plan, source string, ws []Window) {
 		_ = os.MkdirAll(filepath.Dir(b.path), 0o700)
 		_ = fsx.WriteJSON(b.path, b.m, 0o600)
 	}
+	f := b.onChange
+	changed := !sameWindows(before, u.Windows)
+	u.Windows = append([]Window(nil), u.Windows...)
+	b.mu.Unlock()
+	if f != nil && changed {
+		f(provider, u)
+	}
+}
+
+// sameWindows says two readings show the same thing, to a tenth of a
+// point: a vendor asked every minute mostly answers what it said before.
+// A reset within a quarter of an hour of the last is the same reset:
+// Antigravity dates an untouched window seven days from the moment it
+// is asked, so its reset moves on every answer.
+func sameWindows(a, b []Window) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		gap := a[i].ResetsAt.Sub(b[i].ResetsAt)
+		if gap < 0 {
+			gap = -gap
+		}
+		if a[i].Name != b[i].Name || a[i].Status != b[i].Status || gap > 15*time.Minute || int(a[i].Used*10) != int(b[i].Used*10) {
+			return false
+		}
+	}
+	return true
 }
 
 // Get is the provider's last usage.

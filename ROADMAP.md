@@ -145,6 +145,6 @@ Nothing left.
   conversation leaves listed and killed, several conversations per site,
   the site door, loans, attachments, queued messages, turns that survive a
   supervisor restart, subagent threads, the house's conversation, usage
-  windows and cost per project, day and model, Gemini's shell jailed,
+  windows and cost per project, day and model, Antigravity's tools jailed,
   `docs/api.md` checked against the routes both ways, and every document of
   docs/ readable in the panel from the binary that runs.

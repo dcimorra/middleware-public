@@ -1,5 +1,5 @@
-// Package agents holds the two agent modules, agent-claude and
-// agent-gemini. Enabling one is the whole setup: the CLI is installed
+// Package agents holds the agent modules: agent-claude and agent-agy
+// here, the vendors' in vendors.go and OpenCode's in opencode.go. Enabling one is the whole setup: the CLI is installed
 // under modules/node if the machine has none (and kept current from
 // then on), the subscription is signed in from the panel with the
 // vendor's own interactive flow run on a terminal of ours, and the
@@ -25,8 +25,8 @@ import (
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/agent"
+	"github.com/dcimorra/middleware-public/internal/agent/agy"
 	"github.com/dcimorra/middleware-public/internal/agent/claude"
-	"github.com/dcimorra/middleware-public/internal/agent/gemini"
 	"github.com/dcimorra/middleware-public/internal/deps"
 	"github.com/dcimorra/middleware-public/internal/modules"
 )
@@ -34,7 +34,7 @@ import (
 // Keys of the two modules.
 const (
 	ClaudeKey = "agent-claude"
-	GeminiKey = "agent-gemini"
+	AgyKey    = "agent-agy"
 )
 
 // Module is one agent module.
@@ -105,30 +105,31 @@ func Claude(reg *agent.Registry) *Module {
 	return m
 }
 
-// Gemini builds the agent-gemini module over reg.
-func Gemini(reg *agent.Registry) *Module {
+// Agy builds the agent-agy module over reg: Google's Antigravity CLI,
+// which took the Gemini CLI's place. It signs in with a Google account
+// only; home is the module's own folder, where the usage is asked from.
+func Agy(reg *agent.Registry, home string) *Module {
 	m := &Module{
-		key:  GeminiKey,
-		name: "Gemini",
-		desc: "Conversations run by the Gemini CLI. Sign in with your Google account from here, or give it an API key.",
-		bin:  "gemini",
+		key:  AgyKey,
+		name: "Antigravity (agy)",
+		desc: "Conversations run by Google's Antigravity CLI. Sign in with your Google account from here.",
+		bin:  "agy",
 		needs: []modules.Need{
-			{Key: "model", Label: "Default model", Optional: true, Help: "Model name offered first in the panel (gemini-2.5-pro, gemini-2.5-flash…)."},
-			{Key: "api_key", Label: "API key (instead of a Google account)", Secret: true, Optional: true, Help: "Passed to the CLI as GEMINI_API_KEY. Leave empty and sign in below to use your Google account."},
-			{Key: "bin", Label: "Binary", Optional: true, Help: "Path to the gemini executable. Empty: the one this installation keeps under modules/node, installed and updated for you."},
-			{Key: "oauth_creds", Secret: true, Optional: true, Hidden: true},
+			{Key: "model", Label: "Default model", Optional: true, Help: "Model offered first in the panel (gemini-3.8-flash-high, claude-sonnet-4-6…, as `agy models` lists them)."},
+			{Key: "bin", Label: "Binary", Optional: true, Help: "Path to the agy executable. Empty: the one this installation keeps under modules/node, downloaded from Google and updated for you."},
+			{Key: "oauth_token", Secret: true, Optional: true, Hidden: true},
 			{Key: "oauth_since", Optional: true, Hidden: true},
 		},
 		reg:       reg,
-		secretKey: "oauth_creds",
-		loginSpec: geminiLoginSpec,
+		secretKey: "oauth_token",
+		loginSpec: agyLoginSpec,
+		home:      home,
 	}
 	m.build = func(cfg modules.Config) agent.Provider {
-		return gemini.New(gemini.Config{
-			Bin:        cfg["bin"],
-			APIKey:     cfg["api_key"],
-			OAuthCreds: cfg["oauth_creds"],
-			Models:     modelsWith(cfg["model"], gemini.New(gemini.Config{}).Models()),
+		return agy.New(agy.Config{
+			Bin:    cfg["bin"],
+			Token:  cfg["oauth_token"],
+			Models: modelsWith(cfg["model"], agy.DefaultModels()),
 		})
 	}
 	m.init()

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/agent/agy"
 	"github.com/dcimorra/middleware-public/internal/ptyx"
 )
 
@@ -19,8 +20,8 @@ import (
 //
 // The problem: a subscription session is only obtained by an interactive
 // program. `claude setup-token` paints with escape sequences and waits
-// for a pasted code; the Gemini CLI, with NO_BROWSER=true, prints a
-// Google URL and asks for the code at a prompt. Both have to run on the
+// for a pasted code; the Antigravity CLI offers a menu of sign-in
+// methods, then prints a Google URL and asks for the code at a prompt. Both have to run on the
 // machine where the session will be used, which on a server reached from
 // a browser leaves SSH as the only way, and the operator administering
 // the house from a phone has no SSH at hand. From the chat it cannot be
@@ -38,8 +39,8 @@ import (
 //   - The URL is read from the hyperlink (OSC 8), not from the text, when
 //     there is one: a TUI paints the address in pieces and moves the
 //     cursor between them, so what is on screen cannot be joined back;
-//     the escape sequence carries the whole address. Gemini prints it
-//     plainly, so a plain https match is the fallback.
+//     the escape sequence carries the whole address. A program that
+//     prints it plainly is read with a plain https match.
 //
 // The lessons that cost in the first version are kept as they were
 // learned: a rejected code is not a failure (the program offers to retry
@@ -57,7 +58,7 @@ type Login struct {
 	state string
 	url   string
 	// secret is what the module stores: the long-lived token for Claude,
-	// the credentials file for Gemini.
+	// the token file for Antigravity.
 	secret string
 	fail   string
 	// userCode is a device sign-in's code, shown beside the address.
@@ -67,6 +68,8 @@ type Login struct {
 	stale string
 	// retries counts rejected codes; SendCode's watcher compares it.
 	retries int
+	// chose says the sign-in method was picked from the program's menu.
+	chose bool
 	// scanned is how much of the buffer has been looked at for things
 	// that happen once.
 	scanned int
@@ -80,7 +83,7 @@ type loginSpec struct {
 	args     []string
 	env      []string
 	// codePrompt says the program is ready for the code; Claude says it
-	// alongside the address, Gemini after it.
+	// alongside the address, Antigravity after it.
 	codePrompt *regexp.Regexp
 	// retry is what the program prints when the code was not good.
 	retry *regexp.Regexp
@@ -88,11 +91,14 @@ type loginSpec struct {
 	fromOutput func(buf []byte) string
 	// fromDisk finds it in the temporary HOME, for programs that write it.
 	fromDisk func(home string) string
-	// exitsWhenDone: Claude exits after printing the token; Gemini goes on
+	// exitsWhenDone: Claude exits after printing the token; Antigravity goes on
 	// into its TUI and has to be stopped once the credentials exist.
 	exitsWhenDone bool
 	// prepareHome seeds the temporary HOME before the program starts.
 	prepareHome func(home string) error
+	// menu is a choice the program asks for before it prints an address;
+	// its first option, the account sign-in, is taken with an Enter.
+	menu *regexp.Regexp
 	// urlOK says an address printed is the one to authorize at; nil is
 	// an OAuth address.
 	urlOK func(u string) bool
@@ -134,8 +140,9 @@ var (
 	statusRe  = regexp.MustCompile(`status code (\d{3})`)
 	claudeOut = regexp.MustCompile(`Paste code here`)
 	claudeRe  = regexp.MustCompile(`Press Enter to retry|to retry\.`)
-	geminiOut = regexp.MustCompile(`Enter the authorization code`)
-	geminiRe  = regexp.MustCompile(`Failed to authenticate|invalid_grant|Authentication failed`)
+	agyMenu   = regexp.MustCompile(`Select login method`)
+	agyOut    = regexp.MustCompile(`paste the authorization code`)
+	agyRe     = regexp.MustCompile(`failed to exchange authorization code|invalid_grant|Failed to sign in`)
 	codexCode = regexp.MustCompile(`one-time code[^\n]*\n\s*([A-Z0-9]{4}-[A-Z0-9]{4,6})`)
 )
 
@@ -180,27 +187,21 @@ func claudeLoginSpec(bin string) loginSpec {
 	}
 }
 
-func geminiLoginSpec(bin string) loginSpec {
+// agyLoginSpec is the Antigravity CLI's Google sign-in: run bare with no
+// session, it asks how to sign in (the first option is the Google
+// account), prints the address, waits for the code and writes the token
+// file, then goes on into its TUI.
+func agyLoginSpec(bin string) loginSpec {
 	return loginSpec{
-		provider: "gemini",
-		args:     []string{bin},
-		// NO_BROWSER makes it print the address and ask for the code
-		// instead of opening a browser that is not there.
-		env:        []string{"NO_BROWSER=true"},
-		codePrompt: geminiOut,
-		retry:      geminiRe,
+		provider:   "agy",
+		args:       []string{bin},
+		env:        []string{"AGY_CLI_DISABLE_AUTO_UPDATE=1", "NO_BROWSER=true"},
+		menu:       agyMenu,
+		codePrompt: agyOut,
+		retry:      agyRe,
 		fromOutput: func([]byte) string { return "" },
-		fromDisk:   geminiCredsFromDisk,
-		// Without a chosen auth method the CLI opens its picker screen
-		// and prints no address; the choice is written beforehand, in
-		// both spellings the CLI has used for it.
-		prepareHome: func(home string) error {
-			dir := filepath.Join(home, ".gemini")
-			if err := os.MkdirAll(dir, 0o700); err != nil {
-				return err
-			}
-			return os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"security":{"auth":{"selectedType":"oauth-personal"}},"selectedAuthType":"oauth-personal"}`+"\n"), 0o600)
-		},
+		fromDisk:   agyTokenFromDisk,
+		urlOK:      func(u string) bool { return strings.HasPrefix(u, "https://accounts.google.com/") },
 	}
 }
 
@@ -221,19 +222,12 @@ func claudeTokenFromDisk(home string) string {
 	return findAccessToken(any)
 }
 
-// geminiCredsFromDisk returns the credentials file the Gemini CLI wrote,
+// agyTokenFromDisk returns the token file the Antigravity CLI wrote,
 // whole: it holds the refresh token, and the CLI reads it back from the
 // same place under whatever HOME a turn runs with.
-func geminiCredsFromDisk(home string) string {
-	raw, err := os.ReadFile(filepath.Join(home, ".gemini", "oauth_creds.json"))
-	if err != nil {
-		return ""
-	}
-	var v map[string]any
-	if json.Unmarshal(raw, &v) != nil {
-		return ""
-	}
-	if v["refresh_token"] == nil && v["access_token"] == nil {
+func agyTokenFromDisk(home string) string {
+	raw, err := os.ReadFile(filepath.Join(agy.Dir(home), agy.TokenFile))
+	if err != nil || !agy.HasSignIn(string(raw)) {
 		return ""
 	}
 	return string(raw)
@@ -381,6 +375,10 @@ func (l *Login) read() {
 // parseLocked reads out of what has been printed the things worth
 // knowing: the address, the prompt, the secret, a rejection.
 func (l *Login) parseLocked() {
+	if l.spec.menu != nil && !l.chose && l.state == LoginStarting && l.spec.menu.Match(l.buf) {
+		l.chose = true
+		go l.press()
+	}
 	// The last address, not the first: a rejected code makes the program
 	// start over with a new challenge.
 	var urls []string
@@ -457,7 +455,7 @@ func (l *Login) parseLocked() {
 			// Claude waits for Enter to ask again.
 			go l.press()
 		} else {
-			// Gemini exits on a bad code; the next attempt is a new run.
+			// Antigravity exits on a bad code; the next attempt is a new run.
 			l.state = LoginFailed
 		}
 	}

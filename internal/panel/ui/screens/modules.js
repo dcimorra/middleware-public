@@ -45,14 +45,14 @@ export function modulesScreen() {
   }
 
   const GROUPS = ["connect", "deploy", "agents", "other"];
-  const GROUP_OF = { cloudflare: "connect", vpn: "connect", github: "deploy", "agent-claude": "agents", "agent-gemini": "agents", "agent-opencode": "agents", "agent-openai": "agents", "agent-deepseek": "agents", "agent-zai": "agents", "agent-kimi": "agents", "agent-qwen": "agents", "agent-mistral": "agents", "agent-xai": "agents" };
-  const ICON_OF = { cloudflare: "globe", vpn: "lock", github: "branch", "agent-claude": "sparkles", "agent-gemini": "sparkles", "agent-opencode": "sparkles", "agent-openai": "sparkles", "agent-deepseek": "sparkles", "agent-zai": "sparkles", "agent-kimi": "sparkles", "agent-qwen": "sparkles", "agent-mistral": "sparkles", "agent-xai": "sparkles" };
+  const GROUP_OF = { cloudflare: "connect", vpn: "connect", github: "deploy", "agent-claude": "agents", "agent-agy": "agents", "agent-opencode": "agents", "agent-openai": "agents", "agent-deepseek": "agents", "agent-zai": "agents", "agent-kimi": "agents", "agent-qwen": "agents", "agent-mistral": "agents", "agent-xai": "agents" };
+  const ICON_OF = { cloudflare: "globe", vpn: "lock", github: "branch", "agent-claude": "sparkles", "agent-agy": "sparkles", "agent-opencode": "sparkles", "agent-openai": "sparkles", "agent-deepseek": "sparkles", "agent-zai": "sparkles", "agent-kimi": "sparkles", "agent-qwen": "sparkles", "agent-mistral": "sparkles", "agent-xai": "sparkles" };
   // The panel's own words for a module when it has them; the module's
   // (in English, from the server) otherwise.
   const said = (key, fallback) => { const s = t(key); return s === key ? fallback : s; };
 
   // Which command an agent module runs, for the binary line.
-  const AGENT_BIN = { "agent-claude": "claude", "agent-gemini": "gemini", "agent-opencode": "opencode", "agent-openai": "codex", "agent-deepseek": "claude", "agent-zai": "claude", "agent-kimi": "kimi", "agent-qwen": "qwen", "agent-mistral": "vibe", "agent-xai": "grok" };
+  const AGENT_BIN = { "agent-claude": "claude", "agent-agy": "agy", "agent-opencode": "opencode", "agent-openai": "codex", "agent-deepseek": "claude", "agent-zai": "claude", "agent-kimi": "kimi", "agent-qwen": "qwen", "agent-mistral": "vibe", "agent-xai": "grok" };
 
   function card(m, depBy) {
     const inputs = {};

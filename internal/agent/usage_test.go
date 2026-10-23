@@ -24,3 +24,20 @@ func TestAWindowWithoutAPercentageKeepsTheOneItHadAndTheBookSurvivesARestart(t *
 		t.Fatalf("%+v", u.Windows[0])
 	}
 }
+
+func TestTheBookSaysWhenAFigureMovesAndKeepsQuietWhenNothingDid(t *testing.T) {
+	b := OpenUsageBook("")
+	var got []Usage
+	b.OnChange(func(provider string, u Usage) {
+		if provider == "openai" {
+			got = append(got, u)
+		}
+	})
+	reset := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	b.Record("openai", "plus", "vendor", []Window{{Name: "5h", Used: 12, ResetsAt: reset}})
+	b.Record("openai", "plus", "vendor", []Window{{Name: "5h", Used: 12.01, ResetsAt: reset.Add(3 * time.Minute)}})
+	b.Record("openai", "plus", "vendor", []Window{{Name: "5h", Used: 14, ResetsAt: reset}})
+	if len(got) != 2 || got[1].Windows[0].Used != 14 {
+		t.Fatalf("changes = %+v", got)
+	}
+}

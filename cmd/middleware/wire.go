@@ -86,7 +86,7 @@ func init() {
 // The agent modules are kept so the wiring can re-apply them at start.
 var (
 	agentClaude *agents.Module
-	agentGemini *agents.Module
+	agentAgy    *agents.Module
 	agentOpen   *agents.OpenCode
 	// agentVendors are the vendors' own modules (DeepSeek, Z.AI…), each
 	// an agent of the chat, run by OpenCode.
@@ -128,19 +128,19 @@ func registerExtraModules(mgr *modules.Manager, root string, bus *events.Bus, dm
 	theVPN = v
 	reg := providers()
 	agentClaude = agents.Claude(reg)
-	agentGemini = agents.Gemini(reg)
+	agentAgy = agents.Agy(reg, filepath.Join(root, "data", "agents", "agy"))
 	agentOpen = agents.NewOpenCode(reg, filepath.Join(root, "data", "agents", "opencode"))
 	agentVendors = nil
 	for _, v := range agents.Vendors {
 		agentVendors = append(agentVendors, agents.NewVendor(reg, filepath.Join(root, "data", "agents"), v))
 	}
-	for _, m := range []*agents.Module{agentClaude, agentGemini, agentOpen.Module} {
+	for _, m := range []*agents.Module{agentClaude, agentAgy, agentOpen.Module} {
 		m.Deps = dm
 		m.Store = mgr
 		m.Usage = usageBook(root)
 	}
 	mgr.Register(agentClaude)
-	mgr.Register(agentGemini)
+	mgr.Register(agentAgy)
 	mgr.Register(agentOpen)
 	for _, v := range agentVendors {
 		v.Deps, v.Store, v.Usage = dm, mgr, usageBook(root)
@@ -258,12 +258,12 @@ func buildWire(a *app.App) app.Hook {
 	srv.RegisterShots(w.shots)
 	pages.SetHouseTheme(a.Settings.VisitorTheme)
 	srv.OnSettingsSaved(func(st settings.Settings) { pages.SetHouseTheme(st.VisitorTheme) })
-	srv.RegisterAgents(api.AgentsOptions{Registry: providers(), Chat: chatManager, Usage: func(ctx context.Context, refresh bool) any {
-		mods := []*agents.Module{agentClaude, agentGemini}
+	srv.RegisterAgents(api.AgentsOptions{Registry: providers(), Chat: chatManager, Usage: func(ctx context.Context, refresh bool, provider string) any {
+		mods := []*agents.Module{agentClaude, agentAgy}
 		for _, v := range agentVendors {
 			mods = append(mods, v.Module)
 		}
-		return agents.UsageOf(ctx, refresh, mods...)
+		return agents.UsageOf(ctx, refresh, provider, mods...)
 	}})
 	if chatManager != nil {
 		wireSiteDoor(a, srv, set)
@@ -949,7 +949,7 @@ func buildMesh(a *app.App, srv *api.Server) *nodes.Mesh {
 
 // restorable is every agent module, for Restore.
 func restorable() []agents.Restorable {
-	out := []agents.Restorable{agentClaude, agentGemini, agentOpen}
+	out := []agents.Restorable{agentClaude, agentAgy, agentOpen}
 	for _, v := range agentVendors {
 		out = append(out, v)
 	}

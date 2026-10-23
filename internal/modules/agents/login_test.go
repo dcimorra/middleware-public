@@ -13,7 +13,7 @@ import (
 // What is fragile here is not talking to the vendor, the CLI does that;
 // it is reading what a terminal program paints. That is testable with no
 // account and no network: these are the real outputs, captured from
-// `claude setup-token` 2.1.304 and `gemini` 0.64.0 on a pty.
+// `claude setup-token` 2.1.304 and `agy` 1.4.6 on a pty.
 
 // claudeAsks is Claude Code's screen: the hyperlink carries the whole
 // address while the visible text is cut at the column and continued on
@@ -32,12 +32,6 @@ const claudeRejects = "\r  *****************bc#123\r\n" +
 // claudeSecond: the retry starts over with another challenge.
 const claudeSecond = "\r  Retrying…\r\n" +
 	"\x1b]8;id=1ljvoh6;https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a&state=SECOND\x07https://claude.com/cai/oauth\x1b]8;;\x07\r\n"
-
-// geminiAsks is the Gemini CLI with NO_BROWSER=true: a plain address on
-// its own line, then the prompt.
-const geminiAsks = "\x1b[?1049h\x1b[2J\x1b[H\x1b[?7hPlease visit the following URL to authorize the application:\r\n\r\n" +
-	"https://accounts.google.com/o/oauth2/v2/auth?redirect_uri=https%3A%2F%2Fcodeassist.google.com%2Fauthcode&access_type=offline&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform&code_challenge_method=S256&code_challenge=Y0wW&state=c939abe8&response_type=code&client_id=681255809395-oo8f.apps.googleusercontent.com\r\n\r\n" +
-	"\x1b[1G\x1b[0JEnter the authorization code: \x1b[31G"
 
 func feed(l *Login, s string) {
 	l.mu.Lock()
@@ -62,14 +56,32 @@ func TestClaudesAddressIsReadFromTheHyperlinkWhole(t *testing.T) {
 	}
 }
 
-func TestGeminisPlainAddressIsReadWhole(t *testing.T) {
-	l := newParseLogin(geminiLoginSpec("gemini"))
-	feed(l, geminiAsks)
+// The Antigravity CLI 1.4.6 on a pty, captured: first a menu of sign-in
+// methods, which the login answers with an Enter, then the address in a
+// hyperlink and the prompt for the code.
+func TestAgysMenuIsAnsweredAndItsAddressReadWhole(t *testing.T) {
+	menu, err := os.ReadFile(filepath.Join("testdata", "agy-menu-1.4.6.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, err := os.ReadFile(filepath.Join("testdata", "agy-address-1.4.6.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := newParseLogin(agyLoginSpec("agy"))
+	feed(l, string(menu))
+	if !l.chose {
+		t.Fatal("the sign-in method was not picked from the menu")
+	}
+	if state, _, _ := l.State(); state != LoginStarting {
+		t.Fatalf("state %q before the address", state)
+	}
+	feed(l, string(addr))
 	state, url, _ := l.State()
 	if state != LoginAuthorize {
 		t.Fatalf("state %q, want authorize", state)
 	}
-	if !strings.HasSuffix(url, "apps.googleusercontent.com") || !strings.HasPrefix(url, "https://accounts.google.com/o/oauth2/v2/auth?") {
+	if !strings.HasPrefix(url, "https://accounts.google.com/o/oauth2/auth?") || !strings.Contains(url, "redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback") || strings.ContainsAny(url, "\x1b\x07 ") {
 		t.Fatalf("address: %q", url)
 	}
 }
@@ -114,12 +126,12 @@ func TestTheSecretIsReadFromTheOutputOrFromDisk(t *testing.T) {
 		t.Fatalf("token not read from disk: %q", got)
 	}
 	ghome := t.TempDir()
-	os.MkdirAll(filepath.Join(ghome, ".gemini"), 0o700)
-	os.WriteFile(filepath.Join(ghome, ".gemini", "oauth_creds.json"), []byte(`{"access_token":"ya29.x","refresh_token":"1//r","expiry_date":1}`), 0o600)
-	if got := geminiCredsFromDisk(ghome); !strings.Contains(got, "refresh_token") {
-		t.Fatalf("gemini credentials not read from disk: %q", got)
+	os.MkdirAll(filepath.Join(ghome, ".gemini", "antigravity-cli"), 0o700)
+	os.WriteFile(filepath.Join(ghome, ".gemini", "antigravity-cli", "antigravity-oauth-token"), []byte(`{"token":{"access_token":"ya29.x","refresh_token":"1//r"},"auth_method":"consumer"}`), 0o600)
+	if got := agyTokenFromDisk(ghome); !strings.Contains(got, "refresh_token") {
+		t.Fatalf("antigravity sign-in not read from disk: %q", got)
 	}
-	if got := geminiCredsFromDisk(t.TempDir()); got != "" {
+	if got := agyTokenFromDisk(t.TempDir()); got != "" {
 		t.Fatalf("no file must be no secret, got %q", got)
 	}
 }
@@ -192,7 +204,7 @@ func TestSigningInForRealPrintsAnAddress(t *testing.T) {
 	for _, c := range []struct {
 		bin  string
 		spec func(string) loginSpec
-	}{{"claude", claudeLoginSpec}, {"gemini", geminiLoginSpec}} {
+	}{{"claude", claudeLoginSpec}, {"agy", agyLoginSpec}} {
 		path, err := exec.LookPath(c.bin)
 		if err != nil {
 			t.Logf("%s not in PATH, skipped", c.bin)

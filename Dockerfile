@@ -30,7 +30,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
 # at runtime, into a prefix the final image copies whole.
 FROM node:22-bookworm-slim AS cli
 ENV npm_config_update_notifier=false npm_config_fund=false npm_config_audit=false
-RUN npm install -g --prefix /opt/middleware/deps @anthropic-ai/claude-code @google/gemini-cli \
+RUN npm install -g --prefix /opt/middleware/deps @anthropic-ai/claude-code \
  && rm -rf /root/.npm
 
 FROM debian:bookworm-slim

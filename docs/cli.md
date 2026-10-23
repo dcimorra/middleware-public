@@ -72,7 +72,7 @@ in the API ([api.md](api.md)) and the panel.
 | `agents [--json]` | the providers, whether each can run, and the capacity: how many turns run of the cap, per provider, and which conversations hold them (`GET /agents`) |
 | `chat [--model m] <domain> <text…>` / `chat middleware <text…>` | a turn with the site's agent; progress is printed from the event stream |
 | `skill install [dir]` | write the skill the conversations run with (embedded in the binary, installed into every conversation's HOME before each turn) to `<root>/.claude/skills/middleware/`, or to `dir`, so Claude Code run by hand on the server loads it too. Needs no running process |
-| `deps status` / `deps check` / `deps install <claude\|gemini>` | the agent CLIs under `modules/node`: what runs, the latest on npm, install or update now. The daily check does this on its own ([modules.md](modules.md)) |
+| `deps status` / `deps check` / `deps install <claude\|agy>` | the agent CLIs under `modules/node`: what runs, the latest published, install or update now. The daily check does this on its own ([modules.md](modules.md)) |
 | `vpn status [--json]` / `vpn peer add <name>` / `vpn peer remove <name>` | the WireGuard door for the panel; `--socket` names the helper's socket. "VPN only" is `POST /modules/vpn/only` in the API |
 | `install` / `uninstall` / `doctor` | above |
 

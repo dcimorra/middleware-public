@@ -19,8 +19,9 @@ type AgentsOptions struct {
 	Registry *agent.Registry
 	Chat     *chat.Manager
 	// Usage is every subscription's windows, as the agent modules know
-	// them (refresh asks the vendors past their cache); nil is none.
-	Usage func(ctx context.Context, refresh bool) any
+	// them (refresh asks the vendors past their cache), or only provider's
+	// when it is not empty; nil is none.
+	Usage func(ctx context.Context, refresh bool, provider string) any
 }
 
 // AgentInfo is one provider as GET /agents lists it.
@@ -76,13 +77,14 @@ func (s *Server) RegisterAgents(o AgentsOptions) {
 	s.Handle("GET", Prefix+"/agents/waiting", "Whose turn it is to speak: the conversations waiting for the operator's answer, and how many turns are at work", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		return o.Chat.Waiting(), nil
 	})
-	s.Handle("GET", Prefix+"/agents/usage", "Each subscription's usage windows (Claude, Codex…): how much is spent and when it resets (?refresh=1 asks the vendors now)", func(w http.ResponseWriter, r *http.Request) (any, error) {
+	s.Handle("GET", Prefix+"/agents/usage", "Each subscription's usage windows (Claude, Codex, Antigravity…): how much is spent and when it resets (?provider=agy for one, ?refresh=1 asks the vendors now)", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		if o.Usage == nil {
 			return []any{}, nil
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
-		return o.Usage(ctx, r.URL.Query().Get("refresh") == "1"), nil
+		q := r.URL.Query()
+		return o.Usage(ctx, q.Get("refresh") == "1", q.Get("provider")), nil
 	})
 	s.Handle("GET", Prefix+"/agents/cost", "What each project spent on agents, per day, model and turns (?days=30)", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		days := 30

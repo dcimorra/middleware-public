@@ -28,29 +28,29 @@ func TestTheEmbeddedSkillIsInstalledInTheHomeBeforeATurn(t *testing.T) {
 		t.Fatalf("installed skill differs from the embedded one:\n%s", got)
 	}
 	if _, err := os.Stat(filepath.Join(root, "data", "homes", "a.test", ".gemini")); err == nil {
-		t.Fatal("a claude-style provider got a GEMINI.md")
+		t.Fatal("a claude-style provider got Antigravity's copy of the skill")
 	}
 	if strings.HasPrefix(p.last().System, SkillHint) {
 		t.Fatal("the hint is for providers that do not load skills")
 	}
 }
 
-func TestGeminiGetsTheSkillAsGlobalContextAndAHintInThePreamble(t *testing.T) {
-	p := &fakeProvider{key: "gemini", script: []agent.Event{{Kind: agent.KindResult, Text: "ok"}}}
+func TestAgyGetsTheSkillWhereItLoadsSkillsAndAHintInThePreamble(t *testing.T) {
+	p := &fakeProvider{key: "agy", script: []agent.Event{{Kind: agent.KindResult, Text: "ok"}}}
 	m, root, bus := newManager(t, p)
-	os.WriteFile(filepath.Join(root, "sites", "b.test", "site.json"), []byte(`{"version":2,"agent":{"provider":"gemini"}}`), 0o644)
+	os.WriteFile(filepath.Join(root, "sites", "b.test", "site.json"), []byte(`{"version":2,"agent":{"provider":"agy"}}`), 0o644)
 	ch, unsub := bus.Subscribe()
 	defer unsub()
 	if _, err := m.Send("b.test", "hi", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, ch, "agent.done")
-	got, err := os.ReadFile(filepath.Join(root, "data", "homes", "b.test", ".gemini", "GEMINI.md"))
+	got, err := os.ReadFile(filepath.Join(root, "data", "homes", "b.test", ".gemini", "config", "skills", "middleware", "SKILL.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(got, SkillContent()) {
-		t.Fatalf("GEMINI.md differs from the skill:\n%s", got)
+		t.Fatalf("Antigravity's SKILL.md differs from the skill:\n%s", got)
 	}
 	if !strings.HasPrefix(p.last().System, SkillHint) {
 		t.Fatalf("preamble lacks the hint:\n%s", p.last().System)

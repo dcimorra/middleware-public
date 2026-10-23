@@ -140,7 +140,7 @@ needs, how to verify credentials, and what it installs. Enabling a module
 line, and what cannot be probed without side effects is said so.
 
 Shipped modules: `inbound-tunnel`, `inbound-ports`, `cloudflare` (DNS and
-tunnel routes), `github` (deploy on push), `agent-claude`, `agent-gemini`,
+tunnel routes), `github` (deploy on push), `agent-claude`, `agent-agy`,
 `vpn` (WireGuard for the panel and service door), `docker` (runtime).
 
 Credentials are encrypted at rest with AES-256-GCM; the key comes from
@@ -150,8 +150,9 @@ Credentials are encrypted at rest with AES-256-GCM; the key comes from
 
 `agent.Provider` is the interface a conversation runs on. An adapter turns a
 prompt and a working directory into a stream of events (text, tool use, cost,
-end). Two adapters ship, both driving the vendor's CLI as a subprocess so no
-SDK enters the core: `claude` and `gemini`. What an agent may touch is decided
+end). Every adapter drives the vendor's CLI as a subprocess so no SDK
+enters the core: `claude`, `agy` (Antigravity), `openai` (Codex) and the
+rest. What an agent may touch is decided
 by the **jail** in the core (the site folder, nothing above, no other site),
 not by the adapter.
 
