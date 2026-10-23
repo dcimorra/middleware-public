@@ -194,4 +194,10 @@ func TestARateLimitEventBecomesTheWindowItNames(t *testing.T) {
 	if len(evs) != 1 || evs[0].Limits[0].Used != -1 {
 		t.Fatalf("a window without utilization is not unknown: %+v", evs)
 	}
+	// The week binds, and the five hours come only in unifiedWindows.
+	evs, _ = p.Line(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1790000000,"rateLimitType":"seven_day","unifiedWindows":{"five_hour":{"utilization":0.12,"resetsAt":1789000000},"seven_day":{"utilization":0.4,"resetsAt":1790000000}}}}`)
+	ws := evs[0].Limits
+	if len(ws) != 2 || ws[0].Name != "5h" || ws[0].Used < 11.99 || ws[0].Used > 12.01 || ws[0].ResetsAt.Unix() != 1789000000 || ws[1].Name != "7d" || ws[1].Used < 39.99 || ws[1].Status != "allowed" {
+		t.Fatalf("%+v", ws)
+	}
 }

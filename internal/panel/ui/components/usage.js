@@ -5,7 +5,10 @@
 import { h, fmtAgo } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 
-const NAMED = new Set(["5h", "7d", "7d_opus", "7d_sonnet"]);
+const NAMED = new Set(["5h", "7d", "7d_opus", "7d_sonnet", "7d_extra"]);
+// The windows a subscription always has: shown even before anything says
+// their figure, so a missing one reads "unknown" and not "not there".
+const ALWAYS = { claude: ["5h", "7d"], openai: ["5h", "7d"] };
 
 function windowLabel(name) {
   return NAMED.has(name) ? t("usage.window." + name) : name;
@@ -30,7 +33,9 @@ export function usageBlock(st) {
   const u = st.usage;
   const out = h("div", { class: "usage" });
   if (u && u.windows && u.windows.length) {
-    out.append(...u.windows.map(bar));
+    const ws = [...u.windows];
+    (ALWAYS[st.provider] || []).forEach((name, i) => { if (!ws.some((w) => w.name === name)) ws.splice(i, 0, { name, used: -1 }); });
+    out.append(...ws.map(bar));
     out.append(h("p", { class: "small muted" }, t(u.source === "turn" ? "usage.fromTurn" : "usage.fromVendor", { when: fmtAgo(u.at, t) }), u.plan ? " · " + t("usage.plan", { plan: u.plan }) : ""));
   } else {
     out.append(h("p", { class: "small muted" }, t(st.supported === false ? "usage.unsupported" : "usage.none")));

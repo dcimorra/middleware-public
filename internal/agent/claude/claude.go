@@ -346,8 +346,8 @@ func (p *parser) Line(raw string) ([]agent.Event, bool) {
 		}
 		return nil, false
 	case "rate_limit_event":
-		if w, ok := limitOf(raw); ok {
-			return []agent.Event{{Kind: agent.KindLimits, Limits: []agent.Window{w}, SessionID: p.sessionID}}, false
+		if ws := limitsOf(raw); len(ws) > 0 {
+			return []agent.Event{{Kind: agent.KindLimits, Limits: ws, SessionID: p.sessionID}}, false
 		}
 		return nil, false
 	case "result":
@@ -372,37 +372,64 @@ func (p *parser) Line(raw string) ([]agent.Event, bool) {
 func (p *parser) Flush() []agent.Event { return nil }
 
 // claudeWindows are Claude Code's rateLimitType names for the house's.
-var claudeWindows = map[string]string{"five_hour": "5h", "seven_day": "7d", "seven_day_opus": "7d_opus", "seven_day_sonnet": "7d_sonnet"}
+var claudeWindows = map[string]string{"five_hour": "5h", "seven_day": "7d", "seven_day_opus": "7d_opus", "seven_day_sonnet": "7d_sonnet", "seven_day_overage_included": "7d_extra"}
 
-// limitOf reads a rate_limit_event: a subscription window's state, which
+// limitsOf reads a rate_limit_event: the subscription's windows, which
 // Claude Code passes on from the API's anthropic-ratelimit-unified-*
-// headers. utilization is the header's, a fraction of 1, and comes only
-// when the API sent it (past a warning threshold, mostly); without it the
-// window's state and reset are still worth keeping.
-func limitOf(raw string) (agent.Window, bool) {
+// headers. The event names the window that binds now (rateLimitType), and
+// unifiedWindows, when it comes, every window with its figure: without it
+// a week that binds hid the five hours. utilization is a fraction of 1, as
+// in the headers, and the top-level one comes only when the API sent it
+// (past a warning, mostly); the window's state and reset are worth
+// keeping without it.
+func limitsOf(raw string) []agent.Window {
+	type figure struct {
+		Utilization *float64 `json:"utilization"`
+		ResetsAt    float64  `json:"resetsAt"`
+	}
 	var e struct {
 		Info struct {
-			Status        string   `json:"status"`
-			ResetsAt      float64  `json:"resetsAt"`
-			RateLimitType string   `json:"rateLimitType"`
-			Utilization   *float64 `json:"utilization"`
+			Status        string            `json:"status"`
+			ResetsAt      float64           `json:"resetsAt"`
+			RateLimitType string            `json:"rateLimitType"`
+			Utilization   *float64          `json:"utilization"`
+			Windows       map[string]figure `json:"unifiedWindows"`
 		} `json:"rate_limit_info"`
 	}
 	if json.Unmarshal([]byte(raw), &e) != nil {
-		return agent.Window{}, false
+		return nil
 	}
-	name, ok := claudeWindows[e.Info.RateLimitType]
-	if !ok {
-		return agent.Window{}, false
+	window := func(name string, f figure) agent.Window {
+		w := agent.Window{Name: name, Used: -1}
+		if f.Utilization != nil {
+			w.Used = *f.Utilization * 100
+		}
+		if f.ResetsAt > 0 {
+			w.ResetsAt = time.Unix(int64(f.ResetsAt), 0).UTC()
+		}
+		return w
 	}
-	w := agent.Window{Name: name, Used: -1, Status: e.Info.Status}
-	if e.Info.Utilization != nil {
-		w.Used = *e.Info.Utilization * 100
+	byName := map[string]agent.Window{}
+	for key, f := range e.Info.Windows {
+		if name, ok := claudeWindows[key]; ok {
+			byName[name] = window(name, f)
+		}
 	}
-	if e.Info.ResetsAt > 0 {
-		w.ResetsAt = time.Unix(int64(e.Info.ResetsAt), 0).UTC()
+	if name, ok := claudeWindows[e.Info.RateLimitType]; ok {
+		w := window(name, figure{Utilization: e.Info.Utilization, ResetsAt: e.Info.ResetsAt})
+		if old, ok := byName[name]; ok && w.Used < 0 {
+			w.Used = old.Used
+		}
+		w.Status = e.Info.Status
+		byName[name] = w
 	}
-	return w, true
+	var out []agent.Window
+	for _, name := range []string{"5h", "7d", "7d_opus", "7d_sonnet", "7d_extra"} {
+		if w, ok := byName[name]; ok {
+			out = append(out, w)
+		}
+	}
+	return out
 }
 
 // NewParser is the stream-json reader, for CLIs that print Claude Code's

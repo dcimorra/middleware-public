@@ -1051,6 +1051,7 @@
   "chat.purgeQHouse": "Delete every conversation of the house?",
   "chat.purgeBody": "Every one the panel holds goes, the first included, with its attachments, and cannot be brought back. The ones the site's code opened through its door stay, and what was spent is still counted.",
   "chat.purged": "{n} conversations deleted",
+  "usage.window.7d_extra": "Seven days, extra usage included",
   "nav.house": "House agent",
   "house.sub": "An agent working on the installation itself: its settings, its tasks, new sites. Existing sites are each their own conversation's.",
   "chat.queue": "Queue",

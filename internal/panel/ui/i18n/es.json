@@ -1051,6 +1051,7 @@
   "chat.purgeQHouse": "¿Borrar todas las conversaciones de la casa?",
   "chat.purgeBody": "Se borran todas las del panel, la primera incluida, con sus adjuntos, y no se pueden recuperar. Las que abrió el código del sitio por su puerta se quedan, y lo gastado sigue contado.",
   "chat.purged": "{n} conversaciones borradas",
+  "usage.window.7d_extra": "Siete días, uso extra incluido",
   "nav.house": "Agente de la casa",
   "house.sub": "Un agente que trabaja en la propia instalación: sus ajustes, sus tareas, los sitios nuevos. Cada sitio existente es de su propia conversación.",
   "chat.queue": "Poner en cola",
