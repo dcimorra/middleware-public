@@ -29,7 +29,7 @@ import { openBanner } from "./screens/settings-access.js";
 import { settingsScreen } from "./screens/settings.js";
 import { systemScreen } from "./screens/system.js";
 import { houseScreen } from "./screens/house.js";
-import { claudeUsageScreen } from "./screens/claude-usage.js";
+import { llmUsageScreen } from "./screens/llm-usage.js";
 import { dashboardScreen } from "./screens/dashboard.js";
 import { currentNode, setCurrentNode, onNodeChange } from "./lib/node.js";
 
@@ -61,7 +61,7 @@ const NAV = [
   ["audit", "/audit", "g a", "alert"],
   ["edge", "/edge", "g x", "link"],
   ["house", "/house", "g h", "sparkles"],
-  ["claude", "/claude", "g u", "gauge"],
+  ["llm", "/llm", "g u", "gauge"],
   ["events", "/events", "g e", "activity"],
   ["guard", "/guard", "g g", "eye"],
   ["settings", "/settings", "g c", "sliders"],
@@ -138,7 +138,9 @@ route("/docs/:name?", docsScreen);
 route("/settings", settingsScreen);
 route("/system", systemScreen);
 route("/house", houseScreen);
-route("/claude", claudeUsageScreen);
+route("/llm", llmUsageScreen);
+// The screen was 'Claude usage' before it held every tool's: old links still land.
+route("/claude", llmUsageScreen);
 route("/dashboard", dashboardScreen);
 
 // ---- nodes ----

@@ -1,6 +1,5 @@
-// The house's own conversation, with what the agents cost around it: the
-// subscriptions' usage windows (Claude, Codex…) and what each project
-// spent in the last thirty days, the site door's book apart.
+// The house's own conversation, and every agent turn at work around it.
+// What the agents cost is the LLM usage screen's.
 
 import { h, clear, fmtAgo } from "../lib/dom.js";
 import { onEvent } from "../lib/stream.js";
@@ -10,18 +9,15 @@ import { t } from "../lib/i18n.js";
 import { api } from "../lib/api.js";
 import { page, table, cell } from "../components/page.js";
 import { chatTab } from "./site-chat.js";
-import { usageBlock } from "../components/usage.js";
 
 export function houseScreen() {
   const p = page({ title: t("nav.house"), sub: t("house.sub"), icon: "sparkles" });
-  const usage = h("div", { class: "card" });
-  const cost = h("div", { class: "card pad0" });
   const chat = chatTab("middleware");
   // Every agent turn at work in the house, and every conversation waiting
   // for the operator: the one place to see, and stop, what the agents of
   // every site are doing.
   const live = h("div", { class: "card pad0" });
-  p.body.append(h("div", { class: "grid-2" }, usage, cost), live, chat.el);
+  p.body.append(live, chat.el);
   // The paths of a conversation, by its name: the house's, a site's
   // first, or another of a site's.
   const convPath = (name) => {
@@ -56,30 +52,5 @@ export function houseScreen() {
   loadLive();
   const subs = [onEvent("agent.", (ev) => { if (/^agent\.(started|done|error|question)$/.test(ev.type)) loadLive(); })];
 
-  (async () => {
-    clear(usage).append(h("h2", null, t("house.account")));
-    try {
-      const list = await api.get("/agents/usage");
-      if (!list.length) usage.append(h("p", { class: "small muted" }, t("usage.noSubscription")));
-      for (const st of list) usage.append(h("h3", null, st.name), usageBlock(st));
-    } catch (e) { usage.append(h("p", { class: "small muted" }, e.message)); }
-  })();
-  (async () => {
-    try {
-      const c = await api.get("/agents/cost?days=30");
-      const rows = (c.books || []).map((b) => {
-        const door = b.book.endsWith("#door");
-        const name = door ? b.book.slice(0, -5) : b.book;
-        return h("tr", null,
-          cell(h("span", null, name, door ? h("span", { class: "badge" }, t("house.siteDoor")) : null), null, "primary"),
-          cell(`$${b.total_usd.toFixed(2)}`, t("house.col.cost"), "num"),
-          cell(String(b.turns), t("house.col.turns"), "num"),
-          cell(Object.entries(b.models || {}).map(([m, v]) => `${m} $${v.toFixed(2)}`).join(" · "), t("house.col.models"), "small"));
-      });
-      clear(cost).append(h("div", { class: "card-pad" }, h("h2", null, t("house.cost"))),
-        rows.length ? table([{ label: t("house.col.project") }, { label: t("house.col.cost"), class: "num" }, { label: t("house.col.turns"), class: "num" }, { label: t("house.col.models") }], rows, { responsive: true }).el
-          : h("p", { class: "card-pad small muted" }, t("house.noCost")));
-    } catch (e) { clear(cost).append(h("p", { class: "card-pad small muted" }, e.message)); }
-  })();
   return { el: p.el, destroy() { chat.destroy(); subs.forEach((u) => u()); } };
 }
