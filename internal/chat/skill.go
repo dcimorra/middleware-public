@@ -67,9 +67,10 @@ func writeIfChanged(path string, data []byte) error {
 }
 
 // needsSkillHint are the agents that do not load Claude skills by
-// themselves: Gemini, and OpenCode with every vendor it runs.
-var needsSkillHint = map[string]bool{"gemini": true, "opencode": true, "openai": true, "deepseek": true, "zai": true, "kimi": true, "qwen": true, "mistral": true, "xai": true}
+// themselves: Gemini, OpenCode and the vendors' own CLIs. DeepSeek and Z.AI
+// run Claude Code, which does.
+var needsSkillHint = map[string]bool{"gemini": true, "opencode": true, "openai": true, "kimi": true, "qwen": true, "mistral": true, "xai": true}
 
 // SkillHint is what a provider that does not load Claude skills is told
 // at the top of its system context, so it reads the file anyway.
-const SkillHint = "Read ~/.claude/skills/middleware/SKILL.md first: it says how sites, workers and tasks are built, published and checked on this machine."
+const SkillHint = "Read ~/.claude/skills/middleware/SKILL.md first: it says how sites, workers and tasks are built, published and checked on this machine. It is outside the site's folder and reading it is allowed: it is the house's guide, the one file outside the folder you may always read."

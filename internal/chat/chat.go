@@ -1117,7 +1117,11 @@ func Preamble(domain, workdir string, j agent.Jail) string {
 		b.WriteString("You are working on the site " + domain + ", served by the middleware on this machine. ")
 		b.WriteString("Your working directory is the site's folder: " + workdir + ". The whole project lives there, including site.json, its manifest. ")
 		b.WriteString("You may read and edit anything inside that folder. ")
-		b.WriteString("You must not read, write or run anything outside it: other sites, the middleware's data, its tasks or its root are off limits, and every tool call is audited for that.\n")
+		// The one exception is named: an agent that does not load skills
+		// is told to read the guide in its HOME, and Codex, given only the
+		// rule, refused to (Claude Code never asked, it loads it itself).
+		b.WriteString("You must not read, write or run anything outside it: other sites, the middleware's data, its tasks or its root are off limits, and every tool call is audited for that. ")
+		b.WriteString("The one exception is the house's guide, ~/.claude/skills/middleware/SKILL.md, which you may always read.\n")
 	}
 	b.WriteString("Do not start long-running processes: the middleware supervises the site's process from its manifest, and a change to the manifest or to a pointer file is how a deployment happens.\n")
 	b.WriteString("When this turn ends, its whole process group is killed. Anything that takes longer than a turn (a build, an install, a deployment) must be started detached, exactly like this: `setsid nohup <cmd> >/tmp/<name>.log 2>&1 </dev/null &`, and your reply must state the log's path so the next message can check how it went.\n")

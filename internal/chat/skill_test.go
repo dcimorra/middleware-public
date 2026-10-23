@@ -55,6 +55,11 @@ func TestGeminiGetsTheSkillAsGlobalContextAndAHintInThePreamble(t *testing.T) {
 	if !strings.HasPrefix(p.last().System, SkillHint) {
 		t.Fatalf("preamble lacks the hint:\n%s", p.last().System)
 	}
+	// Told to read a file outside the folder and also never to leave it,
+	// Codex chose the second: the rule has to name the exception.
+	if !strings.Contains(p.last().System, "The one exception is the house's guide, ~/.claude/skills/middleware/SKILL.md") {
+		t.Fatalf("the rule about the folder does not name the guide:\n%s", p.last().System)
+	}
 }
 
 func TestInstallSkillWritesOnceAndLeavesAnUnchangedFileAlone(t *testing.T) {
