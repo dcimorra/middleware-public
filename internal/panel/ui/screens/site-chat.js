@@ -551,7 +551,7 @@ export function chatTab(domain) {
         await api.patch(`/sites/${enc(domain)}/manifest`, { agent: { ...agentCfg, provider: provider.value, model: model.value } });
       }
       await ensure();
-      const r = await api.post(cur.path, { text: msg, model: model.value || undefined });
+      const r = await api.post(cur.path, { text: msg, model: model.value || undefined, provider: provider.value || undefined });
       // The title comes from this message: the list shows it now.
       fillPicker();
       if (r && r.queued) {

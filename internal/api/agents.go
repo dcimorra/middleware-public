@@ -214,8 +214,9 @@ func (s *Server) registerChat(m *chat.Manager, p string, name func(*http.Request
 			return nil, err
 		}
 		var body struct {
-			Text  string `json:"text"`
-			Model string `json:"model"`
+			Text     string `json:"text"`
+			Model    string `json:"model"`
+			Provider string `json:"provider"`
 		}
 		if err := ReadJSON(r, &body); err != nil {
 			return nil, err
@@ -223,7 +224,7 @@ func (s *Server) registerChat(m *chat.Manager, p string, name func(*http.Request
 		if c, err := m.Conversation(domain); err == nil && c.Origin == chat.OriginSite {
 			return nil, Errorf(http.StatusConflict, "this conversation belongs to the site's code; open one of your own to talk about the site")
 		}
-		id, err := m.SendWith(domain, body.Text, chat.SendOptions{Model: body.Model, Queue: true})
+		id, err := m.SendWith(domain, body.Text, chat.SendOptions{Model: body.Model, Provider: body.Provider, Queue: true})
 		if errors.Is(err, chat.ErrQueued) {
 			WriteJSON(w, http.StatusAccepted, map[string]any{"queued": true})
 			return Handled, nil

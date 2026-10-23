@@ -47,7 +47,10 @@ type Turn struct {
 	Cost      float64   `json:"cost,omitempty"`
 	At        time.Time `json:"at"`
 	SessionID string    `json:"session_id,omitempty"`
-	Tools     []string  `json:"tools,omitempty"`
+	// Provider is the agent that answered, on its side's turns: a
+	// conversation can change agent between two messages.
+	Provider string   `json:"provider,omitempty"`
+	Tools    []string `json:"tools,omitempty"`
 	// Questions are the decisions the agent asked for in this turn.
 	Questions []Question `json:"questions,omitempty"`
 	// Threads are what subagents said, apart from the main answer: kept,
@@ -166,7 +169,12 @@ type Conversation struct {
 	Provider  string `json:"provider"`
 	Model     string `json:"model,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
-	Turns     []Turn `json:"turns"`
+	// Sessions is each agent's own session in this conversation: one
+	// agent's id means nothing to another, and Codex handed Claude's
+	// failed the turn. SessionID stays as the last agent's, for what
+	// reads it.
+	Sessions map[string]string `json:"sessions,omitempty"`
+	Turns    []Turn            `json:"turns"`
 	// Running is not stored: it is filled by History from the manager.
 	Running bool `json:"running,omitempty"`
 	// Live is the running turn so far, filled by History too.
@@ -223,8 +231,9 @@ type running struct {
 	// done closes when the turn is written and its slot free.
 	done chan struct{}
 	// queued are messages sent while the turn ran, kept for the next.
-	queued      []string
-	queuedModel string
+	queued         []string
+	queuedModel    string
+	queuedProvider string
 	// live is what the turn showed so far, so a panel that reloads (or
 	// opens later, on another device) sees the turn where it is and not
 	// an empty bubble until it ends.
@@ -639,6 +648,10 @@ func (m *Manager) Send(name, text, model string) (string, error) {
 // SendOptions are a turn's own choices.
 type SendOptions struct {
 	Model string
+	// Provider runs this message with that agent instead of the one the
+	// manifest (or the house's settings) names; the house had a picker
+	// that went nowhere without it.
+	Provider string
 	// Queue keeps a message that arrives while a turn runs and sends it
 	// when the turn ends, instead of refusing it: the operator who thinks
 	// of something mid-turn should not have to wait and retype it.
@@ -660,6 +673,10 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 		return "", err
 	}
 	c := m.load(name)
+	if o.Provider != "" && o.Provider != s.Provider && c.Origin != OriginSite {
+		// The manifest's model is its own agent's.
+		s.Provider, s.Model = o.Provider, ""
+	}
 	if c.Origin == OriginSite {
 		// The site door is Claude's: the levels below are Claude Code's
 		// tools, and a site's code gets the same engine whatever provider
@@ -682,7 +699,10 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 		return "", err
 	}
 	model := o.Model
-	if model == "" {
+	// The conversation's model is its last agent's (or the one it was
+	// opened with, before any agent ran it): another agent takes its own
+	// default, not a name it does not know.
+	if model == "" && (c.Provider == "" || c.Provider == s.Provider) {
 		model = c.Model
 	}
 	if model == "" {
@@ -694,6 +714,9 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 			r.queued = append(r.queued, text)
 			if model != "" {
 				r.queuedModel = model
+			}
+			if o.Provider != "" {
+				r.queuedProvider = o.Provider
 			}
 			n := len(r.queued)
 			m.mu.Unlock()
@@ -729,6 +752,19 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 		m.mu.Unlock()
 		return "", err
 	}
+	// A conversation written before each agent kept its own session: what
+	// it has is its last agent's, and so are its answers.
+	if c.Sessions == nil && c.Provider != "" {
+		if c.SessionID != "" {
+			c.Sessions = map[string]string{c.Provider: c.SessionID}
+		}
+		for i := range c.Turns {
+			if c.Turns[i].Role != "user" && c.Turns[i].Provider == "" {
+				c.Turns[i].Provider = c.Provider
+			}
+		}
+	}
+	session, catchUp := sessionFor(c, s.Provider)
 	c.Provider, c.Model = s.Provider, model
 	if c.Title == "" {
 		c.Title = TitleOf(text)
@@ -743,12 +779,12 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 		return fail(fmt.Errorf("skill not installed: %w", err))
 	}
 	var system string
-	prompt, lend := m.attach(name, text)
+	prompt, lend := m.attach(name, catchUp+text)
 	req := agent.Request{
 		Workdir:   s.Workdir,
 		Prompt:    prompt,
 		Model:     model,
-		SessionID: c.SessionID,
+		SessionID: session,
 		Jail:      s.Jail,
 		Env:       map[string]string{"PATH": m.agentPath(), MarkVar: name},
 		Name:      name,
@@ -1010,8 +1046,12 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 	c := m.load(name)
 	if sessionID != "" {
 		c.SessionID = sessionID
+		if c.Sessions == nil {
+			c.Sessions = map[string]string{}
+		}
+		c.Sessions[s.Provider] = sessionID
 	}
-	turn := Turn{ID: turnID, Role: "assistant", Text: text.String(), Cost: cost, At: time.Now(), SessionID: sessionID, Tools: tools, Questions: questions, Threads: threads, Steps: steps}
+	turn := Turn{ID: turnID, Role: "assistant", Text: text.String(), Cost: cost, At: time.Now(), SessionID: sessionID, Provider: s.Provider, Tools: tools, Questions: questions, Threads: threads, Steps: steps}
 	if errText != "" {
 		turn.Role = "error"
 		if turn.Text == "" {
@@ -1032,11 +1072,11 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 	_ = os.Remove(m.streamPath(name, turnID))
 	_ = os.Remove(m.streamPath(name, turnID) + ".err")
 	var queued []string
-	queuedModel := ""
+	queuedModel, queuedProvider := "", ""
 	m.mu.Lock()
 	if r := m.running[name]; r != nil {
 		close(r.done)
-		queued, queuedModel = r.queued, r.queuedModel
+		queued, queuedModel, queuedProvider = r.queued, r.queuedModel, r.queuedProvider
 	}
 	delete(m.running, name)
 	m.mu.Unlock()
@@ -1044,7 +1084,7 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 		// After this turn's final event, so whoever follows the stream sees
 		// one turn end and the next begin.
 		defer func() {
-			if _, err := m.SendWith(name, strings.Join(queued, "\n\n"), SendOptions{Model: queuedModel}); err != nil {
+			if _, err := m.SendWith(name, strings.Join(queued, "\n\n"), SendOptions{Model: queuedModel, Provider: queuedProvider}); err != nil {
 				m.emit("agent.error", name, "error", "the queued message was not sent: "+err.Error(), nil)
 			}
 		}()
