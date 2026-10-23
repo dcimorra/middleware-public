@@ -678,14 +678,20 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 		s.Provider, s.Model = o.Provider, ""
 	}
 	if c.Origin == OriginSite {
-		// The site door is Claude's: the levels below are Claude Code's
-		// tools, and a site's code gets the same engine whatever provider
-		// its own conversation in the panel uses.
-		if s.Provider != "claude" {
+		// The site door runs the agent its manifest chose when the
+		// conversation was opened (Claude for one opened before there was
+		// a choice), not the one the site's panel conversation uses: the
+		// levels are said in Claude Code's tool names and every adapter
+		// translates them.
+		door := c.Provider
+		if door == "" {
+			door = "claude"
+		}
+		if s.Provider != door {
 			// The site's own model is another provider's name.
 			s.Model = ""
 		}
-		s.Provider = "claude"
+		s.Provider = door
 	}
 	provider, err := m.opts.Registry.Get(s.Provider)
 	if err != nil {
@@ -1012,6 +1018,11 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 		errText = fmt.Sprintf("the turn ran for %s and was cut off; what it left running is listed under its processes", TurnLimit)
 		m.emit("agent.turn_limit", name, "error", errText, map[string]any{"turn_id": turnID})
 	}
+	if cost <= 0 && origin == OriginSite {
+		// A door turn on a subscription costs nothing that can be read,
+		// and a dollar cap never trips on it: it is counted instead.
+		_ = m.opts.Ledger.CountUnpriced(SiteDoorBook(domain), time.Now())
+	}
 	if cost > 0 {
 		if origin == OriginSite {
 			// The site door's own book: its daily cap is decided by
@@ -1109,6 +1120,22 @@ func (m *Manager) ProviderInfo(key string) (bool, []string) {
 	}
 	ok, _ := p.Available()
 	return ok, p.Models()
+}
+
+// Providers are the agents the registry holds, by key.
+func (m *Manager) Providers() []string { return m.opts.Registry.Keys() }
+
+// ProviderPermissions are the site door's permissions an agent can hold
+// apart: what it says (agent.Permissioner), or all of them.
+func (m *Manager) ProviderPermissions(key string) []string {
+	p, err := m.opts.Registry.Get(key)
+	if err != nil {
+		return nil
+	}
+	if pp, ok := p.(agent.Permissioner); ok {
+		return pp.Permissions()
+	}
+	return append([]string(nil), Permissions...)
 }
 
 // Ledger is the cost record the manager writes.

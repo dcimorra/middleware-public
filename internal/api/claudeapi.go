@@ -2,6 +2,9 @@ package api
 
 import (
 	"encoding/json"
+
+	"github.com/dcimorra/middleware-public/internal/chat"
+	"github.com/dcimorra/middleware-public/internal/manifest"
 	"net/http"
 	"sort"
 	"strconv"
@@ -19,7 +22,7 @@ import (
 
 // registerDoorPanel mounts /sites/{domain}/claude-api and /claude/sites.
 func (s *Server) registerDoorPanel(o SiteDoorOptions) {
-	s.Handle("GET", Prefix+"/sites/{domain}/claude-api", "The site's Claude door: open or not, its limits, its token, what it spent today and in the last 30 days", func(w http.ResponseWriter, r *http.Request) (any, error) {
+	s.Handle("GET", Prefix+"/sites/{domain}/claude-api", "The site's LLM gateway (the door its code calls): open or not, the agents it may use with their models and permissions, its limits, its token, what it spent today and in the last 30 days", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		domain, err := domainOf(r)
 		if err != nil {
 			return nil, err
@@ -28,15 +31,38 @@ func (s *Server) registerDoorPanel(o SiteDoorOptions) {
 		if !ok || m == nil {
 			return nil, Errorf(http.StatusNotFound, "%s: no such site", domain)
 		}
-		var models []string
-		if o.Models != nil {
-			models = o.Models()
+		// Every agent that can run now, with what it can be told: its
+		// models and the permissions it can hold apart. The one the door
+		// has is listed even when it cannot run, so the screen says so
+		// rather than showing another.
+		type doorAgent struct {
+			Provider    string   `json:"provider"`
+			Available   bool     `json:"available"`
+			Models      []string `json:"models"`
+			Permissions []string `json:"permissions"`
 		}
+		var list []doorAgent
+		keys := o.agents()
+		if m.ClaudeAPI != nil {
+			if cur := rulesOf(m.ClaudeAPI, 0).Provider; !contains(keys, cur) {
+				keys = append(keys, cur)
+			}
+		}
+		for _, k := range keys {
+			a := doorAgent{Provider: k, Available: o.available(k), Models: o.models(k), Permissions: o.permissions(k)}
+			if a.Models == nil {
+				a.Models = []string{}
+			}
+			list = append(list, a)
+		}
+		rules := rulesOf(m.ClaudeAPI, o.houseDaily())
 		out := map[string]any{
 			"enabled":   m.ClaudeAPI != nil,
-			"models":    models,
+			"agents":    list,
+			"models":    o.models(rules.Provider),
 			"defaults":  rulesOf(nil, o.houseDaily()),
 			"spent_usd": round4(o.spent(domain)),
+			"turns":     o.turns(domain),
 			"api":       o.API,
 			"socket":    o.Socket,
 			"process":   m.Run != nil || len(m.Workers) > 0,
@@ -49,7 +75,7 @@ func (s *Server) registerDoorPanel(o SiteDoorOptions) {
 			}
 		}
 		if m.ClaudeAPI != nil {
-			out["limits"] = rulesOf(m.ClaudeAPI, o.houseDaily())
+			out["limits"] = rules
 			if o.Tokens != nil {
 				// Shown whole on purpose: it is no secret of the house (it
 				// speaks of this domain only, through this door only), and
@@ -62,18 +88,21 @@ func (s *Server) registerDoorPanel(o SiteDoorOptions) {
 		}
 		return out, nil
 	})
-	s.Handle("POST", Prefix+"/sites/{domain}/claude-api", "Open, close or tune the site's Claude door (body: enabled, tools, daily_usd, max_chats, model, hide_chats); it is written in the manifest and the site restarts", func(w http.ResponseWriter, r *http.Request) (any, error) {
+	s.Handle("POST", Prefix+"/sites/{domain}/claude-api", "Open, close or tune the site's LLM gateway (body: enabled, provider, permissions, daily_usd, daily_turns, max_chats, model, hide_chats; tools for the four old levels); it is written in the manifest and the site restarts", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		domain, err := domainOf(r)
 		if err != nil {
 			return nil, err
 		}
 		var b struct {
-			Enabled  bool    `json:"enabled"`
-			Tools    string  `json:"tools"`
-			DailyUSD float64 `json:"daily_usd"`
-			MaxChats int     `json:"max_chats"`
-			Model    string  `json:"model"`
-			Hide     bool    `json:"hide_chats"`
+			Enabled     bool      `json:"enabled"`
+			Provider    string    `json:"provider"`
+			Permissions *[]string `json:"permissions"`
+			Tools       string    `json:"tools"`
+			DailyUSD    float64   `json:"daily_usd"`
+			DailyTurns  int       `json:"daily_turns"`
+			MaxChats    int       `json:"max_chats"`
+			Model       string    `json:"model"`
+			Hide        bool      `json:"hide_chats"`
 		}
 		if err := ReadJSON(r, &b); err != nil {
 			return nil, err
@@ -89,8 +118,35 @@ func (s *Server) registerDoorPanel(o SiteDoorOptions) {
 			default:
 				return nil, Errorf(http.StatusBadRequest, "tools is none, read, web or write")
 			}
-			if err := o.knownModel(b.Model); err != nil {
+			provider := strings.TrimSpace(b.Provider)
+			if provider == "" {
+				provider = "claude"
+			}
+			if !contains(o.agents(), provider) {
+				return nil, Errorf(http.StatusBadRequest, "%s cannot run on this machine now: enable its module first (agents here: %s)", provider, strings.Join(o.agents(), ", "))
+			}
+			if err := o.knownModel(provider, b.Model); err != nil {
 				return nil, err
+			}
+			var perms []string
+			if b.Permissions != nil {
+				// A permission the agent cannot hold apart is refused, not
+				// dropped: the screen offered only the others, and a
+				// manifest written by hand must not believe it got one.
+				can := o.permissions(provider)
+				for _, p := range *b.Permissions {
+					if !contains(can, p) {
+						return nil, Errorf(http.StatusBadRequest, "%s cannot be given %q on its own (it holds apart: %s)", provider, p, strings.Join(can, ", "))
+					}
+				}
+				name, err := chat.PermsName(*b.Permissions)
+				if err != nil {
+					return nil, Errorf(http.StatusBadRequest, "permissions: %v", err)
+				}
+				perms = chat.PermsOf(name)
+			}
+			if b.DailyTurns < 0 {
+				return nil, Errorf(http.StatusBadRequest, "daily_turns cannot be negative")
 			}
 			if m.Run == nil && len(m.Workers) == 0 {
 				return nil, Errorf(http.StatusBadRequest, "%s serves files and has no workers: no process of its own could call the door", domain)
@@ -99,8 +155,21 @@ func (s *Server) registerDoorPanel(o SiteDoorOptions) {
 			// with four numbers that are exactly the defaults lies to whoever
 			// comes next, it looks as if someone chose them.
 			block := map[string]any{}
-			if t := strings.TrimSpace(b.Tools); t != "" && t != "none" {
-				block["tools"] = t
+			if provider != "claude" {
+				block["provider"] = provider
+			}
+			switch {
+			case b.Permissions != nil && len(perms) > 0:
+				// Written even when it is all of them: a block that says
+				// nothing is a door with no tools, as it always was.
+				block["permissions"] = perms
+			case b.Permissions == nil:
+				if t := strings.TrimSpace(b.Tools); t != "" && t != "none" {
+					block["tools"] = t
+				}
+			}
+			if b.DailyTurns > 0 && !(provider != "claude" && b.DailyTurns == DefaultDailyTurns) {
+				block["daily_turns"] = b.DailyTurns
 			}
 			if b.DailyUSD > 0 && b.DailyUSD != o.houseDaily() {
 				block["daily_usd"] = b.DailyUSD
@@ -132,8 +201,8 @@ func (s *Server) registerDoorPanel(o SiteDoorOptions) {
 			}
 			// Open, and the first call would meet "no Claude Code here",
 			// which leads nowhere: said now instead.
-			if o.Available != nil && !o.Available() {
-				out["warn"] = "open, but the Claude module has no session to use: sign in under Modules"
+			if !o.available(rulesOf(&manifest.ClaudeAPI{Provider: b.Provider}, 0).Provider) {
+				out["warn"] = "open, but its agent has no session to use: sign in under Modules"
 			}
 		}
 		return out, nil
@@ -146,10 +215,12 @@ func (s *Server) registerDoorPanel(o SiteDoorOptions) {
 		days, uses, total := o.usage(n)
 		type row struct {
 			SiteUse
-			Open     bool    `json:"open"`
-			Exists   bool    `json:"exists"`
-			DailyUSD float64 `json:"daily_usd"`
-			Tools    string  `json:"tools,omitempty"`
+			Open        bool     `json:"open"`
+			Exists      bool     `json:"exists"`
+			DailyUSD    float64  `json:"daily_usd"`
+			Tools       string   `json:"tools,omitempty"`
+			Provider    string   `json:"provider,omitempty"`
+			Permissions []string `json:"permissions,omitempty"`
 		}
 		seen := map[string]bool{}
 		rows := []row{}
@@ -159,7 +230,7 @@ func (s *Server) registerDoorPanel(o SiteDoorOptions) {
 				rw.Exists = true
 				if m.ClaudeAPI != nil {
 					rl := rulesOf(m.ClaudeAPI, o.houseDaily())
-					rw.Open, rw.DailyUSD, rw.Tools = true, rl.DailyUSD, rl.Tools
+					rw.Open, rw.DailyUSD, rw.Tools, rw.Provider, rw.Permissions = true, rl.DailyUSD, rl.Tools, rl.Provider, rl.Permissions
 				}
 			}
 			seen[u.Domain] = true
@@ -174,7 +245,7 @@ func (s *Server) registerDoorPanel(o SiteDoorOptions) {
 				}
 				if m, ok := o.Lookup(d); ok && m != nil && m.ClaudeAPI != nil {
 					rl := rulesOf(m.ClaudeAPI, o.houseDaily())
-					rows = append(rows, row{SiteUse: SiteUse{Domain: d, Series: make([]float64, n), Models: map[string]float64{}}, Open: true, Exists: true, DailyUSD: rl.DailyUSD, Tools: rl.Tools})
+					rows = append(rows, row{SiteUse: SiteUse{Domain: d, Series: make([]float64, n), Models: map[string]float64{}}, Open: true, Exists: true, DailyUSD: rl.DailyUSD, Tools: rl.Tools, Provider: rl.Provider, Permissions: rl.Permissions})
 				}
 			}
 		}
@@ -281,4 +352,24 @@ func roundUse(u SiteUse) SiteUse {
 		u.Models[m] = round4(u.Models[m])
 	}
 	return u
+}
+
+// permissions an agent can be given one by one at the door.
+func (o SiteDoorOptions) permissions(provider string) []string {
+	if o.Chat == nil {
+		return append([]string(nil), chat.Permissions...)
+	}
+	if ps := o.Chat.ProviderPermissions(provider); ps != nil {
+		return ps
+	}
+	return append([]string(nil), chat.Permissions...)
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }

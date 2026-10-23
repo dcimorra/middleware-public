@@ -560,10 +560,12 @@ Each password gives its own pass, valid only for its zone. The client
 address is the real one: edge headers are believed only from the door they
 belong to, so a hand-written `X-Forwarded-For` opens nothing.
 
-**The site's code needs Claude** (draft, classify, answer with JSON) → open
-the site door with `"claude_api": {}` and call it from the code; never
-install or call the `claude` CLI from the site, and never put an API key in
-the project:
+**The site's code needs an AI** (draft, classify, answer with JSON) → open
+the site door (the AI gateway) with `"claude_api": {}` and call it from the
+code; never install or call an agent's CLI from the site, and never put an
+API key in the project. Which agent answers (`provider`: claude, openai,
+agy…) and what it may do (`permissions`) are a person's choice in the
+panel:
 
 ```sh
 curl -s "$MIDDLEWARE_API/api/site/claude/ask" -H "Authorization: Bearer $MIDDLEWARE_TOKEN" \
@@ -575,8 +577,9 @@ The answer is `{chat, state, text, model, turns, cost_usd, json, question}`;
 message, `wait: "0"` answers 202 at once and the conversation is followed at
 `/api/site/claude/chats/{chat}` or its `/stream`.
 
-The default level has no tools; `read`, `web` and `write` are a person's
-decision, not yours. Each site has a daily cap (`claude_api.daily_usd`); a
+An empty block has no tools; `permissions` (`read`, `edit`, `web`,
+`shell`) are a person's decision, not yours. Each site has a daily cap
+(`claude_api.daily_usd`, and `daily_turns` for agents on a subscription); a
 429 says it was reached. In a docker site, call it over
 `$MIDDLEWARE_API_SOCKET` (curl `--unix-socket`).
 

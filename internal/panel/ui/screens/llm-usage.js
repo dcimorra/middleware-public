@@ -41,6 +41,11 @@ export function llmUsageScreen() {
     return list.length ? h("span", { class: "small muted" }, list.map(([k, v]) => `${k} ${usd(v)}`).join(" · ")) : "";
   }
 
+  // What an open door may do, said in its permissions.
+  function permsLabel(perms) {
+    return perms && perms.length ? perms.map((p) => t("door.perm." + p)).join(", ") : t("door.permNone");
+  }
+
   async function load() {
     clear(body).append(loading());
     try {
@@ -48,7 +53,7 @@ export function llmUsageScreen() {
       if (!d.sites.length) { clear(body).append(empty(t("claudeUse.none"), t("claudeUse.noneHint"))); return; }
       const rows = d.sites.map((s) => h("tr", null,
         cell(s.exists ? h("a", { href: `#/sites/${enc(s.domain)}/overview` }, s.domain) : h("span", { class: "muted" }, s.domain), null, "primary"),
-        cell(s.open ? h("span", { class: "badge ok" }, t("door.level." + (s.tools || "none"))) : h("span", { class: "badge" }, t("claudeUse.closed")), t("claudeUse.door")),
+        cell(s.open ? h("span", { class: "badge ok", title: permsLabel(s.permissions) }, `${s.provider || "claude"} · ${permsLabel(s.permissions)}`) : h("span", { class: "badge" }, t("claudeUse.closed")), t("claudeUse.door")),
         cell(s.open ? h("span", { class: s.today >= s.daily_usd ? "level-error" : "" }, `${usd(s.today)} / ${usd(s.daily_usd)}`) : usd(s.today), t("claudeUse.today"), "num mono"),
         cell(usd(s.d7), t("door.d7"), "num mono"),
         cell(usd(s.d30), t("door.d30"), "num mono"),

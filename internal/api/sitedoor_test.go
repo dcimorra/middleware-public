@@ -21,20 +21,43 @@ import (
 // records what it was asked to run with.
 type answeringProvider struct {
 	answer string
-	mu     sync.Mutex
-	reqs   []agent.Request
+	// key is the agent it stands for; empty is claude. cost is what each
+	// turn reports: Claude's 0.25 unless set below zero, which is none.
+	key  string
+	cost float64
+	mu   sync.Mutex
+	reqs []agent.Request
 }
 
-func (p *answeringProvider) Key() string               { return "claude" }
+func (p *answeringProvider) Key() string {
+	if p.key == "" {
+		return "claude"
+	}
+	return p.key
+}
 func (p *answeringProvider) Available() (bool, string) { return true, "fake" }
-func (p *answeringProvider) Models() []string          { return []string{"sonnet"} }
+func (p *answeringProvider) Models() []string {
+	if p.key == "openai" {
+		return []string{"gpt-5.5"}
+	}
+	return []string{"sonnet"}
+}
+
+// codexLike is an agent that cannot hold "shell" apart, as Codex.
+type codexLike struct{ *answeringProvider }
+
+func (codexLike) Permissions() []string { return []string{"read", "edit", "web"} }
 func (p *answeringProvider) Start(ctx context.Context, req agent.Request) (agent.Run, error) {
 	p.mu.Lock()
 	p.reqs = append(p.reqs, req)
 	p.mu.Unlock()
 	ch := make(chan agent.Event, 2)
 	ch <- agent.Event{Kind: agent.KindText, Text: p.answer, SessionID: "s1"}
-	ch <- agent.Event{Kind: agent.KindResult, Cost: 0.25}
+	cost := 0.25
+	if p.cost < 0 {
+		cost = 0
+	}
+	ch <- agent.Event{Kind: agent.KindResult, Cost: cost}
 	close(ch)
 	return chanRun(ch), nil
 }
@@ -49,7 +72,7 @@ type chanRun chan agent.Event
 func (r chanRun) Events() <-chan agent.Event { return r }
 func (r chanRun) Stop()                      {}
 
-func doorFixture(t *testing.T, manifests map[string]string) (*fixture, *sitetoken.Keys, *answeringProvider, *chat.Manager) {
+func doorFixture(t *testing.T, manifests map[string]string, more ...agent.Provider) (*fixture, *sitetoken.Keys, *answeringProvider, *chat.Manager) {
 	f := newFixture(t).withToken()
 	for d, m := range manifests {
 		os.MkdirAll(filepath.Join(f.root, "sites", d), 0o755)
@@ -58,6 +81,9 @@ func doorFixture(t *testing.T, manifests map[string]string) (*fixture, *sitetoke
 	p := &answeringProvider{answer: `{"ok": true}`}
 	reg := agent.NewRegistry()
 	reg.Register(p)
+	for _, o := range more {
+		reg.Register(o)
+	}
 	m := chat.New(chat.Options{Root: f.root, Bus: f.bus, Registry: reg})
 	keys := sitetoken.New(filepath.Join(f.root, "data"))
 	f.srv.RegisterSiteDoor(SiteDoorOptions{
@@ -70,8 +96,13 @@ func doorFixture(t *testing.T, manifests map[string]string) (*fixture, *sitetoke
 		Spent:      m.Ledger().Day,
 		Bus:        f.bus,
 		SiteDir:    func(d string) string { return filepath.Join(f.root, "sites", d) },
-		Available:  func() bool { ok, _ := m.ProviderInfo("claude"); return ok },
-		Models:     func() []string { _, ms := m.ProviderInfo("claude"); return append(ms, "haiku") },
+		Models: func(provider string) []string {
+			_, ms := m.ProviderInfo(provider)
+			if provider == "claude" {
+				ms = append(ms, "haiku")
+			}
+			return ms
+		},
 	})
 	return f, keys, p, m
 }
@@ -288,5 +319,79 @@ func TestTheStreamSendsAConversationsMessagesAndItsEnd(t *testing.T) {
 		case <-deadline:
 			t.Fatalf("no session event; saw %v", seen)
 		}
+	}
+}
+
+func TestTheGatewayRunsTheAgentItsManifestNamesWithThePermissionsItGrants(t *testing.T) {
+	codex := &answeringProvider{answer: "from codex", key: "openai", cost: -1}
+	f, keys, claude, _ := doorFixture(t, map[string]string{
+		"o.test": `{"version":2,"claude_api":{"provider":"openai","permissions":["read","edit"],"model":"gpt-5.5","daily_turns":2}}`,
+		"c.test": `{"version":2,"claude_api":{"permissions":["web"]}}`,
+	}, codex)
+	code, out := f.asSite(keys, "o.test", "POST", "/api/v1/site/claude/ask", map[string]any{"prompt": "hi"})
+	if code != 200 || out["text"] != "from codex" || out["model"] != "gpt-5.5" {
+		t.Fatalf("ask: %d %v", code, out)
+	}
+	r := codex.last()
+	if strings.Join(r.Tools, ",") != "Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit" || strings.Join(r.Disallowed, ",") != "Task" {
+		t.Fatalf("codex ran with %v / %v", r.Tools, r.Disallowed)
+	}
+	// Another agent's model is refused before anything runs.
+	if code, out := f.asSite(keys, "o.test", "POST", "/api/v1/site/claude/ask", map[string]any{"prompt": "x", "model": "sonnet"}); code != 400 {
+		t.Fatalf("a model of another agent: %d %v", code, out)
+	}
+	// Its turns cost nothing that can be read: they are counted, and the
+	// cap on turns is what stops the third.
+	f.asSite(keys, "o.test", "POST", "/api/v1/site/claude/ask", map[string]any{"prompt": "two"})
+	code, out = f.asSite(keys, "o.test", "POST", "/api/v1/site/claude/ask", map[string]any{"prompt": "three"})
+	if code != 429 || !strings.Contains(text(out), "daily_turns") {
+		t.Fatalf("over the turns cap: %d %v", code, out)
+	}
+	// "web" alone is the web and not the folder.
+	f.asSite(keys, "c.test", "POST", "/api/v1/site/claude/ask", map[string]any{"prompt": "x"})
+	if r := claude.last(); strings.Join(r.Tools, ",") != "WebSearch,WebFetch" {
+		t.Fatalf("web alone ran with %v", r.Tools)
+	}
+}
+
+func TestOpeningTheGatewayGivesEveryPermissionAndRefusesWhatTheAgentCannotHoldApart(t *testing.T) {
+	codex := codexLike{&answeringProvider{key: "openai", cost: -1}}
+	f, _, _, _ := doorFixture(t, map[string]string{
+		"g.test": `{"version":2,"run":{"command":["true"]}}`,
+	}, codex)
+	_, d := f.call("GET", "/api/v1/sites/g.test/claude-api", nil)
+	def := d["defaults"].(map[string]any)
+	if def["provider"] != "claude" || len(def["permissions"].([]any)) != 4 {
+		t.Fatalf("defaults: %v", def)
+	}
+	var codexPerms []any
+	for _, a := range d["agents"].([]any) {
+		if a.(map[string]any)["provider"] == "openai" {
+			codexPerms = a.(map[string]any)["permissions"].([]any)
+		}
+	}
+	if len(codexPerms) != 3 {
+		t.Fatalf("agents: %v", d["agents"])
+	}
+	// Opened with the defaults, the manifest says so out loud.
+	if resp, out := f.call("POST", "/api/v1/sites/g.test/claude-api", map[string]any{"enabled": true, "provider": "claude", "permissions": def["permissions"]}); resp.StatusCode != 200 {
+		t.Fatalf("open: %d %v", resp.StatusCode, out)
+	}
+	mf, _ := manifest.Load(filepath.Join(f.root, "sites", "g.test"))
+	if mf.ClaudeAPI == nil || strings.Join(mf.ClaudeAPI.Permissions, ",") != "read,edit,web,shell" {
+		t.Fatalf("written: %+v", mf.ClaudeAPI)
+	}
+	if resp, out := f.call("POST", "/api/v1/sites/g.test/claude-api", map[string]any{"enabled": true, "provider": "openai", "permissions": []string{"read", "shell"}}); resp.StatusCode != 400 || !strings.Contains(text(out), "shell") {
+		t.Fatalf("shell for codex: %d %v", resp.StatusCode, out)
+	}
+	if resp, _ := f.call("POST", "/api/v1/sites/g.test/claude-api", map[string]any{"enabled": true, "provider": "nobody"}); resp.StatusCode != 400 {
+		t.Fatalf("an agent that is not here: %d", resp.StatusCode)
+	}
+	if resp, out := f.call("POST", "/api/v1/sites/g.test/claude-api", map[string]any{"enabled": true, "provider": "openai", "permissions": []string{"read"}, "model": "gpt-5.5"}); resp.StatusCode != 200 {
+		t.Fatalf("codex reading: %d %v", resp.StatusCode, out)
+	}
+	mf, _ = manifest.Load(filepath.Join(f.root, "sites", "g.test"))
+	if mf.ClaudeAPI.Provider != "openai" || strings.Join(mf.ClaudeAPI.Permissions, ",") != "read" || mf.ClaudeAPI.Model != "gpt-5.5" {
+		t.Fatalf("written: %+v", mf.ClaudeAPI)
 	}
 }

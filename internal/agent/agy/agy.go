@@ -121,7 +121,7 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 				return nil, err
 			}
 		}
-		if err := writeJail(dir, req.Jail); err != nil {
+		if err := writeJail(dir, req.Jail, req.Tools); err != nil {
 			return nil, err
 		}
 	}
@@ -168,10 +168,19 @@ func refreshOf(token string) string {
 // HasSignIn says token is a sign-in file the CLI would accept.
 func HasSignIn(token string) bool { return refreshOf(token) != "" }
 
+// Permissions implements agent.Permissioner: reading, editing and the
+// shell are Antigravity's rules (read_file, write_file, command); its web
+// search is not. Tried on 1.4.6 with url(*), read_url(*) and
+// execute_url(*) all denied: search_web still answered. So the web is
+// not offered as something that can be taken away.
+func (p *Provider) Permissions() []string { return []string{"read", "edit", "shell"} }
+
 // writeJail writes the jail as permission rules in settings.json under
 // dir, keeping whatever else the file says. Deny is closed to reading and
-// writing, Lent to writing, Secrets (patterns inside the site) to reading.
-func writeJail(dir string, j agent.Jail) error {
+// writing, Lent to writing, Secrets (patterns inside the site) to reading;
+// and when tools is not nil (a site door's permissions, in Claude Code's
+// names), what it leaves out is closed everywhere.
+func writeJail(dir string, j agent.Jail, tools []string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -198,6 +207,26 @@ func writeJail(dir string, j agent.Jail) error {
 	}
 	for _, c := range j.Commands {
 		deny = append(deny, "command("+c+")")
+	}
+	if tools != nil {
+		has := map[string]bool{}
+		for _, t := range tools {
+			has[t] = true
+		}
+		if !has["Read"] {
+			deny = append(deny, "read_file(/)")
+		}
+		if !has["Edit"] && !has["Write"] {
+			deny = append(deny, "write_file(/)")
+		}
+		if !has["Bash"] {
+			deny = append(deny, "command(*)")
+		}
+		if !has["WebFetch"] {
+			// The pages and the browser; the search itself cannot be
+			// closed (Permissions).
+			deny = append(deny, "read_url(*)", "execute_url(*)")
+		}
 	}
 	perms, _ := st["permissions"].(map[string]any)
 	if perms == nil {

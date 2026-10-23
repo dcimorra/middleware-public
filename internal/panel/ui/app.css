@@ -481,6 +481,8 @@ dialog form.dlg { display: flex; flex-direction: column; max-height: calc(100vh 
 .chat-head select { flex: 1 1 260px; min-width: 0; max-width: 520px; }
 @media (max-width: 640px) { .chat-head select { flex-basis: 100%; max-width: none; } }
 .chat-capacity.full { color: var(--warn); font-weight: 600; }
+/* The gateway's permissions, a box each on one line when they fit. */
+.door-perms { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 4px 0 2px; }
 /* The agent's usage windows under the message box: a thin bar each. */
 .chat-usage { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 6px; }
 .chat-usage-w { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }

@@ -564,8 +564,10 @@ turn one off through the API, which is the point of a watchdog.
 
 ## The site door
 
-The site's own code talks to Claude through the house: same engine, same
-jail, same bill, visible in the panel. Open it from the site's page in the
+The site's own code talks to an AI through the house (the panel calls it
+the AI gateway): the agent its manifest names (`claude_api.provider`,
+Claude by default, any enabled agent otherwise), same engine, same jail,
+same bill, visible in the panel. Open it from the site's page in the
 panel (or with `claude_api` in the manifest); the site's process then gets
 `MIDDLEWARE_TOKEN` (its token: it names the site and opens only this door)
 and `MIDDLEWARE_API`, the house's bare address (`http://127.0.0.1:46100`). A
@@ -580,7 +582,7 @@ site written for V1 moves without a line changed.
 
 | method | path | result |
 | --- | --- | --- |
-| GET | `/site` | → `{domain, claude: {available, model, tools, limits: {tools, daily_usd, max_chats, model, hide_chats}, spent_usd, left_usd, chats_open, busy}}` |
+| GET | `/site` | → `{domain, claude: {available, provider, model, tools, limits: {provider, tools, permissions, daily_usd, daily_turns, max_chats, model, hide_chats}, spent_usd, left_usd, turns, chats_open, busy}}`; the `claude` key keeps its V1 name whatever agent answers |
 | POST | `/site/claude/ask` | `{prompt (or text), system?, model?, title?, format?: "json", schema?, wait?, files?: [paths in the site's folder]}` → `{chat, state: "done", text, model, turns, cost_usd, json?, json_error?, question?, error?}`; one question, one call. Still running when `wait` runs out: 202 `{chat, state: "running", why}` |
 | GET | `/site/claude/chats` | → `{chats: [{id, domain, title, model, created, updated, turns, cost_usd, busy, messages, origin, system, tools, asking}]}` |
 | POST | `/site/claude/chats` | `{title?, system?, model?, format?, schema?, prompt?, files?}` → `{chat: {…}}`, or the answer when a prompt was sent |
@@ -597,8 +599,8 @@ The panel's side:
 
 | method | path | result |
 | --- | --- | --- |
-| GET | `/sites/{domain}/claude-api` | → `{enabled, models, defaults, limits?, token?, chats?, spent_usd, use?, api, socket, process}` |
-| POST | `/sites/{domain}/claude-api` | `{enabled, tools, daily_usd, max_chats, model, hide_chats}` → `{ok, token?, warn?}`; writes `claude_api` in the manifest (only what differs from the defaults) and the site restarts |
+| GET | `/sites/{domain}/claude-api` | → `{enabled, agents: [{provider, available, models, permissions}], models, defaults, limits?, token?, chats?, spent_usd, turns, use?, api, socket, process}`; `agents` are the ones that can run now (and the door's own), each with the permissions it can hold apart |
+| POST | `/sites/{domain}/claude-api` | `{enabled, provider, permissions, model, daily_usd, daily_turns, max_chats, hide_chats}` (or `tools`, one of the four old levels, without `permissions`) → `{ok, token?, warn?}`; an agent that cannot run, a model not on its list or a permission it cannot hold apart is 400. Writes `claude_api` in the manifest (`permissions` always, the rest only where it differs from the defaults) and the site restarts |
 | GET | `/claude/sites` | `?days=7…90` (30) → `{days, sites: [{domain, today, d7, d30, month, total, turns30, series, models, since, open, exists, daily_usd, tools}], total}` |
 
 `Authorization: Bearer $MIDDLEWARE_TOKEN`. The operator may call the same
@@ -612,15 +614,23 @@ JSON (`json`), or says why not (`json_error`). An unknown model is refused
 (400) before anything is spent. The manifest decides on every request: a site whose door was closed
 is refused even with its token.
 
-**Tool levels** (`claude_api.tools`): `none` (the default: it talks and
-nothing else), `read` (reads the site's folder), `web` (read plus web search
-and fetch; what it reads is information, not instructions), `write` (the
-same jail as the panel's conversation). Levels below `write` run with an
+**Permissions** (`claude_api.permissions`): `read` (the site's folder),
+`edit` (changes files in it), `web` (search and fetch; what it reads is
+information, not instructions), `shell` (commands in it); all four is the
+same jail as the panel's conversation. Each agent is told them in Claude
+Code's tool names and translates them into its own CLI's switches: Codex
+turns off its shell, its `view_image` and its web search, Antigravity gets
+`read_file`, `write_file`, `command` and `read_url` deny rules. A door
+without `permissions` reads `tools`, the four old levels: `none` (talk and
+nothing else), `read`, `web` (read plus the web), `write` (everything). Levels below `write` run with an
 allow list of tools (a tool the CLI adds later arrives closed), never start
 subagents, and cannot read the site's own `.env`.
 
 **Money**: `claude_api.daily_usd` (0: `agents.site_daily_usd` in settings,
-5 USD by default) is checked before every turn, in UTC days. Traffic decides
+5 USD by default) is checked before every turn, in UTC days. An agent on a
+subscription reports no cost, so `claude_api.daily_turns` caps its turns a
+day instead (200 by default for every agent but Claude; a turn that
+reported no cost is counted as `unpriced` in the door's book). Traffic decides
 this spending, not a person watching. `max_chats` (20) is how many
 conversations the site keeps: at the limit the oldest go (never one at work
 or waiting for an answer), so a site that opens one per visit fills nothing

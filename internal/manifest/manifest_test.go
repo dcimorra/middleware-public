@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -227,5 +228,22 @@ func TestAMisspeltSecurityRuleRejectsTheManifest(t *testing.T) {
 func TestAnAppIsNotAFieldOfV2(t *testing.T) {
 	if _, err := Parse([]byte(`{"version":2,"app":"mask"}`)); err == nil {
 		t.Fatal("app was accepted: a field nothing reads would do nothing and say nothing")
+	}
+}
+
+func TestTheGatewaysPermissionsAndAgentAreChecked(t *testing.T) {
+	for raw, ok := range map[string]bool{
+		`{"version":2,"claude_api":{"provider":"openai","permissions":["read","shell"],"daily_turns":50}}`: true,
+		`{"version":2,"claude_api":{"permissions":["read","root"]}}`:                                       false,
+		`{"version":2,"claude_api":{"provider":"Not An Agent"}}`:                                           false,
+		`{"version":2,"claude_api":{"daily_turns":-1}}`:                                                    false,
+	} {
+		var m Manifest
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Validate(); (err == nil) != ok {
+			t.Errorf("%s: %v", raw, err)
+		}
 	}
 }

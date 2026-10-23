@@ -195,15 +195,26 @@ type ChatRules struct {
 	Reads []string `json:"reads,omitempty"`
 }
 
-// ClaudeAPI is the site door's rules for this site. An empty block is a
-// site that may ask and nothing else: no tools, no files, no web, which is
-// what nine cases in ten need (draft, summarise, classify, answer with JSON
-// that fits a schema).
+// ClaudeAPI is the site door's rules for this site: the LLM gateway its
+// own code calls. The name is the one it had when Claude was its only
+// agent; any enabled agent may answer it now. An empty block is a site
+// that may ask Claude and nothing else: no tools, no files, no web.
 type ClaudeAPI struct {
+	// Provider is the agent that answers (claude, openai, agy…); empty is
+	// claude.
+	Provider string `json:"provider,omitempty"`
+	// Permissions are granted one by one: read, edit, web, shell. When
+	// the block lists none, Tools says what the door may do, as it did
+	// before permissions came apart.
+	Permissions []string `json:"permissions,omitempty"`
 	// Tools is none (default), read, web or write. Raising it is a serious
 	// decision: the site's process answers the internet, and what an
 	// injected prompt can reach depends on this word.
 	Tools string `json:"tools,omitempty"`
+	// DailyTurns caps a day's turns through the door, for an agent whose
+	// turns report no cost (a subscription): a dollar cap never trips on
+	// those. 0 is the house's default for such an agent.
+	DailyTurns int `json:"daily_turns,omitempty"`
 	// DailyUSD caps a day's spending through the door; 0 is the house's
 	// (agents.site_daily_usd). Traffic decides this spending, not a person.
 	DailyUSD float64 `json:"daily_usd,omitempty"`
@@ -431,6 +442,9 @@ func IsProject(s string) bool { return projectRe.MatchString(s) && !reserved[s] 
 // asks ValidDomain instead.
 func ValidName(s string) bool { return ValidDomain(s) || IsProject(s) }
 
+// agentName is what an agent's key looks like (claude, openai, agy).
+var agentName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+
 // Validate checks the manifest is coherent. It rejects what the engine could
 // not act on rather than what merely looks odd.
 func (m *Manifest) Validate() error {
@@ -494,8 +508,18 @@ func (m *Manifest) Validate() error {
 		default:
 			return fmt.Errorf("claude_api.tools: %q is not none, read, web or write", c.Tools)
 		}
-		if c.DailyUSD < 0 || c.MaxChats < 0 {
-			return errors.New("claude_api: daily_usd and max_chats cannot be negative")
+		if c.DailyUSD < 0 || c.MaxChats < 0 || c.DailyTurns < 0 {
+			return errors.New("claude_api: daily_usd, daily_turns and max_chats cannot be negative")
+		}
+		for _, p := range c.Permissions {
+			switch p {
+			case "read", "edit", "web", "shell":
+			default:
+				return fmt.Errorf("claude_api.permissions: %q is not read, edit, web or shell", p)
+			}
+		}
+		if c.Provider != "" && !agentName.MatchString(c.Provider) {
+			return fmt.Errorf("claude_api.provider: %q is not an agent's name", c.Provider)
 		}
 	}
 	if m.Chat != nil {

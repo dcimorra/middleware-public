@@ -139,3 +139,32 @@ func TestUsageIsReadFromTheRecordedAnswer(t *testing.T) {
 		t.Fatalf("window = %+v", ws[0])
 	}
 }
+
+func TestTheDoorsPermissionsBecomeDenyRules(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeJail(dir, agent.Jail{SiteDir: "/s"}, []string{"Read", "Glob", "Grep"}); err != nil {
+		t.Fatal(err)
+	}
+	var st struct {
+		Permissions struct {
+			Deny []string `json:"deny"`
+		} `json:"permissions"`
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
+	json.Unmarshal(raw, &st)
+	got := strings.Join(st.Permissions.Deny, " ")
+	for _, want := range []string{"write_file(/)", "command(*)", "read_url(*)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "read_file(/)") {
+		t.Errorf("reading was granted and denied: %s", got)
+	}
+	// Every tool (the panel's conversation) adds nothing.
+	writeJail(dir, agent.Jail{SiteDir: "/s"}, nil)
+	raw, _ = os.ReadFile(filepath.Join(dir, "settings.json"))
+	if strings.Contains(string(raw), "command(*)") || strings.Contains(string(raw), "read_file(/)") {
+		t.Errorf("a full turn got the door's rules: %s", raw)
+	}
+}

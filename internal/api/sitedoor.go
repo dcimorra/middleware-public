@@ -52,12 +52,18 @@ type SiteDoorOptions struct {
 	HouseDaily func() float64
 	// Ledger reads what a book spent on a day.
 	Spent func(book string, at time.Time) float64
-	// Available says whether Claude can run on this machine now.
-	Available func() bool
-	// DefaultModel is the house's model, for a site that names none.
-	DefaultModel func() string
-	// Models are the models a request may name.
-	Models func() []string
+	// Available says whether an agent can run on this machine now;
+	// nil asks the chat's registry.
+	Available func(provider string) bool
+	// DefaultModel is the house's model of an agent, for a site that
+	// names none; empty lets the agent take its own.
+	DefaultModel func(provider string) string
+	// Models are the models a request to an agent may name; nil asks
+	// the chat's registry.
+	Models func(provider string) []string
+	// Agents are the agents a door may be given, for the panel: every
+	// one that can run now. nil lists the chat's registry.
+	Agents func() []string
 	// Domains lists the sites, for the usage of doors open at zero.
 	Domains func() []string
 	// API and Socket are what the panel shows a developer: where the
@@ -69,30 +75,58 @@ type SiteDoorOptions struct {
 // says nothing.
 const DefaultMaxChats = 20
 
+// DefaultDailyTurns caps a day's door turns for an agent whose turns cost
+// nothing that can be read (Codex on ChatGPT, Antigravity): the dollar cap
+// never trips on those, and traffic, not a person, decides how many come.
+const DefaultDailyTurns = 200
+
 // doorRules are a site's limits resolved: what its manifest says and,
 // where it is silent, the defaults. One place, so the panel never shows
 // one number while the door applies another.
 type doorRules struct {
-	Tools    string  `json:"tools"`
-	DailyUSD float64 `json:"daily_usd"`
-	MaxChats int     `json:"max_chats"`
-	Model    string  `json:"model,omitempty"`
-	Hide     bool    `json:"hide_chats"`
+	Provider    string   `json:"provider"`
+	Tools       string   `json:"tools"`
+	Permissions []string `json:"permissions"`
+	DailyUSD    float64  `json:"daily_usd"`
+	// DailyTurns is 0 for no cap on turns (Claude reports its cost).
+	DailyTurns int    `json:"daily_turns"`
+	MaxChats   int    `json:"max_chats"`
+	Model      string `json:"model,omitempty"`
+	Hide       bool   `json:"hide_chats"`
 }
 
+// rulesOf resolves a manifest's block. nil is what a door being opened
+// starts with: Claude, every permission (the operator's choice: the door
+// is opened by someone who knows what the site does, and narrowed from
+// there), the house's cap. A block that is there but silent is the door
+// as it always was: Claude, and no tools.
 func rulesOf(c *manifest.ClaudeAPI, houseDaily float64) doorRules {
-	r := doorRules{Tools: "none", DailyUSD: houseDaily, MaxChats: DefaultMaxChats}
-	if c == nil {
-		return r
+	r := doorRules{Provider: "claude", Tools: "write", DailyUSD: houseDaily, MaxChats: DefaultMaxChats}
+	if c != nil {
+		r.Tools = chat.Level(c.Tools).Name
+		if len(c.Permissions) > 0 {
+			if name, err := chat.PermsName(c.Permissions); err == nil {
+				r.Tools = name
+			} else {
+				r.Tools = "none"
+			}
+		}
+		if c.Provider != "" {
+			r.Provider = c.Provider
+		}
+		if c.DailyUSD > 0 {
+			r.DailyUSD = c.DailyUSD
+		}
+		if c.MaxChats > 0 {
+			r.MaxChats = c.MaxChats
+		}
+		r.DailyTurns = c.DailyTurns
+		r.Model, r.Hide = c.Model, c.HideChats
 	}
-	r.Tools = chat.Level(c.Tools).Name
-	if c.DailyUSD > 0 {
-		r.DailyUSD = c.DailyUSD
+	if r.DailyTurns == 0 && r.Provider != "claude" {
+		r.DailyTurns = DefaultDailyTurns
 	}
-	if c.MaxChats > 0 {
-		r.MaxChats = c.MaxChats
-	}
-	r.Model, r.Hide = c.Model, c.HideChats
+	r.Permissions = chat.PermsOf(r.Tools)
 	return r
 }
 
@@ -119,12 +153,14 @@ func (s *Server) RegisterSiteDoor(o SiteDoorOptions) {
 	route("GET", p, "Who this site is and what it may ask: tools, model, limits, spent and left today, conversations open and at work", func(w http.ResponseWriter, r *http.Request, c doorCaller) (any, error) {
 		spent := o.spent(c.Domain)
 		return map[string]any{"domain": c.Domain, "claude": map[string]any{
-			"available":  o.Available == nil || o.Available(),
+			"available":  o.available(c.Rules.Provider),
+			"provider":   c.Rules.Provider,
 			"model":      o.model(c, ""),
 			"tools":      c.Rules.Tools,
 			"limits":     c.Rules,
 			"spent_usd":  round4(spent),
 			"left_usd":   round4(max(0, c.Rules.DailyUSD-spent)),
+			"turns":      o.turns(c.Domain),
 			"chats_open": len(o.siteChats(c.Domain)),
 			"busy":       o.busy(c.Domain),
 		}}, nil
@@ -214,7 +250,7 @@ func (s *Server) RegisterSiteDoor(o SiteDoorOptions) {
 				return nil, err
 			}
 		}
-		if err := o.knownModel(b.Model); err != nil {
+		if err := o.knownModel(o.chatProvider(name, c), b.Model); err != nil {
 			return nil, err
 		}
 		return o.sendAndAnswer(w, r, c, name, b)
@@ -358,34 +394,98 @@ func (o SiteDoorOptions) model(c doorCaller, asked string) string {
 		return c.Rules.Model
 	}
 	if o.DefaultModel != nil {
-		return o.DefaultModel()
+		return o.DefaultModel(c.Rules.Provider)
 	}
 	return ""
 }
 
-// knownModel refuses a model that is not on the list: a typo would
-// otherwise reach the CLI and come back as a failed turn that was paid
-// for.
-func (o SiteDoorOptions) knownModel(m string) error {
-	m = strings.TrimSpace(m)
-	if m == "" || o.Models == nil {
+func (o SiteDoorOptions) available(provider string) bool {
+	if o.Available != nil {
+		return o.Available(provider)
+	}
+	if o.Chat == nil {
+		return false
+	}
+	ok, _ := o.Chat.ProviderInfo(provider)
+	return ok
+}
+
+func (o SiteDoorOptions) models(provider string) []string {
+	if o.Models != nil {
+		return o.Models(provider)
+	}
+	if o.Chat == nil {
 		return nil
 	}
-	for _, k := range o.Models() {
+	_, ms := o.Chat.ProviderInfo(provider)
+	return ms
+}
+
+// agents are the agents a door may be given now, in the registry's order.
+func (o SiteDoorOptions) agents() []string {
+	if o.Agents != nil {
+		return o.Agents()
+	}
+	var out []string
+	if o.Chat != nil {
+		for _, k := range o.Chat.Providers() {
+			if o.available(k) {
+				out = append(out, k)
+			}
+		}
+	}
+	return out
+}
+
+// chatProvider is the agent a site's conversation runs with: the one it
+// was opened with, which may not be the door's now.
+func (o SiteDoorOptions) chatProvider(name string, c doorCaller) string {
+	if conv, err := o.Chat.Conversation(name); err == nil && conv.Provider != "" {
+		return conv.Provider
+	}
+	return c.Rules.Provider
+}
+
+func (o SiteDoorOptions) turns(domain string) int {
+	if o.Chat == nil {
+		return 0
+	}
+	return o.Chat.Ledger().DayTurns(chat.SiteDoorBook(domain), time.Now())
+}
+
+// knownModel refuses a model that is not on the agent's list: a typo
+// would otherwise reach the CLI and come back as a failed turn that was
+// paid for.
+func (o SiteDoorOptions) knownModel(provider, m string) error {
+	m = strings.TrimSpace(m)
+	if m == "" {
+		return nil
+	}
+	list := o.models(provider)
+	if len(list) == 0 {
+		return nil
+	}
+	for _, k := range list {
 		if strings.EqualFold(k, m) {
 			return nil
 		}
 	}
-	return Errorf(http.StatusBadRequest, "model %q is not on the list (%s)", m, strings.Join(o.Models(), ", "))
+	return Errorf(http.StatusBadRequest, "model %q is not on %s's list (%s)", m, provider, strings.Join(list, ", "))
 }
 
-// allowance checks the money before a turn starts, not on the invoice.
+// allowance checks the money, and the turns where money cannot be read,
+// before a turn starts, not on the invoice.
 func (o SiteDoorOptions) allowance(c doorCaller) error {
-	if o.Available != nil && !o.Available() {
-		return Errorf(http.StatusServiceUnavailable, "there is no Claude Code on this machine: enable the Claude module")
+	if !o.available(c.Rules.Provider) {
+		return Errorf(http.StatusServiceUnavailable, "%s cannot run on this machine now: enable its module and sign in under Modules", c.Rules.Provider)
 	}
 	if spent := o.spent(c.Domain); spent >= c.Rules.DailyUSD {
 		return Errorf(http.StatusTooManyRequests, "%s spent $%.2f through its door today and its cap is $%.2f; raise claude_api.daily_usd or wait until tomorrow (UTC)", c.Domain, spent, c.Rules.DailyUSD)
+	}
+	if c.Rules.DailyTurns > 0 {
+		if n := o.turns(c.Domain); n >= c.Rules.DailyTurns {
+			return Errorf(http.StatusTooManyRequests, "%s ran %d turns through its door today and its cap is %d; raise claude_api.daily_turns or wait until tomorrow (UTC)", c.Domain, n, c.Rules.DailyTurns)
+		}
 	}
 	return nil
 }
@@ -400,13 +500,13 @@ func (o SiteDoorOptions) open(c doorCaller, b askBody) (string, error) {
 	// house's written in when the site names none: changing model halfway
 	// and not saying so is the explanation nobody finds afterwards.
 	model := o.model(c, b.Model)
-	if err := o.knownModel(model); err != nil {
+	if err := o.knownModel(c.Rules.Provider, model); err != nil {
 		return "", err
 	}
 	o.Chat.Prune(c.Domain, chat.OriginSite, c.Rules.MaxChats)
 	name, err := o.Chat.Create(c.Domain, chat.CreateOptions{
 		Origin: chat.OriginSite, Title: strings.TrimSpace(b.Title), System: systemFor(c.Domain, b), Tools: c.Rules.Tools,
-		Model: model, Hidden: c.Rules.Hide, Max: c.Rules.MaxChats,
+		Provider: c.Rules.Provider, Model: model, Hidden: c.Rules.Hide, Max: c.Rules.MaxChats,
 	})
 	if errors.Is(err, chat.ErrTooMany) {
 		// Only when every one of them is at work or waiting for an answer.

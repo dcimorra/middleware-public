@@ -111,6 +111,14 @@ type Provider interface {
 	Start(ctx context.Context, req Request) (Run, error)
 }
 
+// Permissioner is a provider that cannot hold every permission of a site
+// door apart (chat.Permissions: read, edit, web, shell) and says which it
+// can: the panel offers those alone. One that does not implement it holds
+// all four, translating the request's Tools.
+type Permissioner interface {
+	Permissions() []string
+}
+
 // ErrUnknownProvider is returned by a registry lookup that finds nothing.
 var ErrUnknownProvider = errors.New("unknown agent provider")
 

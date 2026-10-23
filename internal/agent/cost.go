@@ -31,6 +31,10 @@ type LedgerFile struct {
 	// lost it).
 	Turns  map[string]int                `json:"turns,omitempty"`
 	Models map[string]map[string]float64 `json:"models,omitempty"`
+	// Unpriced counts, per day, the turns that reported no cost (an agent
+	// on a subscription): kept apart from Turns, which are the ones that
+	// cost something, so the sums above stay what they say.
+	Unpriced map[string]int `json:"unpriced,omitempty"`
 }
 
 // NewLedger returns a ledger under dataDir.
@@ -82,6 +86,28 @@ func (l *Ledger) AddTurn(domain, model string, usd float64, at time.Time) error 
 		f.Models[day][model] += usd
 	}
 	return fsx.WriteJSON(l.path(domain), f, 0o644)
+}
+
+// CountUnpriced records a turn that reported no cost, for a cap that
+// counts turns where dollars cannot be counted.
+func (l *Ledger) CountUnpriced(domain string, at time.Time) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	f := l.read(domain)
+	if f.Unpriced == nil {
+		f.Unpriced = map[string]int{}
+	}
+	f.Unpriced[at.UTC().Format("2006-01-02")]++
+	return fsx.WriteJSON(l.path(domain), f, 0o644)
+}
+
+// DayTurns is how many turns domain ran on the day of at, priced or not.
+func (l *Ledger) DayTurns(domain string, at time.Time) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	f := l.read(domain)
+	day := at.UTC().Format("2006-01-02")
+	return f.Turns[day] + f.Unpriced[day]
 }
 
 // Books lists every ledger kept, by its key (a domain, or a domain's

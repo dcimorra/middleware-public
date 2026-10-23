@@ -73,17 +73,31 @@ func (p *Provider) Models() []string { return append([]string(nil), p.cfg.Models
 
 // writes says whether a request lets the agent change files.
 func writes(req agent.Request) bool {
+	return has(req, "Write", "Edit", "MultiEdit", "Bash", "NotebookEdit")
+}
+
+// has says the request lets the agent use any of tools (Claude Code's
+// names, as the house says them); nil Tools is every tool.
+func has(req agent.Request, tools ...string) bool {
 	if req.Tools == nil {
 		return true
 	}
 	for _, t := range req.Tools {
-		switch t {
-		case "Write", "Edit", "MultiEdit", "Bash", "NotebookEdit":
-			return true
+		for _, w := range tools {
+			if t == w {
+				return true
+			}
 		}
 	}
 	return false
 }
+
+// Permissions implements agent.Permissioner. Codex reads and edits
+// through its shell (it has no file tool apart), so the shell is not a
+// permission it can be given or denied on its own: reading turns it on
+// in a read-only sandbox, editing in a writable one, and with neither it
+// is off. The web is its own switch.
+func (p *Provider) Permissions() []string { return []string{"read", "edit", "web"} }
 
 // Args builds the command line for req.
 func (p *Provider) Args(req agent.Request) []string {
@@ -99,6 +113,17 @@ func (p *Provider) Args(req agent.Request) []string {
 		args = append(args, "-c", `sandbox_mode="workspace-write"`, "-c", "sandbox_workspace_write.network_access=true")
 	} else {
 		args = append(args, "-c", `sandbox_mode="read-only"`)
+	}
+	if !has(req, "Read", "Glob", "Grep", "Write", "Edit", "MultiEdit", "Bash", "NotebookEdit") {
+		// Nothing to read or change: no shell, which is how Codex reads
+		// and runs, and no view_image, which reads an image by its path.
+		// Tried against a fake Responses endpoint on 0.164: with both off
+		// the request carries neither exec_command nor view_image; what is
+		// left (apply_patch) is held by the read-only sandbox.
+		args = append(args, "--disable", "shell_tool", "--disable", "view_image")
+	}
+	if req.Tools != nil && !has(req, "WebSearch", "WebFetch") {
+		args = append(args, "-c", `web_search="disabled"`)
 	}
 	model := req.Model
 	// With a ChatGPT sign-in the plan decides which models it may use, and

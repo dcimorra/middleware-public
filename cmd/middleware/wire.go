@@ -801,10 +801,11 @@ func wireSiteDoor(a *app.App, srv *api.Server, set *moduleSet) {
 			}
 			return filepath.Join(a.Root, "sites", domain)
 		},
-		Available: func() bool { ok, _ := chatManager.ProviderInfo("claude"); return ok },
-		API:       "http://" + listen,
-		DefaultModel: func() string {
-			if set == nil {
+		API: "http://" + listen,
+		// Claude's door has always started on the Claude module's model;
+		// the other agents start on their own default.
+		DefaultModel: func(provider string) string {
+			if set == nil || provider != "claude" {
 				return ""
 			}
 			cfg, _ := set.Manager.Config(agents.ClaudeKey)
@@ -818,10 +819,13 @@ func wireSiteDoor(a *app.App, srv *api.Server, set *moduleSet) {
 			}
 			return out
 		},
-		Models: func() []string {
-			_, models := chatManager.ProviderInfo("claude")
-			// Claude Code's aliases are names too.
-			return append(models, "opus", "sonnet", "haiku")
+		Models: func(provider string) []string {
+			_, models := chatManager.ProviderInfo(provider)
+			if provider == "claude" {
+				// Claude Code's aliases are names too.
+				models = append(models, "opus", "sonnet", "haiku")
+			}
+			return models
 		},
 		Lookup: func(domain string) (*manifest.Manifest, bool) {
 			sn, ok := a.Engine.Lookup(domain)

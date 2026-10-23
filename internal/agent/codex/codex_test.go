@@ -101,3 +101,24 @@ echo '{"models":[{"slug":"b","visibility":"list","priority":5},{"slug":"hidden",
 		t.Fatalf("%v", ids)
 	}
 }
+
+func TestTheDoorsPermissionsTurnCodexsShellAndWebOff(t *testing.T) {
+	p := New(Config{APIKey: "k"})
+	none := strings.Join(p.Args(agent.Request{Prompt: "x", Tools: []string{}}), " ")
+	for _, want := range []string{"--disable shell_tool", "--disable view_image", `web_search="disabled"`, `sandbox_mode="read-only"`} {
+		if !strings.Contains(none, want) {
+			t.Fatalf("no tools: missing %q in %s", want, none)
+		}
+	}
+	read := strings.Join(p.Args(agent.Request{Prompt: "x", Tools: []string{"Read", "Glob", "Grep", "WebSearch", "WebFetch"}}), " ")
+	if strings.Contains(read, "shell_tool") || strings.Contains(read, "web_search") || !strings.Contains(read, `sandbox_mode="read-only"`) {
+		t.Fatalf("reading with the web: %s", read)
+	}
+	all := strings.Join(p.Args(agent.Request{Prompt: "x"}), " ")
+	if strings.Contains(all, "--disable") || strings.Contains(all, "web_search") {
+		t.Fatalf("every tool: %s", all)
+	}
+	if got := strings.Join(p.Permissions(), ","); got != "read,edit,web" {
+		t.Fatalf("permissions: %s", got)
+	}
+}

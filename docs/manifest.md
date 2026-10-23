@@ -48,7 +48,7 @@ never shell strings. Paths are relative to the site folder.
   "disabled": false,
   "hold": { "enabled": false, "title": "", "message": "", "mode": "maintenance", "until": "" },
   "notice": { "theme": "card" },
-  "claude_api": { "tools": "none", "daily_usd": 0, "max_chats": 20, "model": "", "hide_chats": false },
+  "claude_api": { "provider": "claude", "permissions": ["read"], "model": "", "daily_usd": 0, "daily_turns": 0, "max_chats": 20, "hide_chats": false },
   "claude": false,
   "chat": { "reads": ["other.example.com"] },
   "needs": ["api.example.com", "worker@shop.example.com"],
@@ -152,12 +152,34 @@ is shown and sent as `Retry-After`.
 start waits up to a minute for them, then starts anyway and says so; the
 panel names whatever is missing now.
 
-## The site door: `claude_api` and `claude`
+## The site door (the AI gateway): `claude_api` and `claude`
 
-`claude_api` lets the site's own code ask Claude through the house (see
-api.md, "The site door"): tool level, daily cap, conversations kept, model.
-Raising `tools` above `none` is a decision that matters: the site's process
-answers the internet, and what an injected prompt can reach depends on it.
+`claude_api` lets the site's own code ask an AI through the house (see
+api.md, "The site door"). The name is from when Claude was its only agent:
+
+- `provider`: the agent that answers, any whose module is enabled
+  (`claude`, `openai` for Codex, `agy` for Antigravity, the vendors'…);
+  empty is `claude`.
+- `model`: one of that agent's; empty is the Claude module's model for
+  Claude, and the agent's own default for the others.
+- `permissions`: granted one by one, `read` (the site's folder), `edit`
+  (change files in it), `web` (search and read the web) and `shell` (run
+  commands in it). All four is the panel conversation's own jail. An agent
+  that cannot hold one apart is not given it apart: Codex's shell comes
+  with `read` or `edit` (read-only when it only reads); Antigravity's web
+  search cannot be taken away. Without `edit` or `shell` the site's own
+  `.env` is not readable either.
+- `tools`: the four levels a door had before permissions came apart
+  (`none`, `read`, `web` = read and web, `write` = everything), read when
+  `permissions` is absent. A block with neither is a door with no tools,
+  as it always was; the panel writes `permissions` out, all four by
+  default.
+- `daily_usd` caps the dollars a day (0: `agents.site_daily_usd`);
+  `daily_turns` caps the turns, for agents on a subscription whose turns
+  report no cost (0: none for Claude, 200 for the others).
+
+Every permission is a decision that matters: the site's process answers
+the internet, and what an injected prompt can reach depends on them.
 
 `claude: true` puts the house's Claude subscription token in the site's
 environment (`CLAUDE_CODE_OAUTH_TOKEN`) for a site that runs the CLI itself.
