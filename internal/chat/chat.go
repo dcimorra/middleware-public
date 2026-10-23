@@ -191,7 +191,13 @@ type Options struct {
 	Path func() string
 	// ProcRoot is /proc; tests point it elsewhere.
 	ProcRoot string
+	// Usage keeps what a turn's stream says of the subscription's limits;
+	// defaults to one under Root/data.
+	Usage *agent.UsageBook
 }
+
+// Usage is the book of subscription limits the turns fill.
+func (m *Manager) Usage() *agent.UsageBook { return m.opts.Usage }
 
 // Manager runs the conversations.
 type Manager struct {
@@ -335,6 +341,9 @@ func New(opts Options) *Manager {
 	}
 	if opts.Registry == nil {
 		opts.Registry = agent.NewRegistry()
+	}
+	if opts.Usage == nil {
+		opts.Usage = agent.OpenUsageBook(filepath.Join(opts.Root, "data", "agents", "usage.json"))
 	}
 	if opts.Ledger == nil {
 		opts.Ledger = agent.NewLedger(filepath.Join(opts.Root, "data"))
@@ -920,6 +929,9 @@ func (m *Manager) follow(name, turnID string, s Settings, run agent.Run, cancel 
 				data["run"] = tu.Run
 			}
 			m.progress("agent.tool.result", name, "", data)
+			continue
+		case agent.KindLimits:
+			m.opts.Usage.Record(s.Provider, "", "turn", ev.Limits)
 			continue
 		case agent.KindAgentStatus:
 			tu := toolOf(ev.ToolID)

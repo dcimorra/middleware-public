@@ -10,6 +10,7 @@ import { onEvent } from "../lib/stream.js";
 import { page, load, empty, notice } from "../components/page.js";
 import { icon } from "../lib/icons.js";
 import { openCodeProviders, vendorModels } from "./opencode-providers.js";
+import { usageBlock } from "../components/usage.js";
 
 // The vendors' own modules: a key and their models, run by OpenCode.
 const LOGIN_VENDORS = new Set(["agent-openai"]);
@@ -161,6 +162,21 @@ export function modulesScreen() {
       if (!s || s.kind === "none") sessionLine.append(h("span", { class: "muted" }, t("modules.sessionNone")));
       else if (s.kind === "api_key") sessionLine.append(h("span", { class: "badge info" }, t("modules.sessionKey")));
       else sessionLine.append(h("span", { class: "badge ok" }, t("modules.sessionSubscription")), " ", h("span", { class: "muted" }, s.since ? t("modules.sessionSince", { when: fmtTime(s.since) }) : ""));
+      showUsage(s && s.kind === "subscription");
+    };
+    // How much of the subscription is spent, under the session: asked of
+    // the vendor (cached a minute there) and, failing that, what the last
+    // turn said.
+    const usageBox = h("div", { class: "module-usage", hidden: true });
+    const showUsage = async (on, refresh) => {
+      usageBox.hidden = !on;
+      if (!on) return;
+      const again = h("button", { type: "button", class: "btn ghost sm" }, icon("refresh"), t("usage.refresh"));
+      again.addEventListener("click", () => { again.classList.add("busy"); showUsage(true, true); });
+      try {
+        const st = await api.get(`/modules/${enc(m.key)}/usage` + (refresh ? "?refresh=1" : ""));
+        clear(usageBox).append(h("div", { class: "log-bar" }, h("span", { class: "label" }, t("usage.title")), h("span", { class: "grow" }), again), usageBlock(st));
+      } catch (e) { clear(usageBox).append(h("p", { class: "small muted" }, e.message)); }
     };
     const render = (st) => {
       clear(flow);
@@ -233,7 +249,7 @@ export function modulesScreen() {
     api.get(`/modules/${enc(m.key)}/session`).then((s) => showSession(s.session)).catch(() => showSession(null));
     // A sign-in left open in another tab is picked up here.
     api.get(`/modules/${enc(m.key)}/login`).then((st) => { if (st.state && st.state !== "done" && st.state !== "failed") { startBtn.hidden = true; render(st); timer = setInterval(poll, 2000); } }).catch(() => {});
-    box.append(h("div", { class: "log-bar" }, h("span", { class: "label" }, t("modules.session")), sessionLine, h("span", { class: "grow" }), startBtn), flow);
+    box.append(h("div", { class: "log-bar" }, h("span", { class: "label" }, t("modules.session")), sessionLine, h("span", { class: "grow" }), startBtn), flow, usageBox);
     return box;
   }
   const render0 = render;

@@ -101,10 +101,23 @@ var (
 	providersCur  *agent.Registry
 )
 
+// usageBook is the one book of subscription limits: the chat writes what
+// the turns say into it and the agent modules what the vendors answer, so
+// both have to hold the same one.
+func usageBook(root string) *agent.UsageBook {
+	usageOnce.Do(func() { usageCur = agent.OpenUsageBook(filepath.Join(root, "data", "agents", "usage.json")) })
+	return usageCur
+}
+
+var (
+	usageOnce sync.Once
+	usageCur  *agent.UsageBook
+)
+
 type chatHook struct{}
 
 func newChatHook(a *app.App) app.Hook {
-	chatManager = chat.New(chat.Options{Root: a.Root, Bus: a.Bus, Registry: providers(), Limits: a.Settings.Agents})
+	chatManager = chat.New(chat.Options{Root: a.Root, Bus: a.Bus, Registry: providers(), Limits: a.Settings.Agents, Usage: usageBook(a.Root)})
 	// Agent turns start in a cgroup of their own with a low CPU weight and
 	// a ceiling, so a conversation's browsers cannot starve the sites.
 	if tree, err := cgroups.Setup(cgroups.SelfPath(), cgroups.DefaultLimits()); err != nil {
@@ -271,7 +284,7 @@ func chatCmd(args []string) error {
 	r := settings.Root(*root)
 	bus := events.New(filepath.Join(r, "data", "events"))
 	st, _ := settings.Load(r)
-	m := chat.New(chat.Options{Root: r, Bus: bus, Registry: providers(), Limits: st.Agents})
+	m := chat.New(chat.Options{Root: r, Bus: bus, Registry: providers(), Limits: st.Agents, Usage: usageBook(r)})
 	ch, unsub := bus.Subscribe()
 	defer unsub()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

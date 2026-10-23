@@ -64,8 +64,15 @@ type Module struct {
 	LookPath func(string) (string, error)
 	Version  func(ctx context.Context, bin string) (string, error)
 
-	mu    sync.Mutex
-	login *Login
+	// Usage is the book of subscription limits, shared with the chat.
+	Usage *agent.UsageBook
+	// home is the module's own folder, where an agent keeps its state.
+	home string
+
+	mu       sync.Mutex
+	login    *Login
+	usageAt  time.Time
+	usageErr string
 }
 
 // Claude builds the agent-claude module over reg.
@@ -303,6 +310,17 @@ func sessionOf(cfg modules.Config, secretKey string) Session {
 	return Session{Kind: "none"}
 }
 
+func (m *Module) config() modules.Config {
+	if m.Store == nil {
+		return modules.Config{}
+	}
+	cfg, err := m.Store.Config(m.key)
+	if err != nil {
+		return modules.Config{}
+	}
+	return cfg
+}
+
 // Session reads the stored config and reports it.
 func (m *Module) Session() Session {
 	if m.Store == nil {
@@ -442,6 +460,7 @@ func (m *Module) Routes() map[string]http.Handler {
 		"POST /login/code":  http.HandlerFunc(m.handleLoginCode),
 		"DELETE /login":     http.HandlerFunc(m.handleLoginCancel),
 		"GET /session":      http.HandlerFunc(m.handleStatus),
+		"GET /usage":        http.HandlerFunc(m.handleUsage),
 		"POST /binary/sync": http.HandlerFunc(m.handleBinarySync),
 	}
 }

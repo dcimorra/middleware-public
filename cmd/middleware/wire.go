@@ -137,12 +137,13 @@ func registerExtraModules(mgr *modules.Manager, root string, bus *events.Bus, dm
 	for _, m := range []*agents.Module{agentClaude, agentGemini, agentOpen.Module} {
 		m.Deps = dm
 		m.Store = mgr
+		m.Usage = usageBook(root)
 	}
 	mgr.Register(agentClaude)
 	mgr.Register(agentGemini)
 	mgr.Register(agentOpen)
 	for _, v := range agentVendors {
-		v.Deps, v.Store = dm, mgr
+		v.Deps, v.Store, v.Usage = dm, mgr, usageBook(root)
 		mgr.Register(v)
 	}
 	return nil
@@ -257,15 +258,12 @@ func buildWire(a *app.App) app.Hook {
 	srv.RegisterShots(w.shots)
 	pages.SetHouseTheme(a.Settings.VisitorTheme)
 	srv.OnSettingsSaved(func(st settings.Settings) { pages.SetHouseTheme(st.VisitorTheme) })
-	srv.RegisterAgents(api.AgentsOptions{Registry: providers(), Chat: chatManager, ClaudeToken: func() string {
-		if set == nil {
-			return ""
+	srv.RegisterAgents(api.AgentsOptions{Registry: providers(), Chat: chatManager, Usage: func(ctx context.Context, refresh bool) any {
+		mods := []*agents.Module{agentClaude, agentGemini}
+		for _, v := range agentVendors {
+			mods = append(mods, v.Module)
 		}
-		cfg, err := set.Manager.Config(agents.ClaudeKey)
-		if err != nil {
-			return ""
-		}
-		return cfg["oauth_token"]
+		return agents.UsageOf(ctx, refresh, mods...)
 	}})
 	if chatManager != nil {
 		wireSiteDoor(a, srv, set)

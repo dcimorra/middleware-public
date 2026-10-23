@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dcimorra/middleware-public/internal/agent"
 	"github.com/dcimorra/middleware-public/internal/fsx"
@@ -344,6 +345,11 @@ func (p *parser) Line(raw string) ([]agent.Event, bool) {
 			return []agent.Event{{Kind: agent.KindAgentStatus, ToolID: l.ToolUseID, Status: l.Status, SessionID: p.sessionID}}, false
 		}
 		return nil, false
+	case "rate_limit_event":
+		if w, ok := limitOf(raw); ok {
+			return []agent.Event{{Kind: agent.KindLimits, Limits: []agent.Window{w}, SessionID: p.sessionID}}, false
+		}
+		return nil, false
 	case "result":
 		evs := []agent.Event{{Kind: agent.KindCost, Cost: l.Cost, SessionID: p.sessionID}}
 		if l.IsError || (l.Subtype != "" && l.Subtype != "success") {
@@ -364,6 +370,40 @@ func (p *parser) Line(raw string) ([]agent.Event, bool) {
 }
 
 func (p *parser) Flush() []agent.Event { return nil }
+
+// claudeWindows are Claude Code's rateLimitType names for the house's.
+var claudeWindows = map[string]string{"five_hour": "5h", "seven_day": "7d", "seven_day_opus": "7d_opus", "seven_day_sonnet": "7d_sonnet"}
+
+// limitOf reads a rate_limit_event: a subscription window's state, which
+// Claude Code passes on from the API's anthropic-ratelimit-unified-*
+// headers. utilization is the header's, a fraction of 1, and comes only
+// when the API sent it (past a warning threshold, mostly); without it the
+// window's state and reset are still worth keeping.
+func limitOf(raw string) (agent.Window, bool) {
+	var e struct {
+		Info struct {
+			Status        string   `json:"status"`
+			ResetsAt      float64  `json:"resetsAt"`
+			RateLimitType string   `json:"rateLimitType"`
+			Utilization   *float64 `json:"utilization"`
+		} `json:"rate_limit_info"`
+	}
+	if json.Unmarshal([]byte(raw), &e) != nil {
+		return agent.Window{}, false
+	}
+	name, ok := claudeWindows[e.Info.RateLimitType]
+	if !ok {
+		return agent.Window{}, false
+	}
+	w := agent.Window{Name: name, Used: -1, Status: e.Info.Status}
+	if e.Info.Utilization != nil {
+		w.Used = *e.Info.Utilization * 100
+	}
+	if e.Info.ResetsAt > 0 {
+		w.ResetsAt = time.Unix(int64(e.Info.ResetsAt), 0).UTC()
+	}
+	return w, true
+}
 
 // NewParser is the stream-json reader, for CLIs that print Claude Code's
 // format (Qwen Code does).

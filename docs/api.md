@@ -308,6 +308,7 @@ CLI's own login back. Their sign-in with a subscription:
 | GET | `/modules/{agent}/login` | the poll; a `done` attempt stores the session, enables the module and answers `{state: "done", session}` |
 | POST | `/modules/{agent}/login/code` | `{code}` → the state; 400 when it is not the moment |
 | DELETE | `/modules/{agent}/login` | cancels the attempt |
+| GET | `/modules/{agent}/usage` | the subscription's windows, one entry of `/agents/usage` (`?refresh=1` asks the vendor now) |
 | POST | `/modules/{agent}/binary/sync` | installs or updates the CLI now → `{ok, progress}` |
 
 ## Deps
@@ -431,7 +432,7 @@ through the manifest; these routes are what the panel reads beside them.
 | GET | `/chat/middleware/files` | as above |
 | POST | `/chat/middleware/files` | as above |
 | DELETE | `/chat/middleware/files/{file}` | as above |
-| GET | `/agents/usage` | the Claude account's windows → `{session: {pct, reset}, week, opus?, at}` (as `/usage` shows them), cached a minute; 503 without a signed-in subscription |
+| GET | `/agents/usage` | each subscription's windows → `[{provider, name, module, supported, usage: {plan?, windows: [{name, used, resets_at, status?}], at, source}, error?}]`: asked of the vendor (Anthropic's `/api/oauth/usage`, ChatGPT's `/backend-api/wham/usage`), cached a minute, `?refresh=1` asks now; `source: "turn"` is what the last turn's stream said. `used` is a percentage, negative when unknown |
 | GET | `/agents/cost` | `?days=30` → `{days, books: [{book, total_usd, turns, days: {date: usd}, models: {model: usd}}]}`; a site door's spending is the book `<domain>#door` |
 
 A message sent while a turn runs is queued (202 `{queued: true}`) and sent,

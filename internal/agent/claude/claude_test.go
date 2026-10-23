@@ -179,3 +179,19 @@ func TestASubagentsResultAndStateAreRead(t *testing.T) {
 		t.Fatalf("%+v", evs)
 	}
 }
+
+func TestARateLimitEventBecomesTheWindowItNames(t *testing.T) {
+	p := &parser{}
+	evs, _ := p.Line(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1790000000,"rateLimitType":"seven_day","utilization":0.81},"uuid":"u","session_id":"s1"}`)
+	if len(evs) != 1 || evs[0].Kind != agent.KindLimits {
+		t.Fatalf("%+v", evs)
+	}
+	w := evs[0].Limits[0]
+	if w.Name != "7d" || w.Used < 80.99 || w.Used > 81.01 || w.Status != "allowed_warning" || w.ResetsAt.Unix() != 1790000000 {
+		t.Fatalf("%+v", w)
+	}
+	evs, _ = p.Line(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour"}}`)
+	if len(evs) != 1 || evs[0].Limits[0].Used != -1 {
+		t.Fatalf("a window without utilization is not unknown: %+v", evs)
+	}
+}

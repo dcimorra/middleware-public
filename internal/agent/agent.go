@@ -29,6 +29,9 @@ const (
 	// KindAgentStatus is a subagent changing state (Status), named by the
 	// id of the call that launched it.
 	KindAgentStatus = "agent_status"
+	// KindLimits is the subscription's usage as the turn's stream told
+	// it (Limits); it is not part of the conversation.
+	KindLimits = "limits"
 )
 
 // Event is one thing the agent did or said.
@@ -51,6 +54,8 @@ type Event struct {
 	// Status is a subagent's state (KindAgentStatus): what the provider
 	// says, "completed", "failed", "killed"…
 	Status string `json:"status,omitempty"`
+	// Limits are the windows a KindLimits event reports.
+	Limits []Window `json:"limits,omitempty"`
 }
 
 // Request is one turn.

@@ -1,5 +1,5 @@
 // The house's own conversation, with what the agents cost around it: the
-// Claude account's windows (as /usage shows them) and what each project
+// subscriptions' usage windows (Claude, Codex…) and what each project
 // spent in the last thirty days, the site door's book apart.
 
 import { h, clear, fmtAgo } from "../lib/dom.js";
@@ -10,6 +10,7 @@ import { t } from "../lib/i18n.js";
 import { api } from "../lib/api.js";
 import { page, table, cell } from "../components/page.js";
 import { chatTab } from "./site-chat.js";
+import { usageBlock } from "../components/usage.js";
 
 export function houseScreen() {
   const p = page({ title: t("nav.house"), sub: t("house.sub"), icon: "sparkles" });
@@ -55,22 +56,12 @@ export function houseScreen() {
   loadLive();
   const subs = [onEvent("agent.", (ev) => { if (/^agent\.(started|done|error|question)$/.test(ev.type)) loadLive(); })];
 
-  function bar(label, w) {
-    if (!w) return null;
-    const pct = Math.max(0, Math.min(100, w.pct));
-    // The width through CSSOM: the panel's CSP refuses style attributes.
-    const fill = h("div", { class: "fill" + (pct >= 90 ? " bad" : pct >= 70 ? " warn" : "") });
-    fill.style.width = `${pct}%`;
-    return h("div", { class: "usage-row" },
-      h("div", { class: "row" }, h("span", { class: "grow" }, label), h("strong", null, `${pct.toFixed(0)}%`)),
-      h("div", { class: "meter", role: "meter", "aria-valuenow": String(pct), "aria-valuemin": "0", "aria-valuemax": "100", "aria-label": label }, fill),
-      w.reset ? h("div", { class: "small muted" }, t("house.resets", { when: new Date(w.reset).toLocaleString() })) : null);
-  }
   (async () => {
     clear(usage).append(h("h2", null, t("house.account")));
     try {
-      const u = await api.get("/agents/usage");
-      usage.append(bar(t("house.session"), u.session) || "", bar(t("house.week"), u.week) || "", bar(t("house.opus"), u.opus) || "");
+      const list = await api.get("/agents/usage");
+      if (!list.length) usage.append(h("p", { class: "small muted" }, t("usage.noSubscription")));
+      for (const st of list) usage.append(h("h3", null, st.name), usageBlock(st));
     } catch (e) { usage.append(h("p", { class: "small muted" }, e.message)); }
   })();
   (async () => {

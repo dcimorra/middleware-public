@@ -213,7 +213,7 @@ func NewVendor(reg *agent.Registry, homes string, v Vendor) *VendorModule {
 	)
 	m := &Module{
 		key: "agent-" + v.Key, name: v.Name, desc: v.Desc, bin: v.Bin, needs: needs,
-		reg: reg, secretKey: "api_key", removeOnDisable: true,
+		reg: reg, secretKey: "api_key", removeOnDisable: true, home: vm.Home,
 	}
 	if v.Login != nil {
 		// The sign-in is stored apart from the key; with both, the key wins.
@@ -280,17 +280,6 @@ func (vm *VendorModule) list() []string {
 		return append([]string(nil), vm.models...)
 	}
 	return append([]string(nil), vm.V.Defaults...)
-}
-
-func (vm *VendorModule) config() modules.Config {
-	if vm.Store == nil {
-		return modules.Config{}
-	}
-	cfg, err := vm.Store.Config(vm.key)
-	if err != nil {
-		return modules.Config{}
-	}
-	return cfg
 }
 
 // modelsHTTP is the client that asks the vendors; tests replace it.
@@ -533,7 +522,7 @@ func (vm *VendorModule) Routes() map[string]http.Handler {
 	}
 	if vm.V.Login != nil {
 		for k, h := range vm.Module.Routes() {
-			if strings.Contains(k, "/login") || strings.Contains(k, "/session") {
+			if strings.Contains(k, "/login") || strings.Contains(k, "/session") || strings.Contains(k, "/usage") {
 				out[k] = h
 			}
 		}
