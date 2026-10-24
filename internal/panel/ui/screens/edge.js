@@ -64,14 +64,29 @@ function domainsTab() {
     pricesCard());
   (async () => {
     clear(mine).append(loading());
+    // Every zone of the account, not only what was bought at Cloudflare's
+    // registrar: a domain bought elsewhere and run in Cloudflare is the
+    // usual case, and this list said "no domains" for an account full of
+    // them. The registrar's facts (expiry, renewal) go beside the ones
+    // bought there; a token that cannot read the registrar still lists the
+    // zones.
     try {
-      const list = await cf("/registrar");
-      if (!list.length) { clear(mine).append(empty(t("edge.mineNone"), "")); return; }
+      const [zones, reg] = await Promise.all([cf("/zones"), cf("/registrar").catch(() => null)]);
+      const byName = new Map((reg || []).map((d) => [d.name, d]));
+      const names = new Set([...(zones || []).map((z) => z.name), ...byName.keys()]);
+      if (!names.size) { clear(mine).append(empty(t("edge.mineNone"), "")); return; }
+      const zoneOf = new Map((zones || []).map((z) => [z.name, z]));
       const soon = Date.now() + 30 * 86400000;
-      clear(mine).append(table([{ label: t("edge.domain") }, { label: t("edge.expires") }, { label: t("edge.autoRenew") }],
-        list.map((d) => h("tr", null, cell(d.name, null, "primary"),
-          cell(h("span", { class: new Date(d.expires_at) < soon && !d.auto_renew ? "level-error" : "" }, fmtTime(d.expires_at)), t("edge.expires")),
-          cell(d.auto_renew ? t("common.yes") : h("span", { class: "level-warn" }, t("edge.no")), t("edge.autoRenew")))), { responsive: true }).el);
+      const rows = [...names].sort().map((name) => {
+        const z = zoneOf.get(name), d = byName.get(name);
+        return h("tr", null, cell(name, null, "primary"),
+          cell(z ? h("span", { class: "badge " + (z.status === "active" ? "ok" : "warn") }, z.status || "—") : h("span", { class: "muted" }, t("edge.noZone")), t("edge.zoneStatus")),
+          cell(d ? t("edge.atCloudflare") : (reg ? t("edge.elsewhere") : "—"), t("edge.registrar")),
+          cell(d ? h("span", { class: new Date(d.expires_at) < soon && !d.auto_renew ? "level-error" : "" }, fmtTime(d.expires_at)) : "—", t("edge.expires")),
+          cell(d ? (d.auto_renew ? t("common.yes") : h("span", { class: "level-warn" }, t("edge.no"))) : "—", t("edge.autoRenew")));
+      });
+      clear(mine).append(table([{ label: t("edge.domain") }, { label: t("edge.zoneStatus") }, { label: t("edge.registrar") }, { label: t("edge.expires") }, { label: t("edge.autoRenew") }], rows, { responsive: true }).el,
+        reg ? "" : h("p", { class: "small muted card-pad" }, t("edge.noRegistrarRead")));
     } catch (e) { clear(mine).append(h("p", { class: "small muted card-pad" }, e.message)); }
   })();
   return el;
