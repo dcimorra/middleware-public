@@ -201,3 +201,15 @@ func TestARateLimitEventBecomesTheWindowItNames(t *testing.T) {
 		t.Fatalf("%+v", ws)
 	}
 }
+
+func TestClaudesAliasesSayWhatTheyRunAndAVendorsDoNot(t *testing.T) {
+	l := New(Config{}).ModelLabels()
+	if l["sonnet"] != "claude-sonnet-5-5" || l["opus"] != "claude-opus-5-5" || l["haiku"] == "" {
+		t.Fatalf("labels %v", l)
+	}
+	// DeepSeek through Claude Code: its names are its own, and "sonnet"
+	// is not one of them.
+	if l := New(Config{Key: "deepseek"}).ModelLabels(); l != nil {
+		t.Fatalf("a vendor got Claude's labels: %v", l)
+	}
+}

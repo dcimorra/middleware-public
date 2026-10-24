@@ -417,7 +417,9 @@ export function chatTab(domain) {
     manyModels = list.length > 30;
     modelSel.hidden = manyModels;
     modelIn.hidden = !manyModels;
-    clear(modelSel).append(h("option", { value: "" }, t("chat.defaultModel")), ...list.map((m) => h("option", { value: m }, m)));
+    // An alias says what it runs beside it: "sonnet — claude-sonnet-5-5".
+    const label = (m) => (a && a.labels && a.labels[m] ? `${m} — ${a.labels[m]}` : m);
+    clear(modelSel).append(h("option", { value: "" }, t("chat.defaultModel")), ...list.map((m) => h("option", { value: m }, label(m))));
     clear(modelList).append(...list.map((m) => h("option", { value: m })));
     if (manyModels && !list.includes(modelIn.value.trim())) modelIn.value = "";
   }

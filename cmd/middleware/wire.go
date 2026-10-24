@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -830,11 +831,7 @@ func wireSiteDoor(a *app.App, srv *api.Server, set *moduleSet) {
 		},
 		Models: func(provider string) []string {
 			_, models := chatManager.ProviderInfo(provider)
-			if provider == "claude" {
-				// Claude Code's aliases are names too.
-				models = append(models, "opus", "sonnet", "haiku")
-			}
-			return models
+			return doorModels(provider, models)
 		},
 		Lookup: func(domain string) (*manifest.Manifest, bool) {
 			sn, ok := a.Engine.Lookup(domain)
@@ -976,4 +973,20 @@ func (g githubRepos) Enabled() bool { return g.set.Manager.Enabled(github.Key) }
 
 func (g githubRepos) Inspect(ctx context.Context, ref string) (sites.Repo, error) {
 	return g.set.GitHub.Inspect(ctx, ref)
+}
+
+// doorModels are the models a site door may name for an agent: its own,
+// and for Claude the CLI's aliases as well, the ones the list does not
+// already carry (the list is the aliases by default, and appending them
+// again showed each one twice in the gateway's screen).
+func doorModels(provider string, models []string) []string {
+	out := append([]string(nil), models...)
+	if provider == "claude" {
+		for _, a := range []string{"opus", "sonnet", "haiku"} {
+			if !slices.Contains(out, a) {
+				out = append(out, a)
+			}
+		}
+	}
+	return out
 }

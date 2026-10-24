@@ -71,7 +71,9 @@ export function doorCard(domain) {
     function fillAgent(keepModel) {
       const a = agentOf(agent.value);
       const was = keepModel ? model.value : "";
-      clear(model).append(h("option", { value: "" }, t(agent.value === "claude" ? "door.houseModel" : "door.agentModel")), ...(a.models || []).map((m) => h("option", { value: m }, m)));
+      // An alias says what it runs beside it: "sonnet — claude-sonnet-5-5".
+      const label = (m) => (a.labels && a.labels[m] ? `${m} — ${a.labels[m]}` : m);
+      clear(model).append(h("option", { value: "" }, t(agent.value === "claude" ? "door.houseModel" : "door.agentModel")), ...(a.models || []).map((m) => h("option", { value: m }, label(m))));
       model.value = (a.models || []).includes(was) ? was : "";
       clear(permsEl);
       const fixed = [];

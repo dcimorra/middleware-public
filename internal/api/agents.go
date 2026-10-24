@@ -30,6 +30,9 @@ type AgentInfo struct {
 	Available bool     `json:"available"`
 	Where     string   `json:"where,omitempty"`
 	Models    []string `json:"models"`
+	// Labels say what a model name that does not say it runs: Claude's
+	// "sonnet" is claude-sonnet-5-5 today.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // Agents is what GET /agents answers: the providers and the live capacity.
@@ -59,7 +62,11 @@ func (s *Server) RegisterAgents(o AgentsOptions) {
 				if models == nil {
 					models = []string{}
 				}
-				out.Providers = append(out.Providers, AgentInfo{Provider: key, Available: ok, Where: where, Models: models})
+				info := AgentInfo{Provider: key, Available: ok, Where: where, Models: models}
+				if l, isL := p.(agent.Labeler); isL {
+					info.Labels = l.ModelLabels()
+				}
+				out.Providers = append(out.Providers, info)
 			}
 		}
 		if o.Chat != nil {

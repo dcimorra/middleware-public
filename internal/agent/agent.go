@@ -119,6 +119,13 @@ type Permissioner interface {
 	Permissions() []string
 }
 
+// Labeler is a provider whose model names do not say what they are (an
+// alias): ModelLabels says, by name, what each one runs, for the panel to
+// show beside it.
+type Labeler interface {
+	ModelLabels() map[string]string
+}
+
 // ErrUnknownProvider is returned by a registry lookup that finds nothing.
 var ErrUnknownProvider = errors.New("unknown agent provider")
 

@@ -93,6 +93,30 @@ func (p *Provider) Available() (bool, string) {
 // Models implements agent.Provider.
 func (p *Provider) Models() []string { return append([]string(nil), p.cfg.Models...) }
 
+// Aliases are the model each of Claude Code's aliases runs today: the CLI
+// resolves them to the newest of each family, which is why they are what
+// is offered, but "sonnet" on a screen does not say which Sonnet. Kept
+// here by hand: when a new model comes out the alias moves on its own and
+// only this label is behind, which is the cheap way round.
+var Aliases = map[string]string{
+	"opus":   "claude-opus-5-5",
+	"sonnet": "claude-sonnet-5-5",
+	"haiku":  "claude-haiku-4-5",
+}
+
+// ModelLabels implements agent.Labeler: the model behind each alias, for
+// Claude itself (a vendor run through Claude Code names its own models).
+func (p *Provider) ModelLabels() map[string]string {
+	if p.cfg.Key != "claude" {
+		return nil
+	}
+	out := map[string]string{}
+	for k, v := range Aliases {
+		out[k] = v
+	}
+	return out
+}
+
 // Args builds the command line for req. It is exported so a test, or an
 // operator wondering what will run, can see it without running anything.
 func (p *Provider) Args(req agent.Request, settingsFile string) []string {

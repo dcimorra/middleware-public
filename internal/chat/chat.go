@@ -1129,6 +1129,19 @@ func (m *Manager) ProviderInfo(key string) (bool, []string) {
 // Providers are the agents the registry holds, by key.
 func (m *Manager) Providers() []string { return m.opts.Registry.Keys() }
 
+// ProviderLabels are what an agent's model names run, when they do not
+// say (agent.Labeler); nil when they do.
+func (m *Manager) ProviderLabels(key string) map[string]string {
+	p, err := m.opts.Registry.Get(key)
+	if err != nil {
+		return nil
+	}
+	if l, ok := p.(agent.Labeler); ok {
+		return l.ModelLabels()
+	}
+	return nil
+}
+
 // ProviderPermissions are the site door's permissions an agent can hold
 // apart: what it says (agent.Permissioner), or all of them.
 func (m *Manager) ProviderPermissions(key string) []string {

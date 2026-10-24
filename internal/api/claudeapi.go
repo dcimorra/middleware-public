@@ -46,10 +46,11 @@ func (s *Server) registerDoorPanel(o SiteDoorOptions) {
 		// has is listed even when it cannot run, so the screen says so
 		// rather than showing another.
 		type doorAgent struct {
-			Provider    string   `json:"provider"`
-			Available   bool     `json:"available"`
-			Models      []string `json:"models"`
-			Permissions []string `json:"permissions"`
+			Provider    string            `json:"provider"`
+			Available   bool              `json:"available"`
+			Models      []string          `json:"models"`
+			Labels      map[string]string `json:"labels,omitempty"`
+			Permissions []string          `json:"permissions"`
 		}
 		var list []doorAgent
 		keys := o.agents()
@@ -60,6 +61,9 @@ func (s *Server) registerDoorPanel(o SiteDoorOptions) {
 		}
 		for _, k := range keys {
 			a := doorAgent{Provider: k, Available: o.available(k), Models: o.models(k), Permissions: o.permissions(k)}
+			if o.Chat != nil {
+				a.Labels = o.Chat.ProviderLabels(k)
+			}
 			if a.Models == nil {
 				a.Models = []string{}
 			}
