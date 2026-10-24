@@ -75,6 +75,9 @@ type Token struct {
 	// Scopes narrow the token to a service door (scopes.go); empty is
 	// the operator's full access.
 	Scopes []string `json:"scopes,omitempty"`
+	// Expires, when set, is when the token stops opening anything: an
+	// import token lasts the two hours the import takes, not for ever.
+	Expires time.Time `json:"expires,omitzero"`
 }
 
 // Public is a token as shown to the operator: everything but the hash.
@@ -84,6 +87,7 @@ type Public struct {
 	Scopes   []string  `json:"scopes,omitempty"`
 	Created  time.Time `json:"created"`
 	LastUsed time.Time `json:"last_used,omitempty"`
+	Expires  time.Time `json:"expires,omitzero"`
 }
 
 // loginPolicy: five failures inside a minute lock the address out for a
@@ -273,6 +277,12 @@ func (s *Store) CreateToken(name string) (Public, string, error) {
 // CreateScopedToken creates a token that opens only what scopes list.
 // The scopes must have been checked (CheckScopes).
 func (s *Store) CreateScopedToken(name string, scopes []string) (Public, string, error) {
+	return s.CreateExpiringToken(name, scopes, 0)
+}
+
+// CreateExpiringToken is CreateScopedToken for a token that stops working
+// after ttl (0 is never).
+func (s *Store) CreateExpiringToken(name string, scopes []string, ttl time.Duration) (Public, string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return Public{}, "", ErrTokenNameNeeded
@@ -292,6 +302,9 @@ func (s *Store) CreateScopedToken(name string, scopes []string) (Public, string,
 	id := hex.EncodeToString(raw[:])
 	secret = "mw_" + secret
 	t := Token{ID: id, Name: name, Hash: hashToken(secret), Created: s.now(), Scopes: scopes}
+	if ttl > 0 {
+		t.Expires = s.now().Add(ttl)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.load(); err != nil {
@@ -356,6 +369,9 @@ func (s *Store) LookupToken(secret string) (Public, bool) {
 			continue
 		}
 		now := s.now()
+		if !t.Expires.IsZero() && !now.Before(t.Expires) {
+			return Public{}, false
+		}
 		if now.Sub(t.LastUsed) > time.Minute {
 			t.LastUsed = now
 			_ = s.saveTokens()
@@ -366,7 +382,7 @@ func (s *Store) LookupToken(secret string) (Public, bool) {
 }
 
 func (t Token) public() Public {
-	return Public{ID: t.ID, Name: t.Name, Scopes: t.Scopes, Created: t.Created, LastUsed: t.LastUsed}
+	return Public{ID: t.ID, Name: t.Name, Scopes: t.Scopes, Created: t.Created, LastUsed: t.LastUsed, Expires: t.Expires}
 }
 
 func hashToken(secret string) string {

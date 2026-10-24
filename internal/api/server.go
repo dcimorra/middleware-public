@@ -200,6 +200,7 @@ func New(opts Options) *Server {
 	s.registerAuth()
 	s.registerSites()
 	s.registerRelocateTarget()
+	s.registerImportToken()
 	s.registerEvents()
 	s.registerSystem()
 	s.registerPages()

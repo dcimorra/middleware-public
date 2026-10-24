@@ -90,6 +90,9 @@ type Part struct {
 	Name string
 	// Path is where it is on this machine: a folder (walked) or a file.
 	Path string
+	// SkipDir, when set, leaves out a folder inside the part by its name
+	// (what the other side reinstalls, node_modules); nil is everything.
+	SkipDir func(name string) bool
 }
 
 // PackParts writes parts to w as one .tar.gz, each under its name, with
@@ -119,7 +122,7 @@ func PackPartsSince(ctx context.Context, w io.Writer, parts []Part, since time.T
 		if _, err := os.Lstat(p.Path); errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
-		if err := addTreeSince(ctx, tw, p.Path, strings.Trim(filepath.ToSlash(p.Name), "/"), &rep, since, &index); err != nil {
+		if err := addTreeSince(ctx, tw, p.Path, strings.Trim(filepath.ToSlash(p.Name), "/"), &rep, since, &index, p.SkipDir); err != nil {
 			return rep, err
 		}
 	}
@@ -140,10 +143,10 @@ func PackPartsSince(ctx context.Context, w io.Writer, parts []Part, since time.T
 
 // addTree writes root (a folder, walked, or a single file) under prefix.
 func addTree(ctx context.Context, tw *tar.Writer, root, prefix string, rep *Report) error {
-	return addTreeSince(ctx, tw, root, prefix, rep, time.Time{}, nil)
+	return addTreeSince(ctx, tw, root, prefix, rep, time.Time{}, nil, nil)
 }
 
-func addTreeSince(ctx context.Context, tw *tar.Writer, root, prefix string, rep *Report, since time.Time, index *[]string) error {
+func addTreeSince(ctx context.Context, tw *tar.Writer, root, prefix string, rep *Report, since time.Time, index *[]string, skipDir func(string) bool) error {
 	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -161,6 +164,9 @@ func addTreeSince(ctx context.Context, tw *tar.Writer, root, prefix string, rep 
 		name := filepath.ToSlash(rel)
 		if prefix != "" {
 			name = strings.TrimSuffix(prefix+"/"+name, "/")
+		}
+		if skipDir != nil && rel != "" && d.IsDir() && skipDir(d.Name()) {
+			return filepath.SkipDir
 		}
 		info, err := d.Info()
 		if err != nil {

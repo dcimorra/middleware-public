@@ -230,6 +230,11 @@ func (r Receiver) Commit(domain string, manifestData []byte) error {
 	return os.RemoveAll(dir)
 }
 
+// StagingSite is where a received site's folder waits for its commit.
+func (r Receiver) StagingSite(domain string) string {
+	return filepath.Join(r.staging(domain), "site")
+}
+
 // Discard throws away what was received for domain.
 func (r Receiver) Discard(domain string) error {
 	if !manifest.ValidName(domain) {

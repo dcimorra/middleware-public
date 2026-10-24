@@ -34,7 +34,10 @@ site, its logs, the events), `restart` (a site's handover and a worker's
 restart), `deploy` (a site's deploy). Anything else answers 403 and names the
 scopes. For a program that acts on the house from outside, an app that builds
 sites and restarts them, it is the narrowest door that works. A token
-without scopes is the operator's and opens everything.
+without scopes is the operator's and opens everything. An `import:<site>` token
+opens only that site's import (below, "Moving a site to another node") and
+seeing or removing that one site; it is made by `POST /relocate/import-token`
+and stops working after two hours (`expires`).
 
 First run: `middleware setup` prints a one-time code; `POST /api/v1/auth/setup`
 with `{"code": "...", "password": "..."}` creates the operator.
@@ -564,12 +567,13 @@ without a docker that answers, is refused before anything moves.
 
 | method | path | body / result |
 | --- | --- | --- |
+| POST | `/relocate/import-token` | the operator only: `{domain, base?}` → `{token, expires, domain, command}`; a token for importing that one site from a V1 house, valid two hours, and the command to run on the V1 machine (`middleware import`, downloaded at this house's version). The import packs the folder without `node_modules` and the site's HOME, stops the site in V1 (writing `disabled` into its V1 manifest), converts the manifest, commits it here with `install: true` (dependencies installed for this machine, with the Node the site asks for), and leaves V1 stopped; if it does not come up here, V1 is started again. The names stay on V1 until the operator publishes the site here and takes each name (`/publish/takeover`) |
 | POST | `/sites/{domain}/move` | `{node}` → the move `{node, step, message, started, done}`; it goes on in the background |
 | GET | `/sites/{domain}/move` | → the move as it is now, or `{…, done: true, error?, report: {archive, down, first_bytes, last_bytes, dns}}` |
 | POST | `/relocate/{domain}/check` | the receiving node, before anything moves: `{names, docker}` (the names published where the site is; whether it runs in a container) → `{ok}`, or 409 when the name is a site here, this node cannot publish every one of those names, or the site runs in a container and this node has no docker that answers |
 | PUT | `/relocate/{domain}` | the receiving node: a site's bundle (`.tar.gz`) as the raw body → `{files, dirs, links, bytes}`; 409 when the name is a site here |
 | PUT | `/relocate/{domain}/delta` | the last copy: changed files and the index, laid over what was received |
-| POST | `/relocate/{domain}/commit` | `{manifest}` (base64, the one the site had before it stopped) → `{ok}`; the site is put in place and the engine starts it |
+| POST | `/relocate/{domain}/commit` | `{manifest, install?}` (base64, the one the site had before it stopped; `install` installs a Node site's dependencies in the staging folder first, `npm ci` with a lockfile) → `{ok}`; the site is put in place and the engine starts it |
 | DELETE | `/relocate/{domain}` | → `{ok}`; what was received is thrown away |
 
 ## VPN

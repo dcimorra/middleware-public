@@ -84,6 +84,16 @@ type Mover struct {
 	ReadyWait time.Duration
 	// Poll is how often it is asked.
 	Poll time.Duration
+	// Parts, when set, replaces Parts: what goes with the site. An import
+	// from another installation takes the folder and its HOME, not the
+	// house's records of it, which that installation writes its own way.
+	Parts func(root, domain string) []archive.Part
+}
+
+// Needer is a Source that says itself what its site needs of the target,
+// for a site whose manifest this package cannot read (a V1 one).
+type Needer interface {
+	Needs(domain string) Needs
 }
 
 // Report says what a move did.
@@ -111,12 +121,19 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 		return rep, ErrNotAFolder
 	}
 	parts := Parts(m.Root, domain)
+	if m.Parts != nil {
+		parts = m.Parts(m.Root, domain)
+	}
 
 	// Before anything is touched: the target must be able to take it,
 	// and, when its names are published here, to publish them there. A
 	// target without a DNS provider would leave the names pointing at a
 	// node that no longer serves the site.
-	if err := t.Check(ctx, domain, NeedsOf(m.Root, domain, m.Source)); err != nil {
+	need := NeedsOf(m.Root, domain, m.Source)
+	if n, ok := m.Source.(Needer); ok {
+		need = n.Needs(domain)
+	}
+	if err := t.Check(ctx, domain, need); err != nil {
 		return rep, err
 	}
 

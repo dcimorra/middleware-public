@@ -32,6 +32,19 @@ var scopeRoutes = map[string][]string{
 	"deploy": {
 		"POST /api/v1/sites/{domain}/deploy",
 	},
+	// import is a site arriving from another installation (V1): its
+	// bundle, its last copy, the commit, and seeing whether it came up or
+	// removing it when it did not. Always for one site, and made to
+	// expire (POST /relocate/import-token).
+	"import": {
+		"POST /api/v1/relocate/{domain}/check",
+		"PUT /api/v1/relocate/{domain}",
+		"PUT /api/v1/relocate/{domain}/delta",
+		"POST /api/v1/relocate/{domain}/commit",
+		"DELETE /api/v1/relocate/{domain}",
+		"GET /api/v1/sites/{domain}",
+		"DELETE /api/v1/sites/{domain}",
+	},
 }
 
 // Scopes is the closed list, for the panel.
@@ -49,6 +62,9 @@ func CheckScopes(scopes []string, validSite func(string) bool) error {
 		}
 		if hasSite && !validSite(site) {
 			return fmt.Errorf("%w: %q names no valid site", ErrBadScope, sc)
+		}
+		if action == "import" && !hasSite {
+			return fmt.Errorf("%w: import is for one site (import:<domain>)", ErrBadScope)
 		}
 	}
 	return nil

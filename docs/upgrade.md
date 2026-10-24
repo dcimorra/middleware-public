@@ -120,3 +120,26 @@ next to the new one and never overwrites that backup, so it can be run again
 as V2 gains features, and going back is renaming a file. V1 password hashes
 are carried as they are (same algorithm); passwords written in the clear are
 hashed. Folders V1 ignored (`_retirado-…`) are reported and skipped.
+
+### One site at a time, into another machine
+
+To move a V1 house's sites into a V2 house on another machine, one by one
+and each reversible, the V2 panel's **Sites → Import from V1** makes a
+token for that one site (two hours) and the command to paste on the V1
+machine:
+
+```sh
+/tmp/middleware-v2 import --to https://panel.example.com --token mw_… /srv/v1/sites/shop.example.com
+```
+
+It converts the manifest (refusing a site V2 cannot honour yet), copies the
+folder while the site serves (without `node_modules`, which is installed on
+the V2 side for its machine), stops the site in V1 by writing `disabled` in
+its manifest, sends what changed, and starts it in V2. A database that lives
+in the folder (SQLite, with its `-wal` and `-shm`) travels with it, copied
+with the site stopped. If the V2 copy does not come up, V1 is started again
+as it was. The site's names stay on V1: publish it in V2 and take each name
+there ("Point it here"), then archive it in the V1 panel once it has served
+a while. What V1 keeps of the site under its own `data/` (conversations,
+cost) stays in V1.
+

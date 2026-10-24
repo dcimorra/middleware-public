@@ -20,7 +20,8 @@ export function sitesScreen({ query }) {
   const search = h("input", { type: "search", placeholder: t("sites.search"), "aria-label": t("sites.search"), autocomplete: "off" });
   const newBtn = h("button", { type: "button", class: "btn primary", "data-shortcut": "new" }, icon("plus"), t("sites.new"));
   const archivedBtn = h("button", { type: "button", class: "btn" }, icon("download"), t("sites.archived"));
-  const p = page({ title: t("nav.sites"), icon: "globe", actions: [searchBox(search), archivedBtn, newBtn] });
+  const importBtn = h("button", { type: "button", class: "btn" }, icon("download"), t("sites.importV1"));
+  const p = page({ title: t("nav.sites"), icon: "globe", actions: [searchBox(search), archivedBtn, importBtn, newBtn] });
   const container = h("div", { class: "card pad0" });
   const count = h("p", { class: "small muted", role: "status" });
   // Bulk actions: a bar over the list while something is selected. The
@@ -262,6 +263,29 @@ export function sitesScreen({ query }) {
   }
 
   newBtn.addEventListener("click", newSite);
+  importBtn.addEventListener("click", importV1);
+
+  // A site from a V1 house: a token for that one site and two hours, and
+  // the command to paste on the V1 machine. The house makes the token; the
+  // V1 machine only ever holds that one.
+  async function importV1() {
+    const domain = h("input", { type: "text", placeholder: "example.com", autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
+    const made = await open({
+      title: t("sites.importV1"),
+      body: [h("p", { class: "dim" }, t("sites.importV1Body")), field(t("sites.importV1Domain"), domain)],
+      buttons: [{ label: t("common.cancel"), value: null }, { label: t("sites.importV1Make"), submit: true, primary: true }],
+      onSubmit: async () => api.post("/relocate/import-token", { domain: domain.value.trim().toLowerCase() }),
+    });
+    if (!made) return;
+    const code = h("pre", { class: "snippet" }, made.command);
+    const copy = h("button", { type: "button", class: "btn" }, icon("copy"), t("door.copy"));
+    copy.addEventListener("click", async () => { try { await navigator.clipboard.writeText(made.command); toast(t("door.copied"), "ok"); } catch { /* it stays on screen */ } });
+    await open({
+      title: t("sites.importV1Ready", { domain: made.domain }),
+      body: [h("p", { class: "dim" }, t("sites.importV1Run", { when: new Date(made.expires).toLocaleTimeString() })), code, copy, h("p", { class: "small muted" }, t("sites.importV1After"))],
+      buttons: [{ label: t("common.close"), value: null }],
+    });
+  }
   // Archived sites: one file each under data/archive, faithful (data and
   // dependencies included), restored to sites/ as they were.
   archivedBtn.addEventListener("click", async () => {

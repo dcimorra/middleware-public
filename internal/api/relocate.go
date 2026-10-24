@@ -5,9 +5,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/dcimorra/middleware-public/internal/auth"
+	goruntime "github.com/dcimorra/middleware-public/internal/runtime"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -109,6 +113,10 @@ func (s *Server) registerRelocateTarget() {
 	s.Handle("POST", Prefix+"/relocate/{domain}/commit", "Put a received site in place (body: manifest, base64: the one it had before it stopped); the engine starts it", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		var body struct {
 			Manifest string `json:"manifest"`
+			// Install: the site's dependencies were not sent (an import
+			// leaves node_modules behind, built for the other machine);
+			// they are installed here before the site is put in place.
+			Install bool `json:"install"`
 		}
 		if err := ReadJSON(r, &body); err != nil {
 			return nil, err
@@ -118,6 +126,14 @@ func (s *Server) registerRelocateTarget() {
 			return nil, Errorf(http.StatusBadRequest, "manifest: not base64")
 		}
 		domain := r.PathValue("domain")
+		if body.Install {
+			ictx, icancel := context.WithTimeout(r.Context(), 15*time.Minute)
+			err := installDeps(ictx, rc.StagingSite(domain))
+			icancel()
+			if err != nil {
+				return nil, Errorf(http.StatusUnprocessableEntity, "installing its dependencies here failed, so it was not put in place: %v", err)
+			}
+		}
 		if err := rc.Commit(domain, raw); err != nil {
 			return nil, bad(err)
 		}
@@ -130,6 +146,102 @@ func (s *Server) registerRelocateTarget() {
 		}
 		return OK, nil
 	})
+}
+
+// registerImportToken mounts the operator's way to let a site in from a V1
+// house: a token for that one site, two hours, opening only what an
+// import calls, and the command to run on the V1 machine with it.
+func (s *Server) registerImportToken() {
+	s.Handle("POST", Prefix+"/relocate/import-token", "A token for importing one site from a V1 house (body: domain): it opens only that site's import routes, for two hours, and comes with the command to run on the V1 machine", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		if c := auth.FromContext(r.Context()); len(c.Scopes) > 0 {
+			return nil, Errorf(http.StatusForbidden, "only the operator makes import tokens")
+		}
+		var body struct {
+			Domain string `json:"domain"`
+			// Base is the address the V1 machine reaches this house at;
+			// empty is the panel's own.
+			Base string `json:"base"`
+		}
+		if err := ReadJSON(r, &body); err != nil {
+			return nil, err
+		}
+		domain := strings.ToLower(strings.TrimSpace(body.Domain))
+		if !manifest.ValidName(domain) {
+			return nil, Errorf(http.StatusBadRequest, "%q is not a site's name", body.Domain)
+		}
+		if mgr, err := s.sitesManager(); err == nil {
+			if _, err := mgr.Get(domain); err == nil {
+				return nil, Errorf(http.StatusConflict, "%s is already a site here", domain)
+			}
+		}
+		if s.opts.Auth == nil {
+			return nil, Errorf(http.StatusNotImplemented, "no token store")
+		}
+		pub, secret, err := s.opts.Auth.CreateExpiringToken("import "+domain, []string{"import:" + domain}, 2*time.Hour)
+		if err != nil {
+			return nil, err
+		}
+		base := strings.TrimRight(strings.TrimSpace(body.Base), "/")
+		if base == "" {
+			base = "https://" + r.Host
+		}
+		// This house's own release: every release so far is a pre-release,
+		// and GitHub's "latest" link skips those.
+		release := "latest/download"
+		if v := s.opts.Version; strings.HasPrefix(v, "v2.") {
+			release = "download/" + v
+		}
+		cmd := fmt.Sprintf("curl -fsSL -o /tmp/middleware-v2 https://github.com/dcimorra/middleware-public/releases/%s/middleware-linux-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') && chmod +x /tmp/middleware-v2 && /tmp/middleware-v2 import --to %s --token %s <V1 root>/sites/%s", release, base, secret, domain)
+		return map[string]any{"token": secret, "expires": pub.Expires, "domain": domain, "command": cmd}, nil
+	})
+}
+
+// installDeps installs a received Node site's dependencies in its staging
+// folder, with the Node the site asks for (installed if need be). The
+// lockfile says the tool; with none, npm install.
+func installDeps(ctx context.Context, dir string) error {
+	if _, err := os.Stat(filepath.Join(dir, "package.json")); err != nil {
+		return nil
+	}
+	if _, err := os.Stat(filepath.Join(dir, "node_modules")); err == nil {
+		return nil
+	}
+	argv := []string{"npm", "install", "--no-audit", "--no-fund"}
+	switch {
+	case fileThere(filepath.Join(dir, "package-lock.json")):
+		argv = []string{"npm", "ci", "--no-audit", "--no-fund"}
+	case fileThere(filepath.Join(dir, "pnpm-lock.yaml")):
+		argv = []string{"corepack", "pnpm", "install", "--frozen-lockfile"}
+	case fileThere(filepath.Join(dir, "yarn.lock")):
+		argv = []string{"corepack", "yarn", "install", "--frozen-lockfile"}
+	}
+	path := os.Getenv("PATH")
+	bin := argv[0]
+	if goruntime.NodeDir != nil {
+		if nd := goruntime.NodeDir(ctx, dir, argv); nd != "" {
+			path = nd + string(os.PathListSeparator) + path
+			if fileThere(filepath.Join(nd, bin)) {
+				bin = filepath.Join(nd, bin)
+			}
+		}
+	}
+	cmd := exec.CommandContext(ctx, bin, argv[1:]...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "PATH="+path, "CI=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		tail := strings.TrimSpace(string(out))
+		if len(tail) > 600 {
+			tail = tail[len(tail)-600:]
+		}
+		return fmt.Errorf("%s: %v: %s", strings.Join(argv, " "), err, tail)
+	}
+	return nil
+}
+
+func fileThere(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && !info.IsDir()
 }
 
 // registerRelocateSource mounts the operator's move: it needs the mesh.
