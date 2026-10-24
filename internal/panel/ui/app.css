@@ -783,3 +783,6 @@ svg.dash-spark .mem { stroke: var(--warn); stroke-dasharray: 3 2; }
 .oc-popular .chip:hover { border-color: var(--accent); }
 .oc-popular .chip.on { border-color: var(--ok); color: var(--ok); }
 .device-code { font-size: 18px; letter-spacing: 1px; padding: 2px 8px; }
+/* A redirect, from and to, wrapping on a phone. */
+.redirect-row { flex-wrap: wrap; gap: 6px; }
+.redirect-row code { min-width: 0; overflow-wrap: anywhere; }

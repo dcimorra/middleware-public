@@ -72,6 +72,9 @@ type Manifest struct {
 	// missing.
 	Needs   []string          `json:"needs,omitempty"`
 	Cache   *Cache            `json:"cache,omitempty"`
+	// Redirects send a request that matches one to another address with
+	// a 3xx, before the site is served (redirect.go).
+	Redirects []Redirect `json:"redirects,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
 	Notice  *Notice           `json:"notice,omitempty"`
 	// ClaudeAPI opens the site door: the site's own code may talk to Claude
@@ -520,6 +523,11 @@ func (m *Manifest) Validate() error {
 		}
 		if c.Provider != "" && !agentName.MatchString(c.Provider) {
 			return fmt.Errorf("claude_api.provider: %q is not an agent's name", c.Provider)
+		}
+	}
+	for i, rd := range m.Redirects {
+		if err := rd.Check(); err != nil {
+			return fmt.Errorf("redirects[%d]: %w", i, err)
 		}
 	}
 	if m.Chat != nil {

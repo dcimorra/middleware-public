@@ -358,6 +358,25 @@ process.
   (`"www": false` turns both off). A name the zone already points
   elsewhere is not taken without the operator's yes (api.md, Publishing).
 
+## Redirects
+
+```json
+"redirects": [
+  { "from": "/old", "to": "/new" },
+  { "from": "/blog/*", "to": "https://news.example.com/articles/*", "code": 308 },
+  { "from": "alias.example.net/*", "to": "https://example.com/*" }
+]
+```
+
+A request that matches `from` is sent to `to` with `code` (301 by default;
+302, 303, 307, 308), before the site is served: an old address goes on even
+while the site is stopped or behind its holding page. `from` is a path, a
+path and everything under it (`/*`), or one of the site's names with either
+(an alias sent elsewhere whole). When `from` and `to` both end in `/*`, the
+rest of the path follows; the query string follows unless `to` has its own.
+The first rule that matches wins; one that would send a request to itself
+is not followed. The site's page edits them (Redirects).
+
 ## Workers
 
 A worker is a process that must always be up and answers no domain: a backend

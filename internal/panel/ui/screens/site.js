@@ -210,6 +210,42 @@ function overviewTab(domain) {
     subs.push(off);
   }
 
+  // The site's redirects: an old address sent to a new one with a 3xx,
+  // before the site is served. In order: the first that matches wins.
+  function redirectsCard(m) {
+    const rules = [...(m.redirects || [])];
+    const save = async (next) => {
+      try {
+        await api.patch(`/sites/${enc(domain)}/manifest`, { redirects: next.length ? next : null });
+        toast(t("site.redirectsSaved"), "ok");
+      } catch (e) { toastError(e); }
+    };
+    const list = h("div", { class: "stack-sm" });
+    if (!rules.length) list.append(h("p", { class: "small muted" }, t("site.redirectsNone")));
+    rules.forEach((r, i) => {
+      const x = h("button", { type: "button", class: "btn sm ghost", "aria-label": t("site.redirectRemove") }, "×");
+      x.addEventListener("click", () => save(rules.filter((_, j) => j !== i)));
+      list.append(h("div", { class: "row redirect-row" },
+        h("code", { class: "grow" }, r.from), h("span", { class: "muted" }, "→"), h("code", { class: "grow" }, r.to),
+        h("span", { class: "badge" }, String(r.code || 301)), x));
+    });
+    const from = h("input", { type: "text", placeholder: "/viejo, /blog/*, " + domain + "/*", autocomplete: "off", spellcheck: "false" });
+    const to = h("input", { type: "text", placeholder: "https://nuevo.example.com/*", autocomplete: "off", spellcheck: "false" });
+    const code = h("select", null, ...[301, 302, 307, 308, 303].map((c) => h("option", { value: String(c) }, t("site.redirectCode." + c))));
+    const add = h("button", { type: "submit", class: "btn" }, icon("plus"), t("site.redirectAdd"));
+    const form = h("form", { novalidate: true, class: "stack-sm" },
+      h("div", { class: "form-row" }, field(t("site.redirectFrom"), from), field(t("site.redirectTo"), to)),
+      h("div", { class: "row" }, code, add));
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const f = from.value.trim(), d = to.value.trim();
+      if (!f || !d) return;
+      const c = Number(code.value);
+      save([...rules, c === 301 ? { from: f, to: d } : { from: f, to: d, code: c }]);
+    });
+    return h("div", { class: "card" }, h("h2", null, t("site.redirects")), h("p", { class: "small muted" }, t("site.redirectsHint")), list, form);
+  }
+
   // A name the zone already points somewhere else: said, and taken only
   // with an explicit yes, because the record may be somebody's shop or mail.
   function conflictEl(name, r) {
@@ -293,6 +329,7 @@ function overviewTab(domain) {
       h("div", { class: "card" }, h("h2", null, t("site.tab.overview")), kv(pairs), h("hr"), actions),
       unmanaged ? notice("warn", t("site.unmanagedNotice")) : null,
       unmanaged || mode === "project" ? null : domainsCard(m),
+      unmanaged || mode === "project" ? null : redirectsCard(m),
       workersCard(s),
       unmanaged ? null : door,
       unmanaged ? null : h("div", { class: "card" }, h("h2", null, t("site.env")), h("p", { class: "small muted" }, t("site.envHint")), envBox),

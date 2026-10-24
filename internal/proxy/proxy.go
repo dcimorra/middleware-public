@@ -110,6 +110,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) serveSite(w http.ResponseWriter, r *http.Request, sn engine.Snapshot) {
 	m := sn.Manifest
+	// The site's redirects come first: an old address is sent on even
+	// while the site is stopped or behind its holding page. One that would
+	// send a request to itself is not followed (a loop, written by hand).
+	if to, code, ok := m.RedirectFor(Host(r), r.URL.Path, r.URL.RawQuery); ok {
+		if !strings.HasPrefix(to, "/") || strings.SplitN(to, "?", 2)[0] != r.URL.Path {
+			http.Redirect(w, r, to, code)
+			return
+		}
+	}
 	if m != nil {
 		for k, v := range m.Headers {
 			w.Header().Set(k, v)

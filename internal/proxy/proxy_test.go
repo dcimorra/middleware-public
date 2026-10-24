@@ -203,3 +203,33 @@ func TestAnUpstreamThatFailsGets503NotACloudflare502(t *testing.T) {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
 }
+
+// A site's redirects answer before it is served, even stopped, and one
+// that would send a request to itself is not followed.
+func TestASitesRedirectsAnswerBeforeItIsServed(t *testing.T) {
+	m := &manifest.Manifest{Redirects: []manifest.Redirect{
+		{From: "/old/*", To: "https://new.test/*", Code: 308},
+		{From: "alias.test/*", To: "https://a.test/*"},
+		{From: "/self", To: "/self"},
+	}}
+	sites := map[string]engine.Snapshot{
+		"a.test":     {Domain: "a.test", Mode: manifest.ModeDisabled, Manifest: m},
+		"alias.test": {Domain: "a.test", Mode: manifest.ModeDisabled, Manifest: m},
+	}
+	h := New(lookupFor(sites))
+	resp := do(t, h, "a.test", "/old/page?q=1")
+	if resp.StatusCode != 308 || resp.Header.Get("Location") != "https://new.test/page?q=1" {
+		t.Fatalf("path: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	resp = do(t, h, "alias.test", "/x")
+	if resp.StatusCode != 301 || resp.Header.Get("Location") != "https://a.test/x" {
+		t.Fatalf("alias: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if resp := do(t, h, "a.test", "/self"); resp.StatusCode/100 == 3 {
+		t.Fatalf("a loop was followed: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	// Anything else is the site as it is: stopped.
+	if resp := do(t, h, "a.test", "/other"); resp.StatusCode/100 == 3 {
+		t.Fatalf("a path with no rule was redirected: %d", resp.StatusCode)
+	}
+}
