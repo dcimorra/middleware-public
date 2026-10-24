@@ -121,7 +121,7 @@ func TestASiteMovesWithWhatChangedWhileItWasCopied(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(steps, " "); got != "copy stop final commit start dns cleanup done" {
+	if got := strings.Join(steps, " "); got != "check copy stop final commit start dns cleanup done" {
 		t.Fatalf("steps: %s", got)
 	}
 	read := func(rel string) string { b, _ := os.ReadFile(filepath.Join(dst, rel)); return string(b) }
@@ -156,9 +156,14 @@ func TestATargetThatDoesNotComeUpLeavesTheSiteRunningHere(t *testing.T) {
 	s := &localSource{root: src}
 	tg := &localTarget{rc: Receiver{Root: dst}, ready: false}
 	m := &Mover{Root: src, Source: s, Poll: 10 * time.Millisecond, ReadyWait: 50 * time.Millisecond}
-	_, err := m.Move(context.Background(), "a.test", tg, nil)
+	var steps []string
+	_, err := m.Move(context.Background(), "a.test", tg, func(step, _ string) { steps = append(steps, step) })
 	if err == nil || !strings.Contains(err.Error(), "runs here again") {
 		t.Fatalf("err: %v", err)
+	}
+	// The way back is an operation of its own, read after the one that failed.
+	if got := strings.Join(steps, " "); !strings.HasSuffix(got, "start restore") {
+		t.Fatalf("steps: %s", got)
 	}
 	if !tg.removed || !strings.Contains(string(s.started), `"static"`) || s.archived || s.unpublished {
 		t.Fatalf("removed %v started %q archived %v unpublished %v", tg.removed, s.started, s.archived, s.unpublished)

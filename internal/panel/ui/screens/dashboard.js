@@ -14,6 +14,7 @@ import { page, notice, loading, errorBox } from "../components/page.js";
 import { open, field, confirm, toggle } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 import { icon } from "../lib/icons.js";
+import { movesCard } from "../components/moves.js";
 
 const pct = (v) => `${Math.round(Number(v || 0))}%`;
 
@@ -144,7 +145,8 @@ export function dashboardScreen() {
   const help = h("div", { class: "card" }, h("h2", null, t("dash.howTitle")), h("p", { class: "small muted" }, t("dash.how1")), h("p", { class: "small muted" }, t("dash.how2")), h("p", { class: "small muted" }, t("dash.how3")));
   // The network's settings: one decision for every node.
   const netCard = h("div", { class: "card", hidden: true });
-  p.body.append(banner, totals, grid, netCard, help);
+  const moves = movesCard("");
+  p.body.append(banner, totals, grid, moves.el, netCard, help);
   let cards = [];
   let info = null;
   let alive = true;
@@ -289,5 +291,5 @@ export function dashboardScreen() {
 
   load();
   const timer = setInterval(() => { if (alive && !document.hidden) load(); }, 10000);
-  return { el: p.el, destroy() { alive = false; clearInterval(timer); } };
+  return { el: p.el, destroy() { alive = false; clearInterval(timer); moves.destroy(); } };
 }

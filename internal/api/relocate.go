@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/events"
@@ -29,22 +28,6 @@ import (
 // commit, discard), and the operator's POST /sites/{domain}/move on the
 // source, which runs the move in the background and says each step as an
 // event (relocate.*) and in GET /sites/{domain}/move.
-
-// moveJob is one move in flight or finished.
-type moveJob struct {
-	Node    string           `json:"node"`
-	Step    string           `json:"step"`
-	Message string           `json:"message"`
-	Error   string           `json:"error,omitempty"`
-	Done    bool             `json:"done"`
-	Started time.Time        `json:"started"`
-	Report  *relocate.Report `json:"report,omitempty"`
-}
-
-type moves struct {
-	mu   sync.Mutex
-	jobs map[string]*moveJob
-}
 
 // registerRelocateTarget mounts the receiving end. It needs no mesh: the
 // routes are what another node calls with the network's secret, and a
@@ -293,17 +276,10 @@ func (s *Server) registerRelocateSource(m *nodes.Mesh) {
 		if err != nil {
 			return nil, Errorf(http.StatusConflict, "%s cannot take %s: %v", x.Name, domain, err)
 		}
-		s.moves.mu.Lock()
-		if s.moves.jobs == nil {
-			s.moves.jobs = map[string]*moveJob{}
+		job, busy := s.newMove(domain, x.Name)
+		if busy != nil {
+			return nil, Errorf(http.StatusConflict, "%s is already moving to %s (%s)", domain, busy.Node, busy.Step)
 		}
-		if j := s.moves.jobs[domain]; j != nil && !j.Done {
-			s.moves.mu.Unlock()
-			return nil, Errorf(http.StatusConflict, "%s is already moving to %s (%s)", domain, j.Node, j.Step)
-		}
-		job := &moveJob{Node: x.Name, Step: relocate.StepCopy, Started: time.Now()}
-		s.moves.jobs[domain] = job
-		s.moves.mu.Unlock()
 		mover := &relocate.Mover{Root: s.opts.Root, Source: src}
 		go func() {
 			// A move outlives the request that asked for it: an hour for a
@@ -311,35 +287,31 @@ func (s *Server) registerRelocateSource(m *nodes.Mesh) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
 			defer cancel()
 			rep, err := mover.Move(ctx, domain, meshTarget{m: m, x: x}, func(step, msg string) {
-				s.moves.mu.Lock()
-				job.Step, job.Message = step, msg
-				s.moves.mu.Unlock()
-				s.emitMove("relocate."+step, domain, "", msg, map[string]any{"node": x.Name})
+				s.advance(job, step, msg)
+				s.emitMove("relocate."+step, domain, "", msg, map[string]any{"node": x.Name, "id": job.ID})
 			})
-			s.moves.mu.Lock()
-			job.Done, job.Report = true, &rep
+			s.finish(job, rep, err)
 			if err != nil {
-				job.Error = err.Error()
-			}
-			s.moves.mu.Unlock()
-			if err != nil {
-				s.emitMove("relocate.failed", domain, "error", err.Error(), map[string]any{"node": x.Name, "step": job.Step})
+				s.emitMove("relocate.failed", domain, "error", err.Error(), map[string]any{"node": x.Name, "id": job.ID})
 			}
 		}()
-		return job, nil
+		s.moves.mu.Lock()
+		c := job.copy()
+		s.moves.mu.Unlock()
+		return c, nil
 	})
-	s.Handle("GET", Prefix+"/sites/{domain}/move", "The site's move to another node: its step, or how it ended", func(w http.ResponseWriter, r *http.Request) (any, error) {
+	s.Handle("GET", Prefix+"/sites/{domain}/move", "The site's last move to another node: each operation with its state, and how it ended", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		domain, err := domainOf(r)
 		if err != nil {
 			return nil, err
 		}
-		s.moves.mu.Lock()
-		defer s.moves.mu.Unlock()
-		if j := s.moves.jobs[domain]; j != nil {
-			c := *j
-			return c, nil
+		if list := s.listMoves(domain); len(list) > 0 {
+			return list[0], nil
 		}
-		return nil, Errorf(http.StatusNotFound, "%s has not been moved since this node started", domain)
+		return nil, Errorf(http.StatusNotFound, "%s has not been moved from this node", domain)
+	})
+	s.Handle("GET", Prefix+"/moves", "The moves from this node to others, the newest first (?domain= one site's): each operation with its state, its times and its error", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		return s.listMoves(r.URL.Query().Get("domain")), nil
 	})
 }
 

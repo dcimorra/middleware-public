@@ -16,6 +16,7 @@ import { tabs } from "../components/tabs.js";
 import { open, confirm, field, checkbox } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 import { jsonEditor } from "../components/editor.js";
+import { movesCard } from "../components/moves.js";
 import { logsTab } from "./site-logs.js";
 import { filesTab } from "./site-files.js";
 import { chatTab } from "./site-chat.js";
@@ -103,8 +104,10 @@ function overviewTab(domain) {
   // The other nodes of this one's network, online: where the site can be
   // moved. Empty without a network, and the button is not shown.
   let otherNodes = [];
-  // The move's progress, kept across the redraws a moving site causes.
-  let moveBox = null;
+  // The site's moves, as their operations, kept across the redraws a
+  // moving site causes.
+  const moves = movesCard(domain);
+  subs.push(() => moves.destroy());
   (async () => {
     try {
       const info = await api.get("/nodes");
@@ -223,27 +226,11 @@ function overviewTab(domain) {
       buttons: [{ label: t("common.cancel"), value: null }, { label: t("site.move"), primary: true, value: "go" }],
     });
     if (node !== "go") return;
-    const name = sel.selectedOptions[0].textContent;
     try {
       await api.post(`/sites/${enc(domain)}/move`, { node: sel.value });
     } catch (e) { toastError(e); return; }
-    const box = h("div", { class: "notice info" }, t("site.moving", { node: name }));
-    moveBox = box;
-    el.prepend(box);
-    const off = onEvent("relocate.", (ev) => {
-      if (ev.subject !== domain) return;
-      const step = ev.type.slice("relocate.".length);
-      box.textContent = t("site.moveStep." + step, { node: name }) + (ev.message ? " — " + ev.message : "");
-      if (step === "done") {
-        off();
-        box.className = "notice ok";
-        toast(t("site.moved", { domain, node: name }), "ok");
-      } else if (step === "failed") {
-        off();
-        box.className = "notice bad";
-      }
-    });
-    subs.push(off);
+    toast(t("site.moveStarted"), "ok");
+    moves.reload();
   }
 
   // The site's redirects: an old address sent to a new one with a 3xx,
@@ -300,7 +287,7 @@ function overviewTab(domain) {
   function render() {
     const s = store.site(domain);
     clear(el);
-    if (moveBox) el.append(moveBox);
+    el.append(moves.el);
     if (!s) { el.append(empty(t("site.gone"), t("site.goneHint"))); return; }
     const mode = siteMode(s);
     const m = s.manifest || {};

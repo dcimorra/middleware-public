@@ -66,6 +66,7 @@ type Needs struct {
 
 // Steps of a move, in order.
 const (
+	StepCheck   = "check"
 	StepCopy    = "copy"
 	StepStop    = "stop"
 	StepFinal   = "final"
@@ -74,6 +75,8 @@ const (
 	StepDNS     = "dns"
 	StepCleanup = "cleanup"
 	StepDone    = "done"
+	// StepRestore is a failure's way back: the site started here again.
+	StepRestore = "restore"
 )
 
 // Mover moves a site off this node.
@@ -139,6 +142,7 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	if n, ok := m.Source.(Needer); ok {
 		need = n.Needs(domain)
 	}
+	progress(StepCheck, "asking "+t.Name()+" whether it can take "+domain)
 	if err := t.Check(ctx, domain, need); err != nil {
 		return rep, err
 	}
@@ -165,6 +169,7 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	// From here every failure before the target answers puts the source
 	// back as it was.
 	restore := func(cause error) (Report, error) {
+		progress(StepRestore, fmt.Sprintf("%v; starting it here again", cause))
 		if err := m.Source.Start(domain, original); err != nil {
 			return rep, fmt.Errorf("%w; and starting it here again failed too: %v", cause, err)
 		}
