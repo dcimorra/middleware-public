@@ -35,6 +35,12 @@ type Target interface {
 	Publish(ctx context.Context, domain, door string) error
 }
 
+// Preparer is a target that installs a site's dependencies in its staging,
+// for its own machine, before the site is stopped here.
+type Preparer interface {
+	Prepare(ctx context.Context, domain string) error
+}
+
 // Source is this node's side of a move.
 type Source interface {
 	// Stop stops the site and returns the manifest it had.
@@ -68,6 +74,7 @@ type Needs struct {
 const (
 	StepCheck   = "check"
 	StepCopy    = "copy"
+	StepInstall = "install"
 	StepStop    = "stop"
 	StepFinal   = "final"
 	StepCommit  = "commit"
@@ -94,6 +101,10 @@ type Mover struct {
 	// Dir, when set, is the site's folder: an app imported from a machine
 	// that is not a house lives anywhere, not under Root/sites.
 	Dir string
+	// Install has a target that is a Preparer install the site's
+	// dependencies there after the first copy; Parts must then leave
+	// node_modules behind (MoveParts).
+	Install bool
 }
 
 // Needer is a Source that says itself what its site needs of the target,
@@ -159,6 +170,20 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	}
 	rep.First = n
 
+	// node_modules built here is built for this machine's Node: a native
+	// module (better-sqlite3, sharp) compiled for Node 24 does not load on
+	// a target whose site runs on 18, and the first moves carried it and
+	// failed at the start with ERR_DLOPEN_FAILED. Installed there instead,
+	// with the Node the site gets there, while it still serves here, so
+	// the install is not part of the time it is down.
+	if pr, ok := t.(Preparer); ok && m.Install {
+		progress(StepInstall, "installing its dependencies on "+t.Name()+", for that machine, while it serves here")
+		if err := pr.Prepare(ctx, domain); err != nil {
+			_ = t.Discard(ctx, domain)
+			return rep, fmt.Errorf("installing its dependencies there: %w", err)
+		}
+	}
+
 	progress(StepStop, "stopping "+domain+" here for the last copy")
 	original, err := m.Source.Stop(ctx, domain)
 	if err != nil {
@@ -169,7 +194,7 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	// From here every failure before the target answers puts the source
 	// back as it was.
 	restore := func(cause error) (Report, error) {
-		progress(StepRestore, fmt.Sprintf("%v; starting it here again", cause))
+		progress(StepRestore, "starting it here again, as it was")
 		if err := m.Source.Start(domain, original); err != nil {
 			return rep, fmt.Errorf("%w; and starting it here again failed too: %v", cause, err)
 		}

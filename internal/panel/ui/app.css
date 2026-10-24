@@ -794,3 +794,4 @@ svg.dash-spark .mem { stroke: var(--warn); stroke-dasharray: 3 2; }
 .move-step { display: flex; gap: 8px; align-items: flex-start; min-width: 0; }
 .move-step .grow { min-width: 0; overflow-wrap: anywhere; }
 .move-step .badge { flex: none; }
+.move-error { white-space: pre-wrap; max-height: 16em; overflow: auto; }

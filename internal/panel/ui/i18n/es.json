@@ -652,6 +652,7 @@
   "moves.state.warn": "Con avisos",
   "moves.down": "Estuvo parado {down}.",
   "site.moveStep.copy": "Copiando a {node} mientras sirve",
+  "site.moveStep.install": "Instalando sus dependencias en {node}, para esa máquina, mientras sirve aquí",
   "site.moveStep.stop": "Parando para la copia final",
   "site.moveStep.final": "Enviando lo que cambió",
   "site.moveStep.commit": "Colocándolo en {node}",

@@ -93,6 +93,18 @@ func (s *Server) registerRelocateTarget() {
 		}
 		return rep, nil
 	})
+	s.Handle("POST", Prefix+"/relocate/{domain}/prepare", "Install a received site's dependencies in its staging, for this machine, before it is stopped where it is", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		domain := r.PathValue("domain")
+		if _, err := os.Stat(rc.StagingSite(domain)); err != nil {
+			return nil, bad(relocate.ErrNoStaging)
+		}
+		ictx, icancel := context.WithTimeout(r.Context(), 15*time.Minute)
+		defer icancel()
+		if err := installDeps(ictx, rc.StagingSite(domain)); err != nil {
+			return nil, Errorf(http.StatusUnprocessableEntity, "%v", err)
+		}
+		return OK, nil
+	})
 	s.Handle("POST", Prefix+"/relocate/{domain}/commit", "Put a received site in place (body: manifest, base64: the one it had before it stopped); the engine starts it", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		var body struct {
 			Manifest string `json:"manifest"`
@@ -235,6 +247,16 @@ func installDeps(ctx context.Context, dir string) error {
 	return nil
 }
 
+// installsThere says a moved site's node_modules is installed on the
+// target rather than carried: a Node site on the machine. One in a
+// container keeps it, built inside the same image on both sides.
+func installsThere(dir string, m *manifest.Manifest) bool {
+	if m == nil || m.Run == nil || m.Run.Runtime == "docker" {
+		return false
+	}
+	return fileThere(filepath.Join(dir, "package.json"))
+}
+
 func fileThere(p string) bool {
 	info, err := os.Stat(p)
 	return err == nil && !info.IsDir()
@@ -281,6 +303,9 @@ func (s *Server) registerRelocateSource(m *nodes.Mesh) {
 			return nil, Errorf(http.StatusConflict, "%s is already moving to %s (%s)", domain, busy.Node, busy.Step)
 		}
 		mover := &relocate.Mover{Root: s.opts.Root, Source: src}
+		if site, err := mgr.Get(domain); err == nil && installsThere(mgr.Dir(domain), site.Manifest) {
+			mover.Install, mover.Parts = true, relocate.MoveParts
+		}
 		go func() {
 			// A move outlives the request that asked for it: an hour for a
 			// big site over a slow link.
@@ -387,6 +412,10 @@ func (t meshTarget) SendDelta(ctx context.Context, domain string, body io.Reader
 
 func (t meshTarget) Commit(ctx context.Context, domain string, m []byte) error {
 	return t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/commit", map[string]string{"manifest": base64.StdEncoding.EncodeToString(m)}, nil)
+}
+
+func (t meshTarget) Prepare(ctx context.Context, domain string) error {
+	return t.older(t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/prepare", nil, nil))
 }
 
 func (t meshTarget) Discard(ctx context.Context, domain string) error {

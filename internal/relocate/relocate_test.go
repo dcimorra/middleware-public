@@ -228,3 +228,42 @@ func TestAContainerSiteDoesNotMoveToANodeWithoutDocker(t *testing.T) {
 		t.Fatal("the source was stopped")
 	}
 }
+
+// preparingTarget installs on its side what was left behind.
+type preparingTarget struct {
+	*localTarget
+	sawModules bool
+	prepared   bool
+}
+
+func (t *preparingTarget) Prepare(_ context.Context, d string) error {
+	_, err := os.Stat(filepath.Join(t.rc.StagingSite(d), "node_modules"))
+	t.sawModules = err == nil
+	t.prepared = true
+	return nil
+}
+
+// A Node site's node_modules is built for this machine's Node: it is left
+// behind and installed on the target, after the first copy and before the
+// site stops here, so the install is not time it is down.
+func TestANodeSitesModulesAreInstalledThereNotCarried(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	seed(t, src)
+	os.MkdirAll(filepath.Join(src, "sites", "a.test", "node_modules", "better-sqlite3"), 0o755)
+	os.WriteFile(filepath.Join(src, "sites", "a.test", "node_modules", "better-sqlite3", "x.node"), []byte("built for node 24"), 0o644)
+	tg := &preparingTarget{localTarget: &localTarget{rc: Receiver{Root: dst}, ready: true}}
+	m := &Mover{Root: src, Source: &localSource{root: src}, Parts: MoveParts, Install: true, Poll: 10 * time.Millisecond, ReadyWait: time.Second}
+	var steps []string
+	if _, err := m.Move(context.Background(), "a.test", tg, func(step, _ string) { steps = append(steps, step) }); err != nil {
+		t.Fatal(err)
+	}
+	if !tg.prepared || tg.sawModules {
+		t.Fatalf("prepared %v, node_modules carried %v", tg.prepared, tg.sawModules)
+	}
+	if got := strings.Join(steps, " "); !strings.HasPrefix(got, "check copy install stop") {
+		t.Fatalf("steps: %s", got)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "sites", "a.test", "public", "index.html")); err != nil {
+		t.Fatal("the site did not arrive")
+	}
+}

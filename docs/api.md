@@ -576,6 +576,7 @@ without a docker that answers, is refused before anything moves.
 | POST | `/relocate/{domain}/check` | the receiving node, before anything moves: `{names, docker}` (the names published where the site is; whether it runs in a container) → `{ok}`, or 409 when the name is a site here, this node cannot publish every one of those names, or the site runs in a container and this node has no docker that answers |
 | PUT | `/relocate/{domain}` | the receiving node: a site's bundle (`.tar.gz`) as the raw body → `{files, dirs, links, bytes}`; 409 when the name is a site here |
 | PUT | `/relocate/{domain}/delta` | the last copy: changed files and the index, laid over what was received |
+| POST | `/relocate/{domain}/prepare` | the network only: install a received site's dependencies in its staging, for this machine (`npm ci`, or pnpm or yarn by the lockfile, with the Node the site gets here); a move calls it after the first copy, while the site still serves where it was, for a Node site on the machine, whose `node_modules` is left behind (built for the other machine's Node) |
 | POST | `/relocate/{domain}/commit` | `{manifest, install?}` (base64, the one the site had before it stopped; `install` installs a Node site's dependencies in the staging folder first, `npm ci` with a lockfile) → `{ok}`; the site is put in place and the engine starts it |
 | DELETE | `/relocate/{domain}` | → `{ok}`; what was received is thrown away |
 

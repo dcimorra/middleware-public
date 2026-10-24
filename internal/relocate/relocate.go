@@ -40,6 +40,14 @@ import (
 // Parts are what moves with a site: its folder, and what the house keeps
 // of it under data/ by its name. The same list as a rename moves, plus the
 // deploy record; logs stay, they are this machine's.
+// MoveParts are Parts without the site's node_modules, which the target
+// installs again for its own machine (Mover.Install).
+func MoveParts(root, domain string) []archive.Part {
+	parts := Parts(root, domain)
+	parts[0].SkipDir = func(name string) bool { return name == "node_modules" }
+	return parts
+}
+
 func Parts(root, domain string) []archive.Part {
 	data := filepath.Join(root, "data")
 	return []archive.Part{

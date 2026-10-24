@@ -26,7 +26,7 @@ function stepRow(j, s) {
     h("div", { class: "grow" },
       h("div", null, t("site.moveStep." + s.step, { node: j.node })),
       s.message ? h("div", { class: "small dim" }, s.message) : null,
-      s.error ? h("div", { class: "small level-error" }, s.error) : null),
+      s.error ? h("div", { class: "small level-error move-error" }, s.error) : null),
     h("span", { class: "small muted mono", title: fmtTime(s.started) }, fmtDuration(secs(s.started, s.ended))));
 }
 
@@ -39,7 +39,9 @@ function jobEl(j, open) {
     h("span", { class: "small muted", title: fmtTime(j.started) }, fmtAgo(j.started, t) + " · " + fmtDuration(secs(j.started, j.ended))));
   const body = h("div", { class: "stack-sm" },
     h("ol", { class: "move-steps" }, ...(j.steps || []).map((s) => stepRow(j, s))),
-    j.error ? h("div", { class: "notice bad small" }, j.error) : null,
+    // The failed step already says why; the job's own error is said only
+    // when no step carries it (one cut before its first step).
+    j.error && !(j.steps || []).some((s) => s.error) ? h("div", { class: "notice bad small move-error" }, j.error) : null,
     j.report && j.report.down && state !== "failed" ? h("p", { class: "small muted" }, t("moves.down", { down: j.report.down })) : null);
   return h("details", { class: "move-job", open: open || state === "running" }, head, body);
 }
