@@ -164,17 +164,53 @@ function overviewTab(domain) {
     return h("div", { class: "card" }, h("h2", null, t("site.domains")), h("p", { class: "small muted" }, t("site.domainsHint")), list, form);
   }
 
-  // Out of its container, onto the machine as a normal process, or back:
-  // the same command in the same folder (the container mounts it at the
-  // same path), and the docker section kept for going back. A command that
-  // needs Node gets one on the machine, installed if it has none.
+  // Out of its container, onto the machine as a normal process: the same
+  // command in the same folder (the container mounts it at the same path),
+  // and the docker section kept for going back. A command that needs Node
+  // gets one on the machine, installed if it has none.
   async function setRuntime(m, runtime) {
     const out = runtime === "process";
-    if (!(await confirm({ title: t(out ? "site.uncontainQ" : "site.containQ", { domain }), body: t(out ? "site.uncontainBody" : "site.containBody"), confirmLabel: t(out ? "site.uncontain" : "site.contain") }))) return;
+    if (!(await confirm({ title: t("site.uncontainQ", { domain }), body: t("site.uncontainBody"), confirmLabel: t("site.uncontain") }))) return;
     try {
       await api.patch(`/sites/${enc(domain)}/manifest`, { run: { ...m.run, runtime } });
       toast(t(out ? "site.uncontained" : "site.contained"), "ok");
     } catch (e) { toastError(e); }
+  }
+
+  // Into a container, or back into the one it had: the house works it out
+  // and tries it beside the one that serves before anything is written;
+  // when it cannot, the agent picked here is asked in a new conversation,
+  // and the chat is where this goes next. Back into a kept container goes
+  // the same way, tried first, so the button never leaves a site retrying.
+  async function containSite() {
+    let agents = [];
+    try { agents = ((await api.get("/agents")).providers || []).filter((a) => a.available); } catch { agents = []; }
+    const sel = h("select", null, h("option", { value: "" }, t("site.containNoAgent")), ...agents.map((a) => h("option", { value: a.provider }, a.provider)));
+    if (agents.length) sel.value = agents[0].provider;
+    const go = await open({
+      title: t("site.containizeQ", { domain }),
+      body: [h("p", { class: "dim" }, t("site.containizeBody")), field(t("site.containAgent"), sel)],
+      buttons: [{ label: t("common.cancel"), value: null }, { label: t("site.containize"), primary: true, value: "go" }],
+    });
+    if (go !== "go") return;
+    try {
+      await api.post(`/sites/${enc(domain)}/containerize`, sel.value ? { provider: sel.value } : {});
+    } catch (e) { toastError(e); return; }
+    const box = h("div", { class: "notice info" }, t("site.containStep.planning"));
+    el.prepend(box);
+    const off = onEvent("containerize.", (ev) => {
+      if (ev.subject !== domain) return;
+      const step = ev.type.slice("containerize.".length);
+      box.textContent = t("site.containStep." + step) + (ev.message ? " — " + ev.message : "");
+      if (step === "trying") return;
+      off();
+      box.className = "notice " + ({ done: "ok", asked: "warn" }[step] || "bad");
+      if (step === "done") toast(t("site.contained"), "ok");
+      if (step === "asked") {
+        box.append(" ", h("a", { href: `#/sites/${enc(domain)}/chat` }, t("site.containOpenChat")));
+      }
+    });
+    subs.push(off);
   }
 
   // Moving the site to another node: chosen, said (a short stop), and then
@@ -300,7 +336,7 @@ function overviewTab(domain) {
       if (otherNodes.length) actions.append(btn(t("site.move"), "upload", moveSite));
       // In a container, or out of one with its container kept to go back to.
       if (m.run && m.run.runtime === "docker") actions.append(btn(t("site.uncontain"), "box", () => setRuntime(m, "process")));
-      else if (m.run && m.run.docker) actions.append(btn(t("site.contain"), "box", () => setRuntime(m, "docker")));
+      else if (mode === "run") actions.append(btn(t(m.run && m.run.docker ? "site.contain" : "site.containize"), "box", containSite));
     }
     actions.append(btn(t("site.delete"), "trash", del, "danger"));
 

@@ -119,6 +119,8 @@ type Server struct {
 	publisher *publish.Publisher
 	// moves are the sites moving to another node, by name.
 	moves moves
+	// contains are the sites being put in a container, by name.
+	contains containJobs
 	// dnsEnabled says whether a DNS provider is on, which decides the
 	// default of "publish" on creation.
 	dnsEnabled func() bool

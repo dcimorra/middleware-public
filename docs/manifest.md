@@ -209,6 +209,20 @@ page has a button for it, and one to go back): the same command in the same
 folder, on the machine, without the container's walls. The `docker` section
 is kept, so going back is the same switch the other way.
 
+Putting a site in a container from its page (`POST /sites/{domain}/containerize`)
+works the `docker` section out when the manifest has none: the site's own
+`Dockerfile`; otherwise an image for what the command runs — `node:<major>-slim`
+for node, npm and `node_modules/.bin`, at the major the site runs on now;
+`python:<x.y>-slim` for python, at the machine's; for a compiled binary the
+machine's own distribution (`ubuntu:24.04`), or a distroless image when it is
+static. It is then started beside the generation that serves, on a spare port
+(its log in `logs/<domain>/trial.log`), and written only once it answered, so
+the switch is an ordinary handover. When nothing says which image, or the try
+fails, the agent the operator picked is asked in a new conversation of the
+site, with what was tried and the last lines of the log; it writes a
+`Dockerfile` and `run.docker` (agents cannot run docker), and the button tries
+that next. Going back into a kept container takes the same path.
+
 ## Node
 
 A command that wants Node (`node`, `npm`, `npx`, `pnpm`, `yarn`,

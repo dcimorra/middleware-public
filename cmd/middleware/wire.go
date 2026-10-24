@@ -284,6 +284,7 @@ func buildWire(a *app.App) app.Hook {
 	if chatManager != nil {
 		wireSiteDoor(a, srv, set)
 	}
+	srv.RegisterContainerize(api.ContainOptions{Chat: chatManager})
 	if taskScheduler != nil {
 		srv.RegisterTasks(api.TasksOptions{Scheduler: taskScheduler, Root: a.Root})
 	}
