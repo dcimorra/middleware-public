@@ -24,6 +24,7 @@ func testParams(t *testing.T) (Params, Paths) {
 		SystemdDir:  filepath.Join(dir, "etc", "systemd", "system"),
 		TmpfilesDir: filepath.Join(dir, "etc", "tmpfiles.d"),
 		SysctlDir:   filepath.Join(dir, "etc", "sysctl.d"),
+		Fail2banDir: filepath.Join(dir, "etc", "fail2ban"),
 	}
 	return p, paths
 }
@@ -158,6 +159,10 @@ func TestAFreshInstallRunsTheStepsInOrderAndWritesEveryFile(t *testing.T) {
 		"sudo sysctl -q -p " + filepath.Join(in.Paths.SysctlDir, SysctlIn),
 		"sudo systemd-tmpfiles --create " + filepath.Join(in.Paths.TmpfilesDir, TmpfilesIn),
 		"sudo systemctl daemon-reload",
+		"sudo apt-get install -y -q fail2ban",
+		"write " + filepath.Join(in.Paths.Fail2banDir, Fail2banAction),
+		"write " + filepath.Join(in.Paths.Fail2banDir, Fail2banJail),
+		"sudo systemctl enable --now fail2ban",
 		"sudo systemctl enable middleware.socket",
 		"sudo systemctl enable middleware-helper.service",
 		"sudo systemctl enable middleware.service",
@@ -332,6 +337,9 @@ func TestUninstallRemovesUnitsButKeepsTheRoot(t *testing.T) {
 		"sudo systemctl disable middleware.socket",
 		"sudo systemctl disable middleware-helper.service",
 		"sudo systemctl disable middleware.service",
+		"remove " + filepath.Join(in.Paths.Fail2banDir, Fail2banJail),
+		"remove " + filepath.Join(in.Paths.Fail2banDir, Fail2banAction),
+		"sudo fail2ban-client reload",
 		"remove " + filepath.Join(in.Paths.SystemdDir, ServiceUnit),
 		"remove " + filepath.Join(in.Paths.SystemdDir, SocketUnit),
 		"remove " + filepath.Join(in.Paths.SystemdDir, HelperUnit),
@@ -464,5 +472,26 @@ func TestTheOperatorIsFoundWhereTheAuthPackageKeepsIt(t *testing.T) {
 	os.WriteFile(filepath.Join(root, "data", "auth", "password"), []byte("$argon2id$…\n"), 0o600)
 	if !defaultOperatorExists(root) {
 		t.Fatal("the operator's password was not found")
+	}
+}
+
+// The jail is SSH's with the house's numbers and exceptions, and every ban
+// goes into the house's block list as the operator's user.
+func TestTheFail2banJailWatchesSSHAndSharesItsBansWithTheHouse(t *testing.T) {
+	p, _ := testParams(t)
+	files := RenderFail2ban(p)
+	jail, action := files[Fail2banJail], files[Fail2banAction]
+	for _, want := range []string{"[sshd]", "enabled = true", "backend = systemd", "maxretry = 5", "findtime = 10m", "bantime = 1h", "bantime.factor = 4", "bantime.maxtime = 30d", "10.0.0.0/8", "100.64.0.0/10", "middleware"} {
+		if !strings.Contains(jail, want) {
+			t.Errorf("jail lacks %q:\n%s", want, jail)
+		}
+	}
+	for _, want := range []string{
+		"actionban = runuser -u alice -- " + p.Binary + " waf block --root " + p.Root + " <ip> <bantime>s fail2ban <name>",
+		"actionunban = runuser -u alice -- " + p.Binary + " waf unblock --root " + p.Root + " <ip>",
+	} {
+		if !strings.Contains(action, want) {
+			t.Errorf("action lacks %q:\n%s", want, action)
+		}
 	}
 }

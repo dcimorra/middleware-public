@@ -55,6 +55,7 @@ func (in *Installer) Doctor() ([]Check, bool) {
 		in.checkRootDir(),
 		in.checkPorts(),
 		in.checkDocker(),
+		in.checkFail2ban(),
 		in.checkWireGuard(),
 		in.checkDisk(),
 	)
@@ -187,6 +188,16 @@ func (in *Installer) checkDocker() Check {
 		return Check{"docker", false, fmt.Sprintf("installed but the daemon does not answer: %v", err)}
 	}
 	return Check{"docker", true, "daemon " + strings.TrimSpace(out)}
+}
+
+func (in *Installer) checkFail2ban() Check {
+	if _, err := in.Exec.LookPath("fail2ban-client"); err != nil {
+		return Check{"fail2ban", false, "not installed: SSH has no bans (run middleware install again)"}
+	}
+	if !in.isActive("fail2ban") {
+		return Check{"fail2ban", false, "installed but not running"}
+	}
+	return Check{"fail2ban", true, "running, its SSH bans shared with the house"}
 }
 
 func (in *Installer) checkWireGuard() Check {

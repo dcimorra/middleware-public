@@ -161,6 +161,9 @@ func (r *Recorder) simulate(sudo bool, name string, args []string) (out string, 
 				if a == "docker.io" || a == "moby-engine" {
 					r.Path["docker"] = true
 				}
+				if a == "fail2ban" {
+					r.Path["fail2ban-client"] = true
+				}
 			}
 		}
 		return "", nil, true

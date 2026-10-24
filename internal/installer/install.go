@@ -21,11 +21,14 @@ type Paths struct {
 	SystemdDir  string
 	TmpfilesDir string
 	SysctlDir   string
+	// Fail2banDir is fail2ban's configuration folder; empty is
+	// /etc/fail2ban.
+	Fail2banDir string
 }
 
 // SystemPaths are where a Linux distribution expects these files.
 func SystemPaths() Paths {
-	return Paths{SystemdDir: "/etc/systemd/system", TmpfilesDir: "/etc/tmpfiles.d", SysctlDir: "/etc/sysctl.d"}
+	return Paths{SystemdDir: "/etc/systemd/system", TmpfilesDir: "/etc/tmpfiles.d", SysctlDir: "/etc/sysctl.d", Fail2banDir: "/etc/fail2ban"}
 }
 
 // Installer runs the steps. Zero values are filled by New.
@@ -213,6 +216,8 @@ func (in *Installer) Install() (Report, error) {
 			_, err := in.Exec.Sudo("systemctl", "daemon-reload")
 			return true, "reloaded", err
 		}},
+		// After the binary: the jail's action runs it.
+		{"fail2ban", optional(in.stepFail2ban)},
 		{"enable units", in.stepEnable},
 		// A group the user was just added to reaches the service only when
 		// it starts again: docker's, without that, answers "permission
@@ -264,6 +269,12 @@ func (in *Installer) Uninstall() (Report, error) {
 				changed = true
 			}
 			return changed, "disabled", nil
+		}},
+		{"fail2ban jail", func() (bool, string, error) {
+			// The house's jail and action go; fail2ban stays, it is the
+			// machine's.
+			in.removeFail2ban()
+			return false, "removed", nil
 		}},
 		{"remove files", func() (bool, string, error) {
 			changed := false

@@ -135,6 +135,13 @@ four times longer at every repeat, up to thirty days. Lifting a ban lifts
 it in the kernel too, and what is still banned goes back into the kernel
 when the supervisor starts (a reboot empties the kernel's set).
 
+SSH is the one door the house does not see, so the installer gives it
+fail2ban with the same numbers and exceptions; each of its bans is written
+into the same block list (reason `fail2ban sshd`), so the panel lists it
+with the others. fail2ban lifting it lifts it in the house; lifting it in
+the panel lifts the house's block, while fail2ban keeps SSH closed to that
+address until its own time is up (`fail2ban-client unban <ip>` ends it).
+
 Never banned: loopback, the private and CGNAT ranges (the VPN's, the
 mesh's), the allow list, and an address the operator logged in from in
 the last week. Behind the tunnel the address is the edge's
