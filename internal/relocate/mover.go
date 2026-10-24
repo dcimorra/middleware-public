@@ -88,6 +88,9 @@ type Mover struct {
 	// from another installation takes the folder and its HOME, not the
 	// house's records of it, which that installation writes its own way.
 	Parts func(root, domain string) []archive.Part
+	// Dir, when set, is the site's folder: an app imported from a machine
+	// that is not a house lives anywhere, not under Root/sites.
+	Dir string
 }
 
 // Needer is a Source that says itself what its site needs of the target,
@@ -115,6 +118,9 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 		return rep, ErrBadName
 	}
 	dir := filepath.Join(m.Root, "sites", domain)
+	if m.Dir != "" {
+		dir = m.Dir
+	}
 	if info, err := os.Lstat(dir); err != nil {
 		return rep, fmt.Errorf("%s: no such site here", domain)
 	} else if !info.IsDir() {

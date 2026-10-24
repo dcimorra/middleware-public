@@ -143,3 +143,20 @@ there ("Point it here"), then archive it in the V1 panel once it has served
 a while. What V1 keeps of the site under its own `data/` (conversations,
 cost) stays in V1.
 
+### From any server
+
+The same command takes an app from a machine that is not a V1 house: a
+folder anywhere, run by pm2, systemd, a container or a screen. Its manifest
+is its own `site.json` when it has one (V2, or V1 converted), or worked out
+from what it holds: a `Dockerfile` (in a container, its exec-form `CMD`),
+`package.json`'s `start`, an `index.html` at the top or in `public/`;
+otherwise `--command` says it. `--stop` and `--start` say how the app is
+stopped there for the last copy and started again if the import fails;
+without them it is copied running, and a database written meanwhile may
+arrive torn (the command says so first).
+
+```sh
+/tmp/middleware-v2 import --to https://panel.example.com --token mw_… --domain shop.example.com \
+  --stop "pm2 stop shop" --start "pm2 start shop" /var/www/shop
+```
+

@@ -116,3 +116,36 @@ func TestAnImportTokenNeverPointsAtTheRequestsHost(t *testing.T) {
 		t.Fatalf("command: %v", out["command"])
 	}
 }
+
+// Any app folder from any server comes in the same way: its manifest
+// worked out from what it holds, stopped and started with the commands the
+// operator gives.
+func TestAnAppFromAnyServerIsImportedWithItsOwnStopAndStart(t *testing.T) {
+	v2 := newFixture(t).withToken()
+	_, out := v2.call("POST", "/api/v1/relocate/import-token", map[string]any{"domain": "shop.test", "base": v2.http.URL})
+	tok, _ := out["token"].(string)
+	app := filepath.Join(t.TempDir(), "var", "www", "shop")
+	os.MkdirAll(app, 0o755)
+	os.WriteFile(filepath.Join(app, "index.html"), []byte("the shop"), 0o644)
+	marks := t.TempDir()
+	src := &relocate.GenericSource{Dir: app, StopCmd: "touch " + filepath.Join(marks, "stopped"), StartCmd: "touch " + filepath.Join(marks, "started")}
+	if _, err := src.Detect("shop.test"); err != nil {
+		t.Fatal(err)
+	}
+	m := &relocate.Mover{Root: filepath.Dir(app), Dir: app, Source: src, Parts: src.Parts, Poll: 20 * time.Millisecond, ReadyWait: 5 * time.Second}
+	if _, err := m.Move(context.Background(), "shop.test", relocate.HTTPTarget{Base: v2.http.URL, Token: tok, Install: true}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(v2.root, "sites", "shop.test", "index.html")); string(got) != "the shop" {
+		t.Fatalf("index: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(marks, "stopped")); err != nil {
+		t.Fatal("its stop command was not run")
+	}
+	if _, err := os.Stat(filepath.Join(marks, "started")); err == nil {
+		t.Fatal("it was started again although the import worked")
+	}
+	if _, err := os.Stat(filepath.Join(app, "index.html")); err != nil {
+		t.Fatal("the app's folder was touched where it was")
+	}
+}

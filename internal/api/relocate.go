@@ -204,7 +204,7 @@ func (s *Server) registerImportToken() {
 		if v := s.opts.Version; strings.HasPrefix(v, "v2.") {
 			release = "download/" + v
 		}
-		cmd := fmt.Sprintf("curl -fsSL -o /tmp/middleware-v2 https://github.com/dcimorra/middleware-public/releases/%s/middleware-linux-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') && chmod +x /tmp/middleware-v2 && /tmp/middleware-v2 import --to %s --token %s <V1 root>/sites/%s", release, base, secret, domain)
+		cmd := fmt.Sprintf("curl -fsSL -o /tmp/middleware-v2 https://github.com/dcimorra/middleware-public/releases/%s/middleware-linux-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') && chmod +x /tmp/middleware-v2 && /tmp/middleware-v2 import --to %s --token %s --domain %s <the app's folder>", release, base, secret, domain)
 		return map[string]any{"token": secret, "expires": pub.Expires, "domain": domain, "command": cmd}, nil
 	})
 }
