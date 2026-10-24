@@ -70,13 +70,13 @@ type Manifest struct {
 	// domain, or one of a site's workers as "name@domain". A first start
 	// waits for them (a minute at most) and the panel names what is
 	// missing.
-	Needs   []string          `json:"needs,omitempty"`
-	Cache   *Cache            `json:"cache,omitempty"`
+	Needs []string `json:"needs,omitempty"`
+	Cache *Cache   `json:"cache,omitempty"`
 	// Redirects send a request that matches one to another address with
 	// a 3xx, before the site is served (redirect.go).
-	Redirects []Redirect `json:"redirects,omitempty"`
-	Headers map[string]string `json:"headers,omitempty"`
-	Notice  *Notice           `json:"notice,omitempty"`
+	Redirects []Redirect        `json:"redirects,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	Notice    *Notice           `json:"notice,omitempty"`
 	// ClaudeAPI opens the site door: the site's own code may talk to Claude
 	// through the house (see docs/api.md, "The site door").
 	ClaudeAPI *ClaudeAPI `json:"claude_api,omitempty"`
