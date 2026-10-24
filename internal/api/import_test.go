@@ -18,7 +18,7 @@ import (
 // import and nothing else.
 func TestAV1SiteIsImportedWithItsOneSiteToken(t *testing.T) {
 	v2 := newFixture(t).withToken()
-	_, out := v2.call("POST", "/api/v1/relocate/import-token", map[string]any{"domain": "old.test"})
+	_, out := v2.call("POST", "/api/v1/relocate/import-token", map[string]any{"domain": "old.test", "base": v2.http.URL})
 	tok, _ := out["token"].(string)
 	if !strings.HasPrefix(tok, "mw_") || !strings.Contains(out["command"].(string), "import --to") {
 		t.Fatalf("import token: %v", out)
@@ -100,5 +100,19 @@ func TestAV1SiteVTwoCannotHonourIsRefusedBeforeAnythingMoves(t *testing.T) {
 	os.WriteFile(filepath.Join(site, "site.json"), []byte(`{"root":"public","something_v2_does_not_know":1}`), 0o644)
 	if _, err := (&relocate.V1Source{Root: v1}).Convert("odd.test"); err == nil {
 		t.Fatal("a manifest the converter cannot read was accepted")
+	}
+}
+
+// A node with no panel domain of its own cannot be reached from the V1
+// machine: the import token says so instead of printing its mesh address.
+func TestAnImportTokenNeverPointsAtTheRequestsHost(t *testing.T) {
+	f := newFixture(t).withToken()
+	resp, out := f.call("POST", "/api/v1/relocate/import-token", map[string]any{"domain": "x.test"})
+	if resp.StatusCode != 400 || !strings.Contains(out["error"].(string), "panel domain") {
+		t.Fatalf("no base and no panel domain: %d %v", resp.StatusCode, out)
+	}
+	_, out = f.call("POST", "/api/v1/relocate/import-token", map[string]any{"domain": "x.test", "base": "panel.example.com"})
+	if !strings.Contains(out["command"].(string), "--to https://panel.example.com ") {
+		t.Fatalf("command: %v", out["command"])
 	}
 }

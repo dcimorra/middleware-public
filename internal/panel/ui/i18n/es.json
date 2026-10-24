@@ -530,6 +530,8 @@
   "sites.importV1": "Importar desde la v1",
   "sites.importV1Body": "Trae un sitio de una casa v1 con su carpeta, su base de datos si vive dentro y su HOME. Esta casa crea un permiso que solo sirve para recibir ese sitio y caduca en 2 horas; la v1 no recibe ninguna otra clave.",
   "sites.importV1Domain": "Dominio del sitio en la v1",
+  "sites.importV1Base": "Dirección de esta casa (opcional)",
+  "sites.importV1BaseHint": "Vacío: el dominio del panel de este nodo. Si este nodo no tiene dominio propio, importa en uno que sí lo tenga y luego usa «Mover a otro nodo».",
   "sites.importV1Make": "Crear permiso",
   "sites.importV1Ready": "Listo para traer {domain}",
   "sites.importV1Run": "Ejecuta esto en la máquina de la v1, cambiando <V1 root> por la carpeta de la casa v1. Vale hasta las {when}.",

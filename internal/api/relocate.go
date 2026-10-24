@@ -181,9 +181,22 @@ func (s *Server) registerImportToken() {
 		if err != nil {
 			return nil, err
 		}
+		// The address the V1 machine reaches this house at: the one asked
+		// for, or this node's own panel domain. Never the request's Host:
+		// a node opened from another node's panel is reached through the
+		// mesh, and its mesh address (10.66.x.y:46101) is no way in from
+		// the V1 machine; the first import printed exactly that.
 		base := strings.TrimRight(strings.TrimSpace(body.Base), "/")
+		if base == "" && s.opts.Settings != nil {
+			if d := s.opts.Settings().PanelDomain; d != "" {
+				base = "https://" + d
+			}
+		}
 		if base == "" {
-			base = "https://" + r.Host
+			return nil, Errorf(http.StatusBadRequest, "this node has no panel domain of its own, so the V1 machine has no way to reach it: give the address it can reach (base), or import into a node that has one and move the site here afterwards")
+		}
+		if !strings.HasPrefix(base, "https://") && !strings.HasPrefix(base, "http://") {
+			base = "https://" + base
 		}
 		// This house's own release: every release so far is a pre-release,
 		// and GitHub's "latest" link skips those.

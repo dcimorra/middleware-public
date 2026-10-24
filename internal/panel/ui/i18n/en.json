@@ -530,6 +530,8 @@
   "sites.importV1": "Import from V1",
   "sites.importV1Body": "Brings a site from a V1 house with its folder, its database if it lives inside, and its HOME. This house makes a permission that only receives that site and expires in 2 hours; V1 gets no other key.",
   "sites.importV1Domain": "The site's domain in V1",
+  "sites.importV1Base": "This house's address (optional)",
+  "sites.importV1BaseHint": "Empty: this node's panel domain. If this node has none of its own, import into one that does and then use “Move to another node”.",
   "sites.importV1Make": "Make permission",
   "sites.importV1Ready": "Ready to bring {domain}",
   "sites.importV1Run": "Run this on the V1 machine, with <V1 root> replaced by the V1 house's folder. Valid until {when}.",

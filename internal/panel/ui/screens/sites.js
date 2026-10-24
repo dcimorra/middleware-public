@@ -270,11 +270,12 @@ export function sitesScreen({ query }) {
   // V1 machine only ever holds that one.
   async function importV1() {
     const domain = h("input", { type: "text", placeholder: "example.com", autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
+    const base = h("input", { type: "text", placeholder: "https://panel.example.com", autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
     const made = await open({
       title: t("sites.importV1"),
-      body: [h("p", { class: "dim" }, t("sites.importV1Body")), field(t("sites.importV1Domain"), domain)],
+      body: [h("p", { class: "dim" }, t("sites.importV1Body")), field(t("sites.importV1Domain"), domain), field(t("sites.importV1Base"), base, t("sites.importV1BaseHint"))],
       buttons: [{ label: t("common.cancel"), value: null }, { label: t("sites.importV1Make"), submit: true, primary: true }],
-      onSubmit: async () => api.post("/relocate/import-token", { domain: domain.value.trim().toLowerCase() }),
+      onSubmit: async () => api.post("/relocate/import-token", { domain: domain.value.trim().toLowerCase(), base: base.value.trim() }),
     });
     if (!made) return;
     const code = h("pre", { class: "snippet" }, made.command);
