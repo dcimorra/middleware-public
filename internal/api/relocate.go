@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/dcimorra/middleware-public/internal/auth"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -247,6 +249,29 @@ func installDeps(ctx context.Context, dir string) error {
 	return nil
 }
 
+// siteNodeMajor is the Node major the site's command runs on here: the
+// one nodeenv gives it, or the machine's own.
+func siteNodeMajor(ctx context.Context, dir string, argv []string) string {
+	node := "node"
+	if goruntime.NodeDir != nil {
+		if nd := goruntime.NodeDir(ctx, dir, argv); nd != "" {
+			node = filepath.Join(nd, "node")
+		}
+	}
+	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(cctx, node, "--version").Output()
+	if err != nil {
+		return ""
+	}
+	v := strings.TrimPrefix(strings.TrimSpace(string(out)), "v")
+	major, _, _ := strings.Cut(v, ".")
+	if _, err := strconv.Atoi(major); err != nil {
+		return ""
+	}
+	return major
+}
+
 // installsThere says a moved site's node_modules is installed on the
 // target rather than carried: a Node site on the machine. One in a
 // container keeps it, built inside the same image on both sides.
@@ -298,12 +323,29 @@ func (s *Server) registerRelocateSource(m *nodes.Mesh) {
 		if err != nil {
 			return nil, Errorf(http.StatusConflict, "%s cannot take %s: %v", x.Name, domain, err)
 		}
-		job, busy := s.newMove(domain, x.Name)
+		install := false
+		if site, err := mgr.Get(domain); err == nil && installsThere(mgr.Dir(domain), site.Manifest) {
+			install = true
+			// The Node it runs on here goes with it, written in its
+			// manifest, when nothing says it yet: a site that asks for none
+			// runs on each machine's own node, and the target's was another
+			// (24 here, 18 there: a native module built here did not load there).
+			if site.Manifest.Node == "" {
+				if v := siteNodeMajor(r.Context(), mgr.Dir(domain), site.Manifest.Run.Command); v != "" {
+					raw, _ := json.Marshal(v)
+					if _, err := mgr.Patch(domain, map[string]json.RawMessage{"node": raw}); err != nil {
+						return nil, Errorf(http.StatusInternalServerError, "writing the Node it runs on (%s) in its manifest: %v", v, err)
+					}
+				}
+			}
+		}
+		_, published := src.Published(domain)
+		job, busy := s.newMove(domain, x.Name, movePlan(install, published))
 		if busy != nil {
 			return nil, Errorf(http.StatusConflict, "%s is already moving to %s (%s)", domain, busy.Node, busy.Step)
 		}
 		mover := &relocate.Mover{Root: s.opts.Root, Source: src}
-		if site, err := mgr.Get(domain); err == nil && installsThere(mgr.Dir(domain), site.Manifest) {
+		if install {
 			mover.Install, mover.Parts = true, relocate.MoveParts
 		}
 		go func() {

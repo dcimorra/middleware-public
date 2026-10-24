@@ -114,10 +114,23 @@ func Needs(siteDir string, argv []string) bool {
 
 var nodeTools = map[string]bool{"node": true, "npm": true, "npx": true, "pnpm": true, "yarn": true, "corepack": true}
 
-// Wanted is the Node major a site asks for, "" for none: .nvmrc, then
+// Wanted is the Node major a site asks for, "" for none: its manifest's
+// node, then .nvmrc, then
 // .node-version, then package.json's engines.node. A range gives its
 // first number ("^20.1" and ">=20" are 20); "lts/*" and "lts" are "lts".
 func Wanted(siteDir string) string {
+	// The manifest's "node" first: what the house wrote (a move) or the
+	// operator did, over what the files ask.
+	if raw, err := os.ReadFile(filepath.Join(siteDir, "site.json")); err == nil {
+		var m struct {
+			Node string `json:"node"`
+		}
+		if json.Unmarshal(raw, &m) == nil {
+			if v := normalize(m.Node); v != "" {
+				return v
+			}
+		}
+	}
 	for _, f := range []string{".nvmrc", ".node-version"} {
 		if raw, err := os.ReadFile(filepath.Join(siteDir, f)); err == nil {
 			if v := normalize(string(raw)); v != "" {
@@ -388,4 +401,22 @@ func versionLess(a, b string) bool {
 func fileExists(p string) bool {
 	info, err := os.Stat(p)
 	return err == nil && !info.IsDir()
+}
+
+// Prepare installs nvm under the installation and, with it, the Node v
+// ("lts" or a major): what the installer leaves on every machine, so the
+// first site that asks for a version does not wait for nvm itself. It
+// says whether anything was installed.
+func (m *Manager) Prepare(ctx context.Context, v string) (bool, string, error) {
+	had := fileExists(filepath.Join(m.NVMDir(), "nvm.sh"))
+	if err := m.ensureNVM(ctx); err != nil {
+		return false, "", fmt.Errorf("nvm: %w", err)
+	}
+	before := newestIn(filepath.Join(m.NVMDir(), "versions", "node"))
+	dir, err := m.nvmInstall(ctx, v)
+	if err != nil {
+		return !had, "", fmt.Errorf("Node %s: %w", label(v), err)
+	}
+	changed := !had || before == "" || newestIn(filepath.Join(m.NVMDir(), "versions", "node")) != before
+	return changed, "nvm in " + m.NVMDir() + ", Node " + label(v) + " in " + dir, nil
 }

@@ -31,12 +31,14 @@ import { systemScreen } from "./screens/system.js";
 import { houseScreen } from "./screens/house.js";
 import { llmUsageScreen } from "./screens/llm-usage.js";
 import { dashboardScreen } from "./screens/dashboard.js";
+import { movesPill } from "./components/moves.js";
 import { currentNode, setCurrentNode, onNodeChange } from "./lib/node.js";
 
 const app = document.getElementById("app");
 const main = document.getElementById("main");
 const sidebar = document.getElementById("sidebar");
 const topbar = document.getElementById("topbar");
+let pills = null;
 const backdrop = document.getElementById("backdrop");
 const menuBtn = document.getElementById("menu-btn");
 const themeBtn = document.getElementById("theme-btn");
@@ -220,6 +222,14 @@ async function boot() {
   await readNodes();
   connect();
   readWaiting();
+  // A move in course comes back after a reload: its pill, and from it its
+  // dialog. Read from the node being looked at, which is the one moving.
+  if (!pills) {
+    pills = movesPill();
+    document.body.append(pills.el);
+    onNodeChange(() => pills.load());
+  }
+  pills.load();
   if (!mounted) {
     mounted = true;
     mount(main, (path) => (path === "/" || path === "/logout" ? "/sites" : path));

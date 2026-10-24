@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/middleware-public/internal/nodeenv"
 )
 
 // Check is one line of `middleware doctor`.
@@ -56,6 +57,7 @@ func (in *Installer) Doctor() ([]Check, bool) {
 		in.checkPorts(),
 		in.checkDocker(),
 		in.checkFail2ban(),
+		in.checkNode(),
 		in.checkWireGuard(),
 		in.checkDisk(),
 	)
@@ -236,4 +238,12 @@ func humanBytes(n uint64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+func (in *Installer) checkNode() Check {
+	nvm := (&nodeenv.Manager{Root: in.Params.Root}).NVMDir()
+	if _, err := os.Stat(filepath.Join(nvm, "nvm.sh")); err != nil {
+		return Check{"node (nvm)", false, "nvm is not under " + nvm + ": the first site that asks for a Node installs it then (run middleware install again)"}
+	}
+	return Check{"node (nvm)", true, "nvm in " + nvm + ", any Node a site asks for is installed with it"}
 }

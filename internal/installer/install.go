@@ -54,6 +54,9 @@ type Installer struct {
 	FindBrowser func(root string) string
 	// BrowserPlatform overrides the Chrome for Testing platform (tests).
 	BrowserPlatform string
+	// Node installs nvm under the root and the current LTS with it; nil
+	// skips the step (tests). New sets it.
+	Node func(root string) (bool, string, error)
 
 	// setupOutput is what `middleware setup` printed, shown after the step
 	// lines so the one-time code is the last thing on screen.
@@ -67,7 +70,7 @@ func New(p Params) *Installer {
 			p.User = u.Username
 		}
 	}
-	return &Installer{Exec: System{}, Params: p, Paths: SystemPaths(), Out: os.Stdout}
+	return &Installer{Exec: System{}, Params: p, Paths: SystemPaths(), Out: os.Stdout, Node: prepareNode}
 }
 
 // Step is one re-runnable unit of work. changed is false when the machine
@@ -207,6 +210,7 @@ func (in *Installer) Install() (Report, error) {
 		{"system group", in.stepGroup},
 		{"user in group", in.stepUserInGroup},
 		{"root directory", in.stepRootDir},
+		{"node (nvm)", optional("the first site that asks for a Node installs nvm itself, and waits for it", in.stepNode)},
 		{"headless browser", optional("the panel works without the pictures", in.stepBrowser)},
 		{"binary", func() (bool, string, error) {
 			c, d, err := in.stepBinary()

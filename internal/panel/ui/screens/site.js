@@ -16,7 +16,7 @@ import { tabs } from "../components/tabs.js";
 import { open, confirm, field, checkbox } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 import { jsonEditor } from "../components/editor.js";
-import { movesCard } from "../components/moves.js";
+import { movesCard, openMove } from "../components/moves.js";
 import { logsTab } from "./site-logs.js";
 import { filesTab } from "./site-files.js";
 import { chatTab } from "./site-chat.js";
@@ -229,8 +229,8 @@ function overviewTab(domain) {
     try {
       await api.post(`/sites/${enc(domain)}/move`, { node: sel.value });
     } catch (e) { toastError(e); return; }
-    toast(t("site.moveStarted"), "ok");
     moves.reload();
+    openMove(domain);
   }
 
   // The site's redirects: an old address sent to a new one with a 3xx,

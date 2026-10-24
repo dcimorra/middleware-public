@@ -42,17 +42,20 @@ type moveStep struct {
 
 // moveJob is one move in flight or finished.
 type moveJob struct {
-	ID      string           `json:"id"`
-	Domain  string           `json:"domain"`
-	Node    string           `json:"node"`
-	Step    string           `json:"step"`
-	Message string           `json:"message"`
-	Error   string           `json:"error,omitempty"`
-	Done    bool             `json:"done"`
-	Started time.Time        `json:"started"`
-	Ended   *time.Time       `json:"ended,omitempty"`
-	Steps   []moveStep       `json:"steps"`
-	Report  *relocate.Report `json:"report,omitempty"`
+	ID      string     `json:"id"`
+	Domain  string     `json:"domain"`
+	Node    string     `json:"node"`
+	Step    string     `json:"step"`
+	Message string     `json:"message"`
+	Error   string     `json:"error,omitempty"`
+	Done    bool       `json:"done"`
+	Started time.Time  `json:"started"`
+	Ended   *time.Time `json:"ended,omitempty"`
+	Steps   []moveStep `json:"steps"`
+	// Plan is the steps it is expected to go through, in order, for a
+	// progress bar: the ones this site will have (install, dns) or not.
+	Plan   []string         `json:"plan"`
+	Report *relocate.Report `json:"report,omitempty"`
 }
 
 type moves struct {
@@ -65,8 +68,21 @@ const movesKept = 50
 
 func (s *Server) movesDir() string { return filepath.Join(s.opts.Root, "data", "moves") }
 
+// movePlan is the steps a move goes through.
+func movePlan(install, published bool) []string {
+	p := []string{relocate.StepCheck, relocate.StepCopy}
+	if install {
+		p = append(p, relocate.StepInstall)
+	}
+	p = append(p, relocate.StepStop, relocate.StepFinal, relocate.StepCommit, relocate.StepStart)
+	if published {
+		p = append(p, relocate.StepDNS)
+	}
+	return append(p, relocate.StepCleanup, relocate.StepDone)
+}
+
 // newMove starts a job, or says the one in flight.
-func (s *Server) newMove(domain, node string) (*moveJob, *moveJob) {
+func (s *Server) newMove(domain, node string, plan []string) (*moveJob, *moveJob) {
 	s.moves.mu.Lock()
 	defer s.moves.mu.Unlock()
 	if s.moves.jobs == nil {
@@ -77,7 +93,7 @@ func (s *Server) newMove(domain, node string) (*moveJob, *moveJob) {
 		return nil, &c
 	}
 	now := time.Now()
-	j := &moveJob{ID: now.UTC().Format("20060102T150405.000") + "-" + domain, Domain: domain, Node: node, Started: now, Steps: []moveStep{}}
+	j := &moveJob{ID: now.UTC().Format("20060102T150405.000") + "-" + domain, Domain: domain, Node: node, Started: now, Steps: []moveStep{}, Plan: plan}
 	s.moves.jobs[domain] = j
 	s.saveMoveLocked(j)
 	return j, nil
@@ -142,6 +158,7 @@ func (s *Server) finish(j *moveJob, rep relocate.Report, err error) {
 func (j *moveJob) copy() moveJob {
 	c := *j
 	c.Steps = append([]moveStep(nil), j.Steps...)
+	c.Plan = append([]string(nil), j.Plan...)
 	return c
 }
 

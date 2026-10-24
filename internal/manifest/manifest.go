@@ -71,7 +71,13 @@ type Manifest struct {
 	// waits for them (a minute at most) and the panel names what is
 	// missing.
 	Needs []string `json:"needs,omitempty"`
-	Cache *Cache   `json:"cache,omitempty"`
+	// Node is the Node major the site runs on ("24", or "lts"), over what
+	// its own files ask (.nvmrc, engines.node): installed with nvm when the
+	// machine does not have it. A site that asks nothing runs on the
+	// machine's own node, which is a different one on each machine; a move
+	// writes here the one it ran on, so the target runs it on the same.
+	Node  string `json:"node,omitempty"`
+	Cache *Cache `json:"cache,omitempty"`
 	// Redirects send a request that matches one to another address with
 	// a 3xx, before the site is served (redirect.go).
 	Redirects []Redirect        `json:"redirects,omitempty"`
@@ -445,6 +451,9 @@ func IsProject(s string) bool { return projectRe.MatchString(s) && !reserved[s] 
 // asks ValidDomain instead.
 func ValidName(s string) bool { return ValidDomain(s) || IsProject(s) }
 
+// nodeRe is a Node major or "lts".
+var nodeRe = regexp.MustCompile(`^([1-9][0-9]?|lts)$`)
+
 // agentName is what an agent's key looks like (claude, openai, agy).
 var agentName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
@@ -453,6 +462,9 @@ var agentName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 func (m *Manifest) Validate() error {
 	if m.Version != Version {
 		return fmt.Errorf("version: want %d, got %d", Version, m.Version)
+	}
+	if m.Node != "" && !nodeRe.MatchString(m.Node) {
+		return fmt.Errorf("node: %q is not a major version (24) or lts", m.Node)
 	}
 	if m.Run != nil {
 		if len(m.Run.Command) == 0 {

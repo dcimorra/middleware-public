@@ -147,3 +147,17 @@ func TestTheRealNVMInstallsANodeOnTheFly(t *testing.T) {
 		t.Fatalf("%s %v", out, err)
 	}
 }
+
+// The manifest's node wins over what the files ask: it is what a move
+// wrote, the Node the site ran on where it came from.
+func TestTheManifestsNodeWinsOverTheSitesFiles(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, ".nvmrc"), []byte("18\n"), 0o644)
+	if got := Wanted(dir); got != "18" {
+		t.Fatalf("from .nvmrc: %q", got)
+	}
+	os.WriteFile(filepath.Join(dir, "site.json"), []byte(`{"version":2,"node":"24"}`), 0o644)
+	if got := Wanted(dir); got != "24" {
+		t.Fatalf("with the manifest's node: %q", got)
+	}
+}

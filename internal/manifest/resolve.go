@@ -31,7 +31,9 @@ type Spec struct {
 	Port int
 	// Mounts are more folders a container sees at their own path (the
 	// site door's socket folder).
-	Mounts   []string
+	Mounts []string
+	// Node is the manifest's node: a new one is a new generation.
+	Node     string
 	Revision string
 }
 
@@ -86,6 +88,7 @@ func Resolve(domain, siteDir string, m *Manifest) (*Spec, error) {
 		Cwd:     cwd,
 		Env:     env,
 		Runtime: m.Run.Runtime,
+		Node:    m.Node,
 		Docker:  m.Run.Docker,
 		Drain:   m.Run.Drain,
 		Port:    m.Run.Port,
@@ -150,6 +153,11 @@ func (s *Spec) hash() string {
 		w(k, s.Env[k])
 	}
 	w(s.Mounts...)
+	if s.Node != "" {
+		// Only when written: every site's revision before the field
+		// existed stays what it was, and nothing restarts on an update.
+		w("node", s.Node)
+	}
 	if s.Docker != nil {
 		w(s.Docker.Image, s.Docker.Build, s.Docker.Memory, s.Docker.User,
 			strconv.Itoa(s.Docker.Pids), strconv.FormatFloat(s.Docker.CPUs, 'f', -1, 64), strconv.Itoa(s.Docker.CPUWeight))

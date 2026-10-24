@@ -238,6 +238,15 @@ cannot be had, the current LTS is used, then the newest Node nvm already
 has, then the house's own, then the machine's, and a `node.chosen` event
 says which and why.
 
+`node` in the manifest (`"24"`, or `"lts"`) says it over the files. A site
+that asks for nothing runs on the machine's own `node`, which is a different
+one on each machine; moving a site to another node writes here the major it
+runs on, so the target installs that one with nvm (and its dependencies,
+which a move does not carry: `node_modules` is built for one machine's
+Node). A new `node` is a new generation. The installer puts nvm under
+`modules/nvm` with the current LTS on every machine, and `middleware doctor`
+says whether it is there.
+
 ## Paths stay inside the site
 
 `static.root`, `cwd`, `env_files`, `env_from_file`, `docker.build` and the host

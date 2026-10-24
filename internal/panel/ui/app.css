@@ -795,3 +795,10 @@ svg.dash-spark .mem { stroke: var(--warn); stroke-dasharray: 3 2; }
 .move-step .grow { min-width: 0; overflow-wrap: anywhere; }
 .move-step .badge { flex: none; }
 .move-error { white-space: pre-wrap; max-height: 16em; overflow: auto; }
+/* The move in course, wherever the panel is: bottom left, out of the
+   toasts' way, above the content. */
+.move-pills { position: fixed; left: var(--gutter); bottom: var(--gutter); z-index: 55; display: flex; flex-direction: column; gap: 6px; max-width: min(380px, calc(100vw - 2 * var(--gutter))); }
+.move-pill { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow-lg); font: inherit; font-size: 13px; color: var(--text); cursor: pointer; min-width: 0; text-align: left; }
+.move-pill > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.move-dialog .dash-bar { height: 10px; }
+.move-more > summary { cursor: pointer; margin: 4px 0 8px; }

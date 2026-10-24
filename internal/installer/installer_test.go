@@ -380,6 +380,8 @@ func TestDoctorPrintsOneMarkedLinePerCheck(t *testing.T) {
 	}
 	defer ln.Close()
 	in.Params.Listen = ln.Addr().String()
+	os.MkdirAll(filepath.Join(in.Params.Root, "modules", "nvm"), 0o755)
+	os.WriteFile(filepath.Join(in.Params.Root, "modules", "nvm", "nvm.sh"), nil, 0o644)
 	if err := os.MkdirAll(in.Params.RunDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
