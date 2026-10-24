@@ -80,18 +80,23 @@ type Step struct {
 
 // optional marks a step whose failure warns and lets the rest go on: a
 // machine without the pictures of its sites is a whole machine, one
-// without its units is not.
-func optional(run func() (bool, string, error)) func() (bool, string, error) {
+// without its units is not. cost says what is missing while it fails, in
+// the warning: every optional step once said the browser's ("the panel
+// works without the pictures"), fail2ban's too.
+func optional(cost string, run func() (bool, string, error)) func() (bool, string, error) {
 	return func() (bool, string, error) {
 		c, d, err := run()
 		if err != nil {
-			err = optionalError{err}
+			err = optionalError{err, cost}
 		}
 		return c, d, err
 	}
 }
 
-type optionalError struct{ error }
+type optionalError struct {
+	error
+	cost string
+}
 
 func (e optionalError) Unwrap() error { return e.error }
 
@@ -141,7 +146,9 @@ func (in *Installer) runSteps(steps []Step) (Report, error) {
 		switch {
 		case err != nil && errors.As(err, new(optionalError)):
 			rep.Failed = append(rep.Failed, s.Name)
-			fmt.Fprintf(in.Out, "! %-26s %s\n", s.Name, shortErr(err))
+			var oe optionalError
+			errors.As(err, &oe)
+			fmt.Fprintf(in.Out, "! %-26s %s\n", s.Name, shortErr(err, oe.cost))
 		case err != nil:
 			rep.Failed = append(rep.Failed, s.Name)
 			fmt.Fprintf(in.Out, "✗ %-26s %v\n", s.Name, err)
@@ -161,17 +168,21 @@ func (in *Installer) runSteps(steps []Step) (Report, error) {
 
 // shortErr is an optional step's failure on one line: apt's whole output
 // was the installer's last screen, and the line that matters is its "E:".
-func shortErr(err error) string {
+func shortErr(err error, cost string) string {
+	tail := " (the rest goes on; run middleware install again to retry)"
+	if cost != "" {
+		tail = " (the rest goes on: " + cost + "; run middleware install again to retry)"
+	}
 	msg := err.Error()
 	for _, line := range strings.Split(msg, "\n") {
 		if l := strings.TrimSpace(line); strings.HasPrefix(l, "E: ") {
-			return l + " (the rest goes on; the panel works without the pictures)"
+			return l + tail
 		}
 	}
 	if i := strings.IndexByte(msg, '\n'); i > 0 {
 		msg = msg[:i]
 	}
-	return msg + " (the rest goes on; the panel works without the pictures)"
+	return msg + tail
 }
 
 // Install runs every step in order and stops at the first failure, which is
@@ -188,7 +199,7 @@ func (in *Installer) Install() (Report, error) {
 	steps := []Step{
 		{"package manager", in.stepPackageManager},
 		{"git, curl, wireguard, nftables", in.stepPackages},
-		{"docker", optional(func() (bool, string, error) {
+		{"docker", optional("sites in containers will not start here", func() (bool, string, error) {
 			c, d, err := in.stepDocker()
 			dockerChanged = c
 			return c, d, err
@@ -196,7 +207,7 @@ func (in *Installer) Install() (Report, error) {
 		{"system group", in.stepGroup},
 		{"user in group", in.stepUserInGroup},
 		{"root directory", in.stepRootDir},
-		{"headless browser", optional(in.stepBrowser)},
+		{"headless browser", optional("the panel works without the pictures", in.stepBrowser)},
 		{"binary", func() (bool, string, error) {
 			c, d, err := in.stepBinary()
 			binaryChanged = c
@@ -217,7 +228,7 @@ func (in *Installer) Install() (Report, error) {
 			return true, "reloaded", err
 		}},
 		// After the binary: the jail's action runs it.
-		{"fail2ban", optional(in.stepFail2ban)},
+		{"fail2ban", optional("SSH has no bans", in.stepFail2ban)},
 		{"enable units", in.stepEnable},
 		// A group the user was just added to reaches the service only when
 		// it starts again: docker's, without that, answers "permission
@@ -343,7 +354,11 @@ var packageManagers = []struct {
 	bin     string
 	install []string
 }{
-	{"apt-get", []string{"apt-get", "install", "-y", "-q"}},
+	// apt waits for the dpkg lock instead of failing at once: right after
+	// installing docker.io, or with the daily upgrades running, the next
+	// install found it taken and gave up (fail2ban did, the first time it
+	// was installed for real).
+	{"apt-get", []string{"apt-get", "install", "-y", "-q", "-o", "DPkg::Lock::Timeout=300"}},
 	{"dnf", []string{"dnf", "install", "-y", "-q"}},
 	{"apk", []string{"apk", "add", "--no-cache"}},
 	{"pacman", []string{"pacman", "-S", "--noconfirm", "--needed"}},

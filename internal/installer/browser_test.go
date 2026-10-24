@@ -97,7 +97,7 @@ func TestSayingYesInstallsTheHeadlessShellAndTheLibrariesItLoads(t *testing.T) {
 	if got := shots.FindIn(in.Params.Root); got != bin && os.Getenv("MIDDLEWARE_CHROME") == "" {
 		t.Fatalf("the house finds %q", got)
 	}
-	want := "sudo apt-get install -y -q libasound2t64 libnss3"
+	want := "sudo apt-get install -y -q -o DPkg::Lock::Timeout=300 libasound2t64 libnss3"
 	found := false
 	for _, c := range rec.Calls {
 		if c == want {
@@ -170,7 +170,7 @@ func TestABrowserThatCannotBeInstalledDoesNotStopTheInstall(t *testing.T) {
 	in.Out = &out
 	ran := false
 	rep, err := in.runSteps([]Step{
-		{"headless browser", optional(func() (bool, string, error) {
+		{"headless browser", optional("the panel works without the pictures", func() (bool, string, error) {
 			return false, "", errors.New("sudo: exit status 100: Reading package lists...\nE: Package 'libasound2' has no installation candidate")
 		})},
 		{"binary", func() (bool, string, error) { ran = true; return true, "installed", nil }},
@@ -178,7 +178,21 @@ func TestABrowserThatCannotBeInstalledDoesNotStopTheInstall(t *testing.T) {
 	if err != nil || !ran {
 		t.Fatalf("the install stopped: %v", err)
 	}
-	if len(rep.Failed) != 1 || !strings.Contains(out.String(), "! headless browser") || !strings.Contains(out.String(), "E: Package 'libasound2'") || strings.Contains(out.String(), "Reading package lists") {
+	if len(rep.Failed) != 1 || !strings.Contains(out.String(), "! headless browser") || !strings.Contains(out.String(), "E: Package 'libasound2'") || strings.Contains(out.String(), "Reading package lists") || !strings.Contains(out.String(), "without the pictures") {
+		t.Fatalf("%q", out.String())
+	}
+}
+
+// Each optional step says what its own failure costs: fail2ban's warning
+// once spoke of the browser's pictures.
+func TestAnOptionalStepSaysWhatItsOwnFailureCosts(t *testing.T) {
+	in, _, _ := testInstaller(t)
+	var out strings.Builder
+	in.Out = &out
+	in.runSteps([]Step{{"fail2ban", optional("SSH has no bans", func() (bool, string, error) {
+		return false, "", errors.New("E: Unable to acquire the dpkg frontend lock")
+	})}})
+	if !strings.Contains(out.String(), "SSH has no bans") || strings.Contains(out.String(), "pictures") {
 		t.Fatalf("%q", out.String())
 	}
 }

@@ -144,8 +144,8 @@ func TestAFreshInstallRunsTheStepsInOrderAndWritesEveryFile(t *testing.T) {
 		t.Fatalf("install: %v\n%s", err, out)
 	}
 	want := []string{
-		"sudo apt-get install -y -q curl",
-		"sudo apt-get install -y -q docker.io",
+		"sudo apt-get install -y -q -o DPkg::Lock::Timeout=300 curl",
+		"sudo apt-get install -y -q -o DPkg::Lock::Timeout=300 docker.io",
 		"sudo systemctl enable --now docker",
 		"sudo usermod -aG docker alice",
 		"sudo groupadd --system middleware",
@@ -159,7 +159,7 @@ func TestAFreshInstallRunsTheStepsInOrderAndWritesEveryFile(t *testing.T) {
 		"sudo sysctl -q -p " + filepath.Join(in.Paths.SysctlDir, SysctlIn),
 		"sudo systemd-tmpfiles --create " + filepath.Join(in.Paths.TmpfilesDir, TmpfilesIn),
 		"sudo systemctl daemon-reload",
-		"sudo apt-get install -y -q fail2ban",
+		"sudo apt-get install -y -q -o DPkg::Lock::Timeout=300 fail2ban",
 		"write " + filepath.Join(in.Paths.Fail2banDir, Fail2banAction),
 		"write " + filepath.Join(in.Paths.Fail2banDir, Fail2banJail),
 		"sudo systemctl enable --now fail2ban",
