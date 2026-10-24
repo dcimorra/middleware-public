@@ -89,3 +89,31 @@ func TestInstallSkillWritesOnceAndLeavesAnUnchangedFileAlone(t *testing.T) {
 		t.Fatalf("a stale skill was not replaced:\n%s", got)
 	}
 }
+
+// A site written with Claude keeps its rules for the next agent: one that
+// does not read CLAUDE.md is told to, unless the project has an AGENTS.md
+// (which it reads by itself).
+func TestAnAgentThatDoesNotReadClaudeMdIsToldToReadTheProjects(t *testing.T) {
+	p := &fakeProvider{key: "agy", script: []agent.Event{{Kind: agent.KindResult, Text: "ok"}}}
+	m, root, bus := newManager(t, p)
+	site := filepath.Join(root, "sites", "b.test")
+	os.WriteFile(filepath.Join(site, "site.json"), []byte(`{"version":2,"agent":{"provider":"agy"}}`), 0o644)
+	os.WriteFile(filepath.Join(site, "CLAUDE.md"), []byte("# rules\n"), 0o644)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+	if _, err := m.Send("b.test", "hi", ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ch, "agent.done")
+	if !strings.Contains(p.last().System, "instructions are in CLAUDE.md") {
+		t.Fatalf("no hint:\n%s", p.last().System)
+	}
+	os.WriteFile(filepath.Join(site, "AGENTS.md"), []byte("# rules\n"), 0o644)
+	if _, err := m.Send("b.test", "again", ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ch, "agent.done")
+	if strings.Contains(p.last().System, "instructions are in CLAUDE.md") {
+		t.Fatal("told to read CLAUDE.md with an AGENTS.md there")
+	}
+}

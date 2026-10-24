@@ -815,8 +815,13 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 	} else {
 		system = Preamble(domain, s.Workdir, s.Jail)
 		// Only Claude Code loads the skill by itself; the others are told
-		// to read it.
+		// to read it, and the project's own CLAUDE.md when it has no
+		// AGENTS.md (the file the others read), so a site written with
+		// Claude keeps its rules whatever agent works on it next.
 		if needsSkillHint[s.Provider] {
+			if h := projectHint(s.Workdir); h != "" {
+				system = h + "\n\n" + system
+			}
 			system = SkillHint + "\n\n" + system
 		}
 	}

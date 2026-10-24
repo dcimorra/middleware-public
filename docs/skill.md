@@ -21,5 +21,5 @@ schema rejects would have every agent writing manifests the engine refuses,
 and the test is what says so before a release does.
 
 To change what agents are told, edit the skill, run `go test ./internal/chat/`,
-and ship the binary. A site's own `CLAUDE.md` adds what is specific to that
-project; the skill is what is true for every site on every installation.
+and ship the binary. A site's own `AGENTS.md` (or `CLAUDE.md`) adds what is
+specific to that project; the skill is what is true for every site on every installation.

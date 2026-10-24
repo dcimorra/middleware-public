@@ -75,3 +75,20 @@ var needsSkillHint = map[string]bool{"agy": true, "opencode": true, "openai": tr
 // SkillHint is what a provider that does not load Claude skills is told
 // at the top of its system context, so it reads the file anyway.
 const SkillHint = "Read ~/.claude/skills/middleware/SKILL.md first: it says how sites, workers and tasks are built, published and checked on this machine. It is outside the site's folder and reading it is allowed: it is the house's guide, the one file outside the folder you may always read."
+
+// projectHint tells an agent that does not read CLAUDE.md to read the
+// project's, when the project has one and no AGENTS.md: its rules (why
+// this runtime, what must not be changed) were written for Claude and
+// apply to whoever works on it.
+func projectHint(workdir string) string {
+	if workdir == "" {
+		return ""
+	}
+	if _, err := os.Stat(filepath.Join(workdir, "AGENTS.md")); err == nil {
+		return ""
+	}
+	if _, err := os.Stat(filepath.Join(workdir, "CLAUDE.md")); err != nil {
+		return ""
+	}
+	return "This project's instructions are in CLAUDE.md at the root of its folder. They were written for Claude Code and apply to you as well: read that file before changing anything."
+}

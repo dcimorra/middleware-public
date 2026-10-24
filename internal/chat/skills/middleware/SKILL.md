@@ -751,7 +751,7 @@ Every line here was paid for at least once. Run through it.
 ## 11. Conventions for a site's project
 
 - **English in the code**: identifiers, comments, README, commit messages,
-  the `CLAUDE.md`. A comment says **why** (what was tried, what breaks if
+  the `AGENTS.md`. A comment says **why** (what was tried, what breaks if
   it is changed back), not what.
 - **Visitor strings in a locale catalogue**, never inside a component or a
   template: `locales/es.json` (or whatever i18n the framework already has),
@@ -762,7 +762,9 @@ Every line here was paid for at least once. Run through it.
 - **A `README.md`** that says what the site is, how it runs here (`site.json`
   is the truth: name the command, the pointer, the health path), how to
   deploy and how to roll back.
-- **A `CLAUDE.md` in the project** with what is not obvious: why this
+- **An `AGENTS.md` in the project**, and a `CLAUDE.md` that is only the line
+  `@AGENTS.md`: Codex, Antigravity and OpenCode read the first, Claude Code
+  the second, and one text serves them all. In it, what is not obvious: why this
   runtime, why this port for the worker, why this drain, what the deploy
   pointer is, which task prunes builds, what must not be changed and what
   happened when it was.
