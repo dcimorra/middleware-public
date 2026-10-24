@@ -25,7 +25,6 @@ function stepRow(j, s) {
     h("span", { class: "badge " + (BADGE[s.state] || "") }, t("moves.state." + s.state)),
     h("div", { class: "grow" },
       h("div", null, t("site.moveStep." + s.step, { node: j.node })),
-      s.message ? h("div", { class: "small dim" }, s.message) : null,
       s.error ? h("div", { class: "small level-error move-error" }, s.error) : null),
     h("span", { class: "small muted mono", title: fmtTime(s.started) }, fmtDuration(secs(s.started, s.ended))));
 }
@@ -48,7 +47,7 @@ function jobEl(j, open) {
 
 // movesCard is the card for every move (domain empty) or one site's. It
 // hides itself while there is none.
-export function movesCard(domain) {
+export function movesCard(domain, opts = {}) {
   const list = h("div", { class: "stack-sm" });
   const el = h("div", { class: "card", hidden: true }, h("h2", null, t(domain ? "moves.siteTitle" : "moves.title")), h("p", { class: "small muted" }, t("moves.hint")), list);
   let seen = false;
@@ -56,7 +55,7 @@ export function movesCard(domain) {
     let jobs = [];
     try { jobs = await api.get("/moves" + (domain ? "?domain=" + enc(domain) : "")); } catch { jobs = []; }
     if (!domain) jobs = jobs.slice(0, 10);
-    el.hidden = !jobs.length;
+    el.hidden = !jobs.length && !opts.empty;
     // The newest open the first time; after that, what the operator opened stays.
     const opened = new Set([...list.querySelectorAll("details[open]")].map((d) => d.dataset.id));
     clear(list).append(...jobs.map((j, i) => {
@@ -64,6 +63,7 @@ export function movesCard(domain) {
       d.dataset.id = j.id;
       return d;
     }));
+    if (!jobs.length && opts.empty) list.append(h("p", { class: "small muted" }, t("moves.none")));
     seen = true;
   }
   const reload = debounce(load, 300);

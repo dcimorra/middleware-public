@@ -26,8 +26,8 @@ import { activityTab } from "./site-activity.js";
 import { cacheTab } from "./site-cache.js";
 import { doorCard } from "./site-door.js";
 
-const TABS = ["overview", "activity", "manifest", "logs", "files", "chat", "access", "security", "cache"];
-const TAB_ICON = { overview: "gauge", activity: "activity", manifest: "code", logs: "list", files: "folder", chat: "chat", access: "lock", security: "shield", cache: "box" };
+const TABS = ["overview", "activity", "manifest", "logs", "files", "chat", "access", "security", "cache", "moves"];
+const TAB_ICON = { overview: "gauge", activity: "activity", manifest: "code", logs: "list", files: "folder", chat: "chat", access: "lock", security: "shield", cache: "box", moves: "upload" };
 
 export function siteScreen({ domain, tab }) {
   const active = TABS.includes(tab) ? tab : "overview";
@@ -66,6 +66,9 @@ export function siteScreen({ domain, tab }) {
       case "security": view = securityTab(domain); break;
       case "activity": view = activityTab(domain); break;
       case "cache": view = cacheTab(domain); break;
+      // Its own tab, the last: a move's operations are read when one is
+      // under way or went wrong, not every time the site is opened.
+      case "moves": view = movesCard(domain, { empty: true }); break;
       default: view = overviewTab(domain);
     }
     body.append(view.el);
@@ -104,10 +107,6 @@ function overviewTab(domain) {
   // The other nodes of this one's network, online: where the site can be
   // moved. Empty without a network, and the button is not shown.
   let otherNodes = [];
-  // The site's moves, as their operations, kept across the redraws a
-  // moving site causes.
-  const moves = movesCard(domain);
-  subs.push(() => moves.destroy());
   (async () => {
     try {
       const info = await api.get("/nodes");
@@ -229,7 +228,6 @@ function overviewTab(domain) {
     try {
       await api.post(`/sites/${enc(domain)}/move`, { node: sel.value });
     } catch (e) { toastError(e); return; }
-    moves.reload();
     openMove(domain);
   }
 
@@ -287,7 +285,6 @@ function overviewTab(domain) {
   function render() {
     const s = store.site(domain);
     clear(el);
-    el.append(moves.el);
     if (!s) { el.append(empty(t("site.gone"), t("site.goneHint"))); return; }
     const mode = siteMode(s);
     const m = s.manifest || {};

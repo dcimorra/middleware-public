@@ -787,7 +787,8 @@ svg.dash-spark .mem { stroke: var(--warn); stroke-dasharray: 3 2; }
 .redirect-row { flex-wrap: wrap; gap: 6px; }
 .redirect-row code { min-width: 0; overflow-wrap: anywhere; }
 /* A move's operations: one per line, the state first, the time last. */
-.move-job > summary { cursor: pointer; gap: 8px; flex-wrap: wrap; list-style: none; }
+.move-job > summary { display: flex; align-items: baseline; cursor: pointer; gap: 6px 10px; flex-wrap: wrap; list-style: none; }
+.move-job + .move-job { border-top: 1px solid var(--border); padding-top: 10px; }
 .move-job > summary::-webkit-details-marker { display: none; }
 .move-job[open] > summary { margin-bottom: 8px; }
 .move-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }

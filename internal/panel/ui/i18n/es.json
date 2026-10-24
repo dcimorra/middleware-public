@@ -1478,6 +1478,7 @@
   "activity.episodeOpen": "{kind} alta desde {at}, pico {peak} por ahora",
   "activity.kind.cpu": "CPU",
   "activity.kind.memory": "Memoria",
+  "site.tab.moves": "Mudanzas",
   "site.tab.cache": "Caché",
   "cache.title": "Caché de la casa",
   "cache.hint": "Respuestas guardadas en la memoria de esta máquina y servidas sin volver a preguntar al sitio, por dentro de la puerta: nada se salta una contraseña. Las respuestas llevan X-Middleware-Cache: hit o miss.",
