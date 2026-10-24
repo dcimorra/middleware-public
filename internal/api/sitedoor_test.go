@@ -412,3 +412,30 @@ func TestAConversationOpenedUnderClaudeMovesWithTheGateway(t *testing.T) {
 		t.Fatalf("second: %d %v", code, out)
 	}
 }
+
+// The engine reads a manifest on its next pass; the gateway's screen reads
+// right after it saved. What it shows is the file.
+func TestTheGatewayScreenShowsWhatWasJustSavedNotTheEnginesOldCopy(t *testing.T) {
+	f := newFixture(t).withToken()
+	dir := filepath.Join(f.root, "sites", "s.test")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "site.json"), []byte(`{"version":2,"run":{"command":["true"]},"claude_api":{}}`), 0o644)
+	stale, _ := manifest.Load(dir)
+	reg := agent.NewRegistry()
+	reg.Register(&answeringProvider{})
+	reg.Register(&answeringProvider{key: "openai"})
+	m := chat.New(chat.Options{Root: f.root, Bus: f.bus, Registry: reg})
+	f.srv.RegisterSiteDoor(SiteDoorOptions{
+		Chat: m, Bus: f.bus, HouseDaily: func() float64 { return 1 }, Spent: m.Ledger().Day,
+		// The engine's copy, from before the save.
+		Lookup: func(string) (*manifest.Manifest, bool) { return stale, true },
+	})
+	if resp, out := f.call("POST", "/api/v1/sites/s.test/claude-api", map[string]any{"enabled": true, "provider": "openai", "permissions": []string{"read"}, "model": "gpt-5.5"}); resp.StatusCode != 200 {
+		t.Fatalf("save: %d %v", resp.StatusCode, out)
+	}
+	_, d := f.call("GET", "/api/v1/sites/s.test/claude-api", nil)
+	lim, _ := d["limits"].(map[string]any)
+	if lim["provider"] != "openai" || lim["model"] != "gpt-5.5" {
+		t.Fatalf("the screen shows %v", lim)
+	}
+}

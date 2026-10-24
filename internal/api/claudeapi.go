@@ -31,6 +31,16 @@ func (s *Server) registerDoorPanel(o SiteDoorOptions) {
 		if !ok || m == nil {
 			return nil, Errorf(http.StatusNotFound, "%s: no such site", domain)
 		}
+		// The screen shows the file, not the engine's copy: the engine
+		// reads a manifest on its next pass, and this screen reads right
+		// after it saved, so the engine's copy showed the gateway as it
+		// was before the save, and saving again seemed to be what made it
+		// stick.
+		if mgr, err := s.sitesManager(); err == nil {
+			if site, err := mgr.Get(domain); err == nil && site.Manifest != nil {
+				m = site.Manifest
+			}
+		}
 		// Every agent that can run now, with what it can be told: its
 		// models and the permissions it can hold apart. The one the door
 		// has is listed even when it cannot run, so the screen says so
