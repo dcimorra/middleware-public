@@ -108,6 +108,17 @@ func waitFor(t *testing.T, e *Engine, domain string, cond func(Snapshot) bool) S
 	return sn
 }
 
+// freePort is a loopback port nothing listens on now.
+func freePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
 func get(port int) (string, error) {
 	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/", port))
 	if err != nil {
@@ -322,16 +333,17 @@ func TestAWorkerWithoutAPortGetsOneAndIsReAdopted(t *testing.T) {
 func TestASiteWithAWrittenPortRestartsOnIt(t *testing.T) {
 	e, sites := newTestEngine(t)
 	dir := writeSite(t, sites, "h.test", "x", "")
-	m := fmt.Sprintf(`{"version":2,"run":{"command":[%q],"port":41077,"env":{"MW_TEST_SERVER":"1"},"env_from_file":{"BUILD":".current"},"health":{"timeout":"10s"}}}`, os.Args[0])
+	port := freePort(t) // not a written number: see freePort's other caller
+	m := fmt.Sprintf(`{"version":2,"run":{"command":[%q],"port":%d,"env":{"MW_TEST_SERVER":"1"},"env_from_file":{"BUILD":".current"},"health":{"timeout":"10s"}}}`, os.Args[0], port)
 	os.WriteFile(filepath.Join(dir, "site.json"), []byte(m), 0o644)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go e.Run(ctx)
-	waitFor(t, e, "h.test", func(s Snapshot) bool { return s.Alive && s.Port == 41077 })
+	waitFor(t, e, "h.test", func(s Snapshot) bool { return s.Alive && s.Port == port })
 	os.WriteFile(filepath.Join(dir, ".current"), []byte("y\n"), 0o644)
 	waitFor(t, e, "h.test", func(s Snapshot) bool {
-		body, err := get(41077)
-		return s.Alive && s.Port == 41077 && err == nil && body == "y"
+		body, err := get(port)
+		return s.Alive && s.Port == port && err == nil && body == "y"
 	})
 }
 
@@ -481,13 +493,18 @@ func TestRestartingAWorkerOnAWrittenPortGivesANewProcessThatAnswers(t *testing.T
 	dir := filepath.Join(sites, "w.test")
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "build"), []byte("w1"), 0o644)
-	m := fmt.Sprintf(`{"version":2,"static":{},"workers":{"api":{"command":[%q],"port":41088,"env":{"MW_TEST_SERVER":"1"},"env_from_file":{"BUILD":"build"}}}}`, os.Args[0])
+	// A port free now, not a number written here: 41088 sits in the
+	// kernel's ephemeral range, which the house reserves on its machines
+	// and a CI runner does not, and with the packages' tests running side
+	// by side a loopback client took it often enough to fail two releases.
+	port := freePort(t)
+	m := fmt.Sprintf(`{"version":2,"static":{},"workers":{"api":{"command":[%q],"port":%d,"env":{"MW_TEST_SERVER":"1"},"env_from_file":{"BUILD":"build"}}}}`, os.Args[0], port)
 	os.WriteFile(filepath.Join(dir, "site.json"), []byte(m), 0o644)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go e.Run(ctx)
 	waitFor(t, e, "w.test", func(s Snapshot) bool {
-		body, err := get(41088)
+		body, err := get(port)
 		return s.Workers["api"].Alive && err == nil && body == "w1"
 	})
 	before := workerPID(e, "w.test", "api")
@@ -497,7 +514,7 @@ func TestRestartingAWorkerOnAWrittenPortGivesANewProcessThatAnswers(t *testing.T
 	// The old process held the written port; the new one must get it,
 	// not fail to bind and back off for a minute.
 	waitFor(t, e, "w.test", func(s Snapshot) bool {
-		body, err := get(41088)
+		body, err := get(port)
 		return s.Workers["api"].Alive && err == nil && body == "w1" && workerPID(e, "w.test", "api") != before
 	})
 	if sn, _ := e.Lookup("w.test"); sn.Workers["api"].Error != "" {
