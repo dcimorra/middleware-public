@@ -38,7 +38,9 @@ type Target interface {
 // Preparer is a target that installs a site's dependencies in its staging,
 // for its own machine, before the site is stopped here.
 type Preparer interface {
-	Prepare(ctx context.Context, domain string) error
+	// Prepare says what it installed, which the move's step shows: an
+	// install that leaves out what the start needs looks done otherwise.
+	Prepare(ctx context.Context, domain string) (string, error)
 }
 
 // Source is this node's side of a move.
@@ -178,9 +180,14 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	// the install is not part of the time it is down.
 	if pr, ok := t.(Preparer); ok && m.Install {
 		progress(StepInstall, "installing its dependencies on "+t.Name()+", for that machine, while it serves here")
-		if err := pr.Prepare(ctx, domain); err != nil {
+		said, err := pr.Prepare(ctx, domain)
+		if err != nil {
 			_ = t.Discard(ctx, domain)
 			return rep, fmt.Errorf("installing its dependencies there: %w", err)
+		}
+		if said != "" {
+			// The same step again: its message becomes what was done.
+			progress(StepInstall, said)
 		}
 	}
 

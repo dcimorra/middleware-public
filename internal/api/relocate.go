@@ -102,10 +102,11 @@ func (s *Server) registerRelocateTarget() {
 		}
 		ictx, icancel := context.WithTimeout(r.Context(), 15*time.Minute)
 		defer icancel()
-		if err := installDeps(ictx, rc.StagingSite(domain)); err != nil {
+		said, err := installDeps(ictx, rc.StagingSite(domain))
+		if err != nil {
 			return nil, Errorf(http.StatusUnprocessableEntity, "%v", err)
 		}
-		return OK, nil
+		return map[string]any{"ok": true, "output": said}, nil
 	})
 	s.Handle("POST", Prefix+"/relocate/{domain}/commit", "Put a received site in place (body: manifest, base64: the one it had before it stopped); the engine starts it", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		var body struct {
@@ -125,7 +126,7 @@ func (s *Server) registerRelocateTarget() {
 		domain := r.PathValue("domain")
 		if body.Install {
 			ictx, icancel := context.WithTimeout(r.Context(), 15*time.Minute)
-			err := installDeps(ictx, rc.StagingSite(domain))
+			_, err := installDeps(ictx, rc.StagingSite(domain))
 			icancel()
 			if err != nil {
 				return nil, Errorf(http.StatusUnprocessableEntity, "installing its dependencies here failed, so it was not put in place: %v", err)
@@ -208,22 +209,29 @@ func (s *Server) registerImportToken() {
 
 // installDeps installs a received Node site's dependencies in its staging
 // folder, with the Node the site asks for (installed if need be). The
-// lockfile says the tool; with none, npm install.
-func installDeps(ctx context.Context, dir string) error {
+// lockfile says the tool; with none, npm install. It says what it did.
+//
+// The dev dependencies always: a site whose start builds it (npm run
+// build, then tailwindcss, vite, tsc) needs them, and npm leaves them out
+// when the machine says production (NODE_ENV, an .npmrc with omit=dev).
+// The first move that installed on the target arrived without tailwindcss
+// and failed at the start with "tailwindcss: not found", the install
+// having said nothing.
+func installDeps(ctx context.Context, dir string) (string, error) {
 	if _, err := os.Stat(filepath.Join(dir, "package.json")); err != nil {
-		return nil
+		return "no package.json: nothing to install", nil
 	}
 	if _, err := os.Stat(filepath.Join(dir, "node_modules")); err == nil {
-		return nil
+		return "node_modules already there", nil
 	}
-	argv := []string{"npm", "install", "--no-audit", "--no-fund"}
+	argv := []string{"npm", "install", "--include=dev", "--no-audit", "--no-fund"}
 	switch {
 	case fileThere(filepath.Join(dir, "package-lock.json")):
-		argv = []string{"npm", "ci", "--no-audit", "--no-fund"}
+		argv = []string{"npm", "ci", "--include=dev", "--no-audit", "--no-fund"}
 	case fileThere(filepath.Join(dir, "pnpm-lock.yaml")):
-		argv = []string{"corepack", "pnpm", "install", "--frozen-lockfile"}
+		argv = []string{"corepack", "pnpm", "install", "--frozen-lockfile", "--prod=false"}
 	case fileThere(filepath.Join(dir, "yarn.lock")):
-		argv = []string{"corepack", "yarn", "install", "--frozen-lockfile"}
+		argv = []string{"corepack", "yarn", "install", "--frozen-lockfile", "--production=false"}
 	}
 	path := os.Getenv("PATH")
 	bin := argv[0]
@@ -235,18 +243,31 @@ func installDeps(ctx context.Context, dir string) error {
 			}
 		}
 	}
+	env := []string{}
+	for _, kv := range os.Environ() {
+		if k, _, _ := strings.Cut(kv, "="); k != "NODE_ENV" && k != "PATH" {
+			env = append(env, kv)
+		}
+	}
 	cmd := exec.CommandContext(ctx, bin, argv[1:]...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "PATH="+path, "CI=1")
+	cmd.Env = append(env, "PATH="+path, "CI=1")
 	out, err := cmd.CombinedOutput()
+	text := strings.TrimSpace(string(out))
 	if err != nil {
-		tail := strings.TrimSpace(string(out))
-		if len(tail) > 600 {
-			tail = tail[len(tail)-600:]
+		if len(text) > 600 {
+			text = text[len(text)-600:]
 		}
-		return fmt.Errorf("%s: %v: %s", strings.Join(argv, " "), err, tail)
+		return "", fmt.Errorf("%s: %v: %s", strings.Join(argv, " "), err, text)
 	}
-	return nil
+	last := ""
+	for _, l := range strings.Split(text, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			last = l
+		}
+	}
+	tools, _ := os.ReadDir(filepath.Join(dir, "node_modules", ".bin"))
+	return fmt.Sprintf("%s: %s; %d programs in node_modules/.bin", strings.Join(argv, " "), last, len(tools)), nil
 }
 
 // siteNodeMajor is the Node major the site's command runs on here: the
@@ -456,8 +477,12 @@ func (t meshTarget) Commit(ctx context.Context, domain string, m []byte) error {
 	return t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/commit", map[string]string{"manifest": base64.StdEncoding.EncodeToString(m)}, nil)
 }
 
-func (t meshTarget) Prepare(ctx context.Context, domain string) error {
-	return t.older(t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/prepare", nil, nil))
+func (t meshTarget) Prepare(ctx context.Context, domain string) (string, error) {
+	var out struct {
+		Output string `json:"output"`
+	}
+	err := t.older(t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/prepare", nil, &out))
+	return out.Output, err
 }
 
 func (t meshTarget) Discard(ctx context.Context, domain string) error {

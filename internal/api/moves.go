@@ -104,6 +104,13 @@ func (s *Server) advance(j *moveJob, step, msg string) {
 	s.moves.mu.Lock()
 	defer s.moves.mu.Unlock()
 	now := time.Now()
+	if n := len(j.Steps); n > 0 && j.Steps[n-1].State == stepRunning && j.Steps[n-1].Step == step {
+		// The same step again says what it did: one step, its message
+		// updated, not a second line.
+		j.Steps[n-1].Message, j.Message = msg, msg
+		s.saveMoveLocked(j)
+		return
+	}
 	if n := len(j.Steps); n > 0 && j.Steps[n-1].State == stepRunning {
 		j.Steps[n-1].State, j.Steps[n-1].Ended = stepOK, &now
 	}

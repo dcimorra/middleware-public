@@ -236,11 +236,11 @@ type preparingTarget struct {
 	prepared   bool
 }
 
-func (t *preparingTarget) Prepare(_ context.Context, d string) error {
+func (t *preparingTarget) Prepare(_ context.Context, d string) (string, error) {
 	_, err := os.Stat(filepath.Join(t.rc.StagingSite(d), "node_modules"))
 	t.sawModules = err == nil
 	t.prepared = true
-	return nil
+	return "added 3 packages", nil
 }
 
 // A Node site's node_modules is built for this machine's Node: it is left
@@ -260,7 +260,7 @@ func TestANodeSitesModulesAreInstalledThereNotCarried(t *testing.T) {
 	if !tg.prepared || tg.sawModules {
 		t.Fatalf("prepared %v, node_modules carried %v", tg.prepared, tg.sawModules)
 	}
-	if got := strings.Join(steps, " "); !strings.HasPrefix(got, "check copy install stop") {
+	if got := strings.Join(steps, " "); !strings.HasPrefix(got, "check copy install install stop") {
 		t.Fatalf("steps: %s", got)
 	}
 	if _, err := os.Stat(filepath.Join(dst, "sites", "a.test", "public", "index.html")); err != nil {
