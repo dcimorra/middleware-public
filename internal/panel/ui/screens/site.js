@@ -164,6 +164,19 @@ function overviewTab(domain) {
     return h("div", { class: "card" }, h("h2", null, t("site.domains")), h("p", { class: "small muted" }, t("site.domainsHint")), list, form);
   }
 
+  // Out of its container, onto the machine as a normal process, or back:
+  // the same command in the same folder (the container mounts it at the
+  // same path), and the docker section kept for going back. A command that
+  // needs Node gets one on the machine, installed if it has none.
+  async function setRuntime(m, runtime) {
+    const out = runtime === "process";
+    if (!(await confirm({ title: t(out ? "site.uncontainQ" : "site.containQ", { domain }), body: t(out ? "site.uncontainBody" : "site.containBody"), confirmLabel: t(out ? "site.uncontain" : "site.contain") }))) return;
+    try {
+      await api.patch(`/sites/${enc(domain)}/manifest`, { run: { ...m.run, runtime } });
+      toast(t(out ? "site.uncontained" : "site.contained"), "ok");
+    } catch (e) { toastError(e); }
+  }
+
   // Moving the site to another node: chosen, said (a short stop), and then
   // followed step by step from the events until it runs there.
   async function moveSite() {
@@ -249,6 +262,9 @@ function overviewTab(domain) {
       actions.append(btn(t(mode === "project" ? "site.giveDomain" : "site.rename"), "edit", rename));
       actions.append(btn(t("site.exec"), "terminal", runCommand));
       if (otherNodes.length) actions.append(btn(t("site.move"), "upload", moveSite));
+      // In a container, or out of one with its container kept to go back to.
+      if (m.run && m.run.runtime === "docker") actions.append(btn(t("site.uncontain"), "box", () => setRuntime(m, "process")));
+      else if (m.run && m.run.docker) actions.append(btn(t("site.contain"), "box", () => setRuntime(m, "docker")));
     }
     actions.append(btn(t("site.delete"), "trash", del, "danger"));
 

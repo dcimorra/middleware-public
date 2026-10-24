@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	"context"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,6 +45,35 @@ func buildEnv(spec map[string]string, port int, domain, siteDir, home string) []
 		out = append(out, k+"="+env[k])
 	}
 	return append(out, "PORT="+strconv.Itoa(port))
+}
+
+// NodeDir, when set, is the folder whose node a site's command runs with
+// (nodeenv: what the site asks for, installed on the fly when the machine
+// has none); empty is the machine's own. Set by the wiring; nil in tests.
+var NodeDir func(ctx context.Context, siteDir string, argv []string) string
+
+// withNode puts the site's Node first in its PATH when its command needs
+// one, and says where bin is when it is one of Node's programs (exec
+// resolves a bare name with the supervisor's PATH, not the child's).
+func withNode(ctx context.Context, siteDir string, argv []string, env map[string]string) string {
+	if NodeDir == nil || len(argv) == 0 {
+		return ""
+	}
+	dir := NodeDir(ctx, siteDir, argv)
+	if dir == "" {
+		return ""
+	}
+	base := env["PATH"]
+	if base == "" {
+		base = os.Getenv("PATH")
+	}
+	env["PATH"] = dir + string(os.PathListSeparator) + base
+	if !strings.ContainsRune(argv[0], '/') {
+		if info, err := os.Stat(filepath.Join(dir, argv[0])); err == nil && !info.IsDir() {
+			return filepath.Join(dir, argv[0])
+		}
+	}
+	return ""
 }
 
 // hasDuplicateKeys is used by tests and by the process runtime's sanity

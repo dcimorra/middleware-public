@@ -144,6 +144,9 @@ func TestAFreshInstallRunsTheStepsInOrderAndWritesEveryFile(t *testing.T) {
 	}
 	want := []string{
 		"sudo apt-get install -y -q curl",
+		"sudo apt-get install -y -q docker.io",
+		"sudo systemctl enable --now docker",
+		"sudo usermod -aG docker alice",
 		"sudo groupadd --system middleware",
 		"sudo usermod -aG middleware alice",
 		"write " + in.Params.Binary,
@@ -251,7 +254,9 @@ func TestAFailedStepPrintsACrossAndStops(t *testing.T) {
 		t.Fatalf("no cross for the failed step:\n%s", out)
 	}
 	for _, c := range rec.Calls {
-		if strings.HasPrefix(c, "sudo systemctl") {
+		// Docker's daemon comes before the binary; the house's units must
+		// not be touched after the binary failed.
+		if strings.HasPrefix(c, "sudo systemctl") && strings.Contains(c, "middleware") {
 			t.Fatalf("systemctl ran after a failed step: %s", c)
 		}
 	}

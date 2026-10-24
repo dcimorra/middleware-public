@@ -204,6 +204,26 @@ outside). Containers carry the label `middleware.house`; leftovers no site
 claims are removed when the engine starts. `middleware exec <domain> -- …`
 runs a one-off command inside the site's image with the same mounts.
 
+Taking a site out of its container is `run.runtime: "process"` (the site's
+page has a button for it, and one to go back): the same command in the same
+folder, on the machine, without the container's walls. The `docker` section
+is kept, so going back is the same switch the other way.
+
+## Node
+
+A command that wants Node (`node`, `npm`, `npx`, `pnpm`, `yarn`,
+`corepack`, a shell line that runs one, or any command of a site with a
+`package.json`) gets one, in the process runtime and in every one-off
+command and build step. The version the site asks for is read from
+`.nvmrc`, `.node-version` or `package.json`'s `engines.node`; the machine's
+`node` is used when it is that one, or when nothing is asked. Otherwise nvm
+is installed under `modules/nvm` (the latest release, the first time) and
+the version installed with it, and its folder put first in the site's
+`PATH`. The version is never what stops a site: when the one asked for
+cannot be had, the current LTS is used, then the newest Node nvm already
+has, then the house's own, then the machine's, and a `node.chosen` event
+says which and why.
+
 ## Paths stay inside the site
 
 `static.root`, `cwd`, `env_files`, `env_from_file`, `docker.build` and the host

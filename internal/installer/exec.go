@@ -157,8 +157,20 @@ func (r *Recorder) simulate(sudo bool, name string, args []string) (out string, 
 		for _, a := range args {
 			if !strings.HasPrefix(a, "-") && a != "install" && a != "add" {
 				r.Path[a] = true
+				// The docker engine's packages give the docker command.
+				if a == "docker.io" || a == "moby-engine" {
+					r.Path["docker"] = true
+				}
 			}
 		}
+		return "", nil, true
+	case name == "docker" && len(args) > 0 && args[0] == "version":
+		if r.active["docker"] {
+			return "27.0.0", nil, true
+		}
+		return "", errExit, true
+	case name == "systemctl" && sudo && len(args) == 3 && args[0] == "enable" && args[1] == "--now":
+		r.enabled[args[2]], r.active[args[2]] = true, true
 		return "", nil, true
 	case name == "groupadd" && sudo:
 		r.groups[args[len(args)-1]] = true

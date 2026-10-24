@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/dcimorra/middleware-public/internal/nodeenv"
+	"github.com/dcimorra/middleware-public/internal/runtime"
 	"net"
 	"net/http"
 	"net/netip"
@@ -173,6 +175,19 @@ func buildWire(a *app.App) app.Hook {
 	}
 	srv := apiHook.Server
 	w := &wireHook{}
+	// A site whose command wants Node gets one: the version it asks for,
+	// installed with nvm under modules/nvm when the machine has none or
+	// another, and something that runs when that cannot be had. Set here,
+	// before the engine's first pass starts anything.
+	nodes := &nodeenv.Manager{Root: a.Root, Note: func(siteDir, msg string) {
+		a.Bus.Emit(events.Event{Type: "node.chosen", Subject: filepath.Base(siteDir), Actor: "engine", Message: msg})
+	}}
+	runtime.NodeDir = func(ctx context.Context, siteDir string, argv []string) string {
+		if !nodeenv.Needs(siteDir, argv) {
+			return ""
+		}
+		return nodes.For(ctx, siteDir)
+	}
 	set, err := modulesFor(a)
 	if err != nil {
 		// modulesHook.Run fails the start with the same error; the

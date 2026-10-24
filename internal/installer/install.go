@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/dcimorra/middleware-public/internal/fsx"
@@ -180,10 +181,15 @@ func (in *Installer) Install() (Report, error) {
 	if os.Geteuid() == 0 && in.Params.User == "root" {
 		return Report{}, errors.New("refusing to install for root: run as the user that will operate the panel (sudo is used where needed)")
 	}
-	var unitsChanged, binaryChanged bool
+	var unitsChanged, binaryChanged, dockerChanged bool
 	steps := []Step{
 		{"package manager", in.stepPackageManager},
 		{"git, curl, wireguard, nftables", in.stepPackages},
+		{"docker", optional(func() (bool, string, error) {
+			c, d, err := in.stepDocker()
+			dockerChanged = c
+			return c, d, err
+		})},
 		{"system group", in.stepGroup},
 		{"user in group", in.stepUserInGroup},
 		{"root directory", in.stepRootDir},
@@ -208,7 +214,10 @@ func (in *Installer) Install() (Report, error) {
 			return true, "reloaded", err
 		}},
 		{"enable units", in.stepEnable},
-		{"start units", func() (bool, string, error) { return in.stepStart(unitsChanged || binaryChanged) }},
+		// A group the user was just added to reaches the service only when
+		// it starts again: docker's, without that, answers "permission
+		// denied" to a supervisor that was told it may use it.
+		{"start units", func() (bool, string, error) { return in.stepStart(unitsChanged || binaryChanged || dockerChanged) }},
 		{"operator", in.stepSetup},
 	}
 	rep, err := in.runSteps(steps)
@@ -369,6 +378,57 @@ func (in *Installer) stepPackages() (bool, string, error) {
 		return false, "", err
 	}
 	return true, fmt.Sprintf("installed %s with %s", strings.Join(missing, ", "), name), nil
+}
+
+// dockerPackages is the docker engine's package in each distribution's
+// own repositories: what the distribution supports, not a vendor script
+// piped to a shell.
+var dockerPackages = map[string]string{"apt-get": "docker.io", "dnf": "moby-engine", "apk": "docker", "pacman": "docker", "zypper": "docker"}
+
+// stepDocker makes the docker runtime work on every machine: installed
+// when missing, its daemon enabled and started, and the operator's user
+// in the docker group so the supervisor can use it. A site in a container
+// that arrives on a machine without docker (a move, a restore) is a site
+// that does not start, and nothing in the panel can fix that. The docker
+// group is root on the host through the daemon; docs/security.md says so.
+func (in *Installer) stepDocker() (bool, string, error) {
+	changed := false
+	var did []string
+	if _, err := in.Exec.LookPath("docker"); err != nil {
+		cmd, name := in.packageManager()
+		pkg := dockerPackages[name]
+		if cmd == nil || pkg == "" {
+			return false, "", errors.New("docker is not installed and there is no package manager here to install it with")
+		}
+		args := append(append([]string{}, cmd[1:]...), pkg)
+		if _, err := in.Exec.Sudo(cmd[0], args...); err != nil {
+			return false, "", err
+		}
+		changed = true
+		did = append(did, "installed "+pkg+" with "+name)
+	}
+	if _, err := in.Exec.Run("docker", "version", "--format", "{{.Server.Version}}"); err != nil || changed {
+		if _, err := in.Exec.Sudo("systemctl", "enable", "--now", "docker"); err != nil {
+			return changed, "", fmt.Errorf("the docker daemon could not be started: %w", err)
+		}
+		did = append(did, "daemon enabled and started")
+		changed = true
+	}
+	out, err := in.Exec.Run("id", "-nG", in.Params.User)
+	if err != nil {
+		return changed, "", fmt.Errorf("user %s: %w", in.Params.User, err)
+	}
+	if !slices.Contains(strings.Fields(out), "docker") {
+		if _, err := in.Exec.Sudo("usermod", "-aG", "docker", in.Params.User); err != nil {
+			return changed, "", err
+		}
+		did = append(did, in.Params.User+" added to docker")
+		changed = true
+	}
+	if !changed {
+		return false, "present", nil
+	}
+	return true, strings.Join(did, "; "), nil
 }
 
 func (in *Installer) stepGroup() (bool, string, error) {

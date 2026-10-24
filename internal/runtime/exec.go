@@ -86,7 +86,11 @@ func Exec(ctx context.Context, spec *manifest.Spec, home string, o ExecOptions) 
 			return cmd.Process.Kill()
 		}
 	} else {
-		cmd = exec.CommandContext(ctx, o.Args[0], o.Args[1:]...)
+		bin := o.Args[0]
+		if nb := withNode(ctx, spec.SiteDir, o.Args, env); nb != "" {
+			bin = nb
+		}
+		cmd = exec.CommandContext(ctx, bin, o.Args[1:]...)
 		cmd.Dir = spec.Cwd
 		for _, kv := range buildEnv(env, 0, spec.Domain, spec.SiteDir, home) {
 			if !strings.HasPrefix(kv, "PORT=") {

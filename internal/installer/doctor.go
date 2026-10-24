@@ -180,7 +180,7 @@ func (in *Installer) checkPorts() Check {
 
 func (in *Installer) checkDocker() Check {
 	if _, err := in.Exec.LookPath("docker"); err != nil {
-		return Check{"docker", true, "not installed (the docker runtime is optional)"}
+		return Check{"docker", false, "not installed: a site in a container will not start here (run middleware install again, or take the site out of its container)"}
 	}
 	out, err := in.Exec.Run("docker", "version", "--format", "{{.Server.Version}}")
 	if err != nil {

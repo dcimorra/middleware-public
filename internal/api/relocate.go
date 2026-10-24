@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -67,11 +68,14 @@ func (s *Server) registerRelocateTarget() {
 		if _, err := mgr.Get(domain); err == nil {
 			return nil, Errorf(http.StatusConflict, "%s is already a site on this node", domain)
 		}
-		var body struct {
-			Names []string `json:"names"`
-		}
+		var body relocate.Needs
 		if err := ReadJSON(r, &body); err != nil {
 			return nil, err
+		}
+		if body.Docker {
+			if err := dockerAnswers(r.Context()); err != nil {
+				return nil, Errorf(http.StatusConflict, "this node has no working docker (%v) and the site runs in a container: install docker here (run middleware install again), or take the site out of its container before moving it", err)
+			}
 		}
 		if len(body.Names) == 0 {
 			return OK, nil
@@ -158,12 +162,8 @@ func (s *Server) registerRelocateSource(m *nodes.Mesh) {
 		// Asked now, not only when the move starts: a target that cannot
 		// take it is said in the answer, not in an event a minute later.
 		src := siteSource{s: s, mgr: mgr}
-		var names []string
-		if _, ok := src.Published(domain); ok {
-			names = src.Names(domain)
-		}
 		cctx, ccancel := context.WithTimeout(r.Context(), 30*time.Second)
-		err = (meshTarget{m: m, x: x}).Check(cctx, domain, names)
+		err = (meshTarget{m: m, x: x}).Check(cctx, domain, relocate.NeedsOf(s.opts.Root, domain, src))
 		ccancel()
 		if err != nil {
 			return nil, Errorf(http.StatusConflict, "%s cannot take %s: %v", x.Name, domain, err)
@@ -300,8 +300,8 @@ func (t meshTarget) Remove(ctx context.Context, domain string) error {
 	return t.m.Call(ctx, t.x, "DELETE", "/sites/"+domain, nil, nil)
 }
 
-func (t meshTarget) Check(ctx context.Context, domain string, names []string) error {
-	return t.older(t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/check", map[string]any{"names": names}, nil))
+func (t meshTarget) Check(ctx context.Context, domain string, need relocate.Needs) error {
+	return t.older(t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/check", need, nil))
 }
 
 func (t meshTarget) Ready(ctx context.Context, domain string) (bool, string, error) {
@@ -339,4 +339,18 @@ func SiteReady(s sites.Site) (bool, string) {
 		return len(s.Workers) > 0, "no worker is up yet"
 	}
 	return false, "not up yet"
+}
+
+// dockerAnswers says this machine has a docker whose daemon answers.
+func dockerAnswers(ctx context.Context) error {
+	bin, err := exec.LookPath("docker")
+	if err != nil {
+		return errors.New("docker is not installed")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, bin, "version", "--format", "{{.Server.Version}}").CombinedOutput(); err != nil {
+		return fmt.Errorf("the daemon does not answer: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
 }

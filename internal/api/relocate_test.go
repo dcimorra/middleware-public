@@ -72,8 +72,8 @@ func (t httpTarget) Ready(_ context.Context, d string) (bool, string, error) {
 	return ok, why, nil
 }
 func (t httpTarget) Publish(context.Context, string, string) error { return nil }
-func (t httpTarget) Check(_ context.Context, d string, names []string) error {
-	body, _ := json.Marshal(map[string]any{"names": names})
+func (t httpTarget) Check(_ context.Context, d string, need relocate.Needs) error {
+	body, _ := json.Marshal(need)
 	return t.do("POST", "/relocate/"+d+"/check", "application/json", bytes.NewReader(body), nil)
 }
 

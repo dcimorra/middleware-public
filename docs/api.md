@@ -559,13 +559,14 @@ What does not go: its logs (this machine's), the tasks under `tasks/` that
 name it, and what a build left that only runs on this machine's processor
 (a site moved between amd64 and arm64 needs its build run again there).
 A target that cannot publish every name the site has published here (no
-DNS provider for their zone there) is refused before anything moves.
+DNS provider for their zone there), or a site in a container and a target
+without a docker that answers, is refused before anything moves.
 
 | method | path | body / result |
 | --- | --- | --- |
 | POST | `/sites/{domain}/move` | `{node}` → the move `{node, step, message, started, done}`; it goes on in the background |
 | GET | `/sites/{domain}/move` | → the move as it is now, or `{…, done: true, error?, report: {archive, down, first_bytes, last_bytes, dns}}` |
-| POST | `/relocate/{domain}/check` | the receiving node, before anything moves: `{names}` (the ones published where the site is) → `{ok}`, or 409 when the name is a site here or this node cannot publish every one of those names |
+| POST | `/relocate/{domain}/check` | the receiving node, before anything moves: `{names, docker}` (the names published where the site is; whether it runs in a container) → `{ok}`, or 409 when the name is a site here, this node cannot publish every one of those names, or the site runs in a container and this node has no docker that answers |
 | PUT | `/relocate/{domain}` | the receiving node: a site's bundle (`.tar.gz`) as the raw body → `{files, dirs, links, bytes}`; 409 when the name is a site here |
 | PUT | `/relocate/{domain}/delta` | the last copy: changed files and the index, laid over what was received |
 | POST | `/relocate/{domain}/commit` | `{manifest}` (base64, the one the site had before it stopped) → `{ok}`; the site is put in place and the engine starts it |

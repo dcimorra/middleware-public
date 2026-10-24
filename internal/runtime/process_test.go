@@ -92,3 +92,25 @@ func TestAReusedPidIsNotAdopted(t *testing.T) {
 		t.Fatalf("a pid started an hour after the recorded start was adopted: %v", err)
 	}
 }
+
+// A site whose command is `node` starts with the Node it was given, found
+// by the child's PATH and not the supervisor's.
+func TestASiteThatSaysNodeRunsWithTheNodeItWasGiven(t *testing.T) {
+	dir := t.TempDir()
+	nodeDir := filepath.Join(dir, "nvm", "bin")
+	os.MkdirAll(nodeDir, 0o755)
+	os.WriteFile(filepath.Join(nodeDir, "node-made-up"), []byte("#!/bin/sh\necho \"this node, PATH starts $PATH\" | cut -c1-200\nsleep 300\n"), 0o755)
+	NodeDir = func(_ context.Context, siteDir string, argv []string) string { return nodeDir }
+	defer func() { NodeDir = nil }()
+	spec := &manifest.Spec{Domain: "a.test", SiteDir: dir, Cwd: dir, Command: []string{"node-made-up", "server.js"}, Env: map[string]string{}, Revision: "r1"}
+	inst, err := Process{}.Start(context.Background(), spec, 45998, filepath.Join(dir, "out.log"), filepath.Join(dir, "home"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Stop(context.Background(), time.Second)
+	time.Sleep(300 * time.Millisecond)
+	data, _ := os.ReadFile(filepath.Join(dir, "out.log"))
+	if !strings.Contains(string(data), "this node, PATH starts "+nodeDir) {
+		t.Fatalf("log: %q", data)
+	}
+}

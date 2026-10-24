@@ -121,7 +121,8 @@ restarts the service (the sites keep running, see [upgrade.md](upgrade.md)).
 | step | as | what |
 | --- | --- | --- |
 | package manager | you | finds apt, dnf, apk, pacman or zypper |
-| git and curl | sudo | installs whichever is missing |
+| git and curl | sudo | installs whichever is missing (and wireguard-tools and nftables) |
+| docker | sudo | installs the distribution's docker engine when missing (`docker.io`, `moby-engine`, `docker`), enables and starts its daemon, and adds you to the `docker` group so the supervisor can run sites in containers; a failure here warns and the install goes on. The `docker` group is root on the host through the daemon ([security.md](security.md)) |
 | system group | sudo | `groupadd --system middleware` |
 | user in group | sudo | `usermod -aG middleware <you>` — takes effect at your next login |
 | root directory | you (sudo if the parent is root's) | `/srv/middleware` with `sites/ tasks/ data/ modules/`, owned by you |

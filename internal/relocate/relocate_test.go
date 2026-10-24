@@ -20,6 +20,7 @@ type localTarget struct {
 	publish  string
 	failSend bool
 	noDNS    bool
+	noDocker bool
 }
 
 func (t *localTarget) Name() string { return "node-b" }
@@ -46,9 +47,12 @@ func (t *localTarget) Ready(_ context.Context, d string) (bool, string, error) {
 	return err == nil && t.ready, "not up", nil
 }
 func (t *localTarget) Publish(_ context.Context, d, door string) error { t.publish = door; return nil }
-func (t *localTarget) Check(_ context.Context, d string, names []string) error {
-	if t.noDNS && len(names) > 0 {
-		return errors.New("node-b cannot publish " + strings.Join(names, ", "))
+func (t *localTarget) Check(_ context.Context, d string, need Needs) error {
+	if t.noDNS && len(need.Names) > 0 {
+		return errors.New("node-b cannot publish " + strings.Join(need.Names, ", "))
+	}
+	if t.noDocker && need.Docker {
+		return errors.New("node-b has no docker")
 	}
 	return nil
 }
@@ -203,5 +207,19 @@ func TestATargetThatCannotPublishTheNamesIsRefusedBeforeAnythingMoves(t *testing
 	}
 	if _, err := os.Stat(filepath.Join(dst, "data/relocate/a.test")); err == nil {
 		t.Fatal("something was sent")
+	}
+}
+
+func TestAContainerSiteDoesNotMoveToANodeWithoutDocker(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	seed(t, src)
+	os.WriteFile(filepath.Join(src, "sites/a.test/site.json"), []byte(`{"version":2,"run":{"command":["node","s.js"],"runtime":"docker","docker":{"image":"node:22"}}}`), 0o644)
+	s := &localSource{root: src}
+	tg := &localTarget{rc: Receiver{Root: dst}, ready: true, noDocker: true}
+	if _, err := (&Mover{Root: src, Source: s}).Move(context.Background(), "a.test", tg, nil); err == nil || !strings.Contains(err.Error(), "no docker") {
+		t.Fatalf("err: %v", err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(src, "sites/a.test/site.json")); strings.Contains(string(b), "disabled") {
+		t.Fatal("the source was stopped")
 	}
 }

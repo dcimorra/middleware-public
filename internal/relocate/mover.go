@@ -28,7 +28,7 @@ type Target interface {
 	Remove(ctx context.Context, domain string) error
 	// Check says, before anything moves, that the target can take the
 	// site: the name is free there and it can publish names (all of them).
-	Check(ctx context.Context, domain string, names []string) error
+	Check(ctx context.Context, domain string, need Needs) error
 	// Ready says the site answers there, or why not.
 	Ready(ctx context.Context, domain string) (bool, string, error)
 	// Publish puts its names on door there, over what points here.
@@ -51,6 +51,17 @@ type Source interface {
 	// Archive keeps the stopped site in this node's archive and removes
 	// its folder.
 	Archive(ctx context.Context, domain string, manifestData []byte) (string, error)
+}
+
+// Needs are what a site asks of the node it moves to.
+type Needs struct {
+	// Names are the ones published where it is: the target must be able
+	// to publish them all.
+	Names []string `json:"names,omitempty"`
+	// Docker: it runs in a container, and the target must have a docker
+	// that answers. A container site moved to a machine without docker
+	// is a site that does not start there.
+	Docker bool `json:"docker,omitempty"`
 }
 
 // Steps of a move, in order.
@@ -105,11 +116,7 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	// and, when its names are published here, to publish them there. A
 	// target without a DNS provider would leave the names pointing at a
 	// node that no longer serves the site.
-	var names []string
-	if _, ok := m.Source.Published(domain); ok {
-		names = m.Source.Names(domain)
-	}
-	if err := t.Check(ctx, domain, names); err != nil {
+	if err := t.Check(ctx, domain, NeedsOf(m.Root, domain, m.Source)); err != nil {
 		return rep, err
 	}
 
@@ -252,4 +259,17 @@ func (m *Mover) waitReady(ctx context.Context, domain string, t Target) error {
 		case <-time.After(poll):
 		}
 	}
+}
+
+// NeedsOf is what domain asks of a target: its published names, and docker
+// when it runs in a container.
+func NeedsOf(root, domain string, src Source) Needs {
+	var n Needs
+	if _, ok := src.Published(domain); ok {
+		n.Names = src.Names(domain)
+	}
+	if mf, err := manifest.Load(filepath.Join(root, "sites", domain)); err == nil && mf.Run != nil && mf.Run.Runtime == "docker" {
+		n.Docker = true
+	}
+	return n
 }

@@ -57,6 +57,11 @@ func (Process) Start(ctx context.Context, spec *manifest.Spec, port int, logFile
 	if strings.HasPrefix(bin, "./") || strings.HasPrefix(bin, "../") {
 		bin = filepath.Join(spec.Cwd, bin)
 	}
+	// A command that wants Node gets one, the site's version when it can:
+	// never a start that fails because the machine has no node.
+	if nb := withNode(ctx, spec.SiteDir, argv, env); nb != "" {
+		bin = nb
+	}
 	cmd := exec.Command(bin, argv[1:]...)
 	cmd.Dir = spec.Cwd
 	cmd.Env = buildEnv(env, port, spec.Domain, spec.SiteDir, home)
