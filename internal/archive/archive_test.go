@@ -112,3 +112,36 @@ func TestADownloadLeavesOutWhatABuildGivesBack(t *testing.T) {
 		t.Fatalf("all: %d files", len(zr.File))
 	}
 }
+
+func TestABundleOfPartsComesBackUnderItsNames(t *testing.T) {
+	src := t.TempDir()
+	os.MkdirAll(filepath.Join(src, "site", "public"), 0o755)
+	os.WriteFile(filepath.Join(src, "site", "public", "index.html"), []byte("hi"), 0o644)
+	os.Symlink("public/index.html", filepath.Join(src, "site", "link"))
+	os.WriteFile(filepath.Join(src, "chat.json"), []byte(`{"turns":[]}`), 0o600)
+	var buf bytes.Buffer
+	rep, err := PackParts(context.Background(), &buf, []Part{
+		{Name: "site", Path: filepath.Join(src, "site")},
+		{Name: "data/chat/x.test.json", Path: filepath.Join(src, "chat.json")},
+		{Name: "data/homes/x.test", Path: filepath.Join(src, "nothing-here")},
+	})
+	if err != nil || rep.Files != 2 || rep.Links != 1 {
+		t.Fatalf("%+v %v", rep, err)
+	}
+	out := filepath.Join(t.TempDir(), "in")
+	if _, err := UnpackFrom(context.Background(), &buf, out); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(out, "site", "public", "index.html")); string(b) != "hi" {
+		t.Fatalf("site: %q", b)
+	}
+	if l, _ := os.Readlink(filepath.Join(out, "site", "link")); l != "public/index.html" {
+		t.Fatalf("link: %q", l)
+	}
+	if b, _ := os.ReadFile(filepath.Join(out, "data", "chat", "x.test.json")); string(b) != `{"turns":[]}` {
+		t.Fatalf("chat: %q", b)
+	}
+	if _, err := os.Stat(filepath.Join(out, "data", "homes")); err == nil {
+		t.Fatal("a part that was not there was made up")
+	}
+}

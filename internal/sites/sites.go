@@ -436,6 +436,45 @@ func (m *Manager) ArchiveDir() string { return filepath.Join(m.Root, "data", "ar
 // that port until the engine noticed the folder was gone, and a site
 // created again with the same name would then fail to bind.
 func (m *Manager) Delete(ctx context.Context, domain string, keep bool) (archived string, err error) {
+	return m.deleteWith(ctx, domain, keep, nil)
+}
+
+// StopForMove stops a site the way a delete does (disabled written, the
+// engine waited for) and returns the manifest it had, for a move to take
+// to the other node and to put back here if the move fails.
+func (m *Manager) StopForMove(ctx context.Context, domain string) ([]byte, error) {
+	dir, err := m.managedDir(domain)
+	if err != nil {
+		return nil, err
+	}
+	original, err := os.ReadFile(filepath.Join(dir, manifest.FileName))
+	if err != nil {
+		return nil, err
+	}
+	return original, m.stopAndWait(ctx, domain, dir, original)
+}
+
+// Resume writes back the manifest StopForMove returned, which starts the
+// site again as it was.
+func (m *Manager) Resume(domain string, original []byte) error {
+	dir, err := m.managedDir(domain)
+	if err != nil {
+		return err
+	}
+	if err := fsx.WriteAtomic(filepath.Join(dir, manifest.FileName), original, 0o644); err != nil {
+		return err
+	}
+	m.emit("site.resumed", domain, "", "started again with the manifest it had", nil)
+	return nil
+}
+
+// ArchiveMoved archives a site that was stopped for a move with the
+// manifest it had before the stop, and removes its folder.
+func (m *Manager) ArchiveMoved(ctx context.Context, domain string, original []byte) (string, error) {
+	return m.deleteWith(ctx, domain, true, original)
+}
+
+func (m *Manager) deleteWith(ctx context.Context, domain string, keep bool, before []byte) (archived string, err error) {
 	if !manifest.ValidName(domain) {
 		return "", ErrNotFound
 	}
@@ -446,6 +485,9 @@ func (m *Manager) Delete(ctx context.Context, domain string, keep bool) (archive
 	original, _ := os.ReadFile(filepath.Join(dir, manifest.FileName))
 	if err := m.stopAndWait(ctx, domain, dir, original); err != nil {
 		return "", err
+	}
+	if before != nil {
+		original = before
 	}
 	if !keep {
 		if err := os.RemoveAll(dir); err != nil {

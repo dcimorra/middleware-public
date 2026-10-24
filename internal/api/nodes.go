@@ -31,6 +31,7 @@ func (s *Server) RegisterNodes(m *nodes.Mesh, canClose func() error) {
 	s.Handle("DELETE", Prefix+"/nodes/{id}", "Remove a node from the network, for every node", s.nodesExpel)
 	s.Handle("GET", Prefix+"/nodes/overview", "Every node's summary, this one first, asked in parallel; an unreachable node says why", s.nodesOverview)
 	s.Handle("GET", Prefix+"/node/summary", "What the dashboard shows of this node: machine, sites, conversations, recent trouble", s.nodeSummary)
+	s.registerRelocateSource(m)
 	for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
 		s.Handle(method, Prefix+"/nodes/{id}/api/{path...}", "The API of another node, through the mesh: what the panel uses to work on another machine", s.nodesProxy)
 	}

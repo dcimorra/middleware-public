@@ -256,6 +256,38 @@ func (m *Mesh) call(ctx context.Context, ip netip.Addr, secret, method, path str
 	return json.Unmarshal(raw, out)
 }
 
+// Stream sends body as it is (a site's bundle) to a member's API and reads
+// the JSON answer into out. The body is never held whole: a site of
+// gigabytes goes through the mesh as it is packed.
+func (m *Mesh) Stream(ctx context.Context, x Member, method, path, contentType string, body io.Reader, out any) error {
+	req, err := http.NewRequestWithContext(ctx, method, m.base(x.IP)+APIPrefix+path, body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", contentType)
+	if secret := m.secret(); secret != "" {
+		req.Header.Set("Authorization", "Bearer "+secret)
+	}
+	res, err := (&http.Client{Transport: m.transport()}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(res.Body, 8<<20))
+	if res.StatusCode/100 != 2 {
+		var e struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(raw, &e)
+		return &RemoteError{Status: res.StatusCode, Message: e.Error}
+	}
+	if out == nil {
+		return nil
+	}
+	return json.Unmarshal(raw, out)
+}
+
 // RemoteError is a node's own refusal, with its status.
 type RemoteError struct {
 	Status  int

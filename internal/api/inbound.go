@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"github.com/dcimorra/middleware-public/internal/auth"
 	"net"
 	"net/http"
 	"strings"
@@ -225,6 +226,10 @@ func (s *Server) registerPublish(pub *publish.Publisher, h *inbound.Hook) {
 		}
 		var body struct {
 			Door inbound.Door `json:"door"`
+			// Over is a move's: the site arrived from another node, and its
+			// names point there. Only a node may ask it; the operator takes
+			// a name in conflict with /publish/takeover, one by one.
+			Over bool `json:"over"`
 		}
 		if r.ContentLength != 0 {
 			if err := ReadJSON(r, &body); err != nil {
@@ -233,7 +238,14 @@ func (s *Server) registerPublish(pub *publish.Publisher, h *inbound.Hook) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		lines, err := pub.Publish(ctx, domain, body.Door)
+		publishFn := pub.Publish
+		if body.Over {
+			if _, ok := s.fromNode(auth.FromContext(r.Context())); !ok {
+				return nil, Errorf(http.StatusForbidden, "over is for a site moving in from another node; take a name in conflict with POST /publish/takeover")
+			}
+			publishFn = pub.PublishOver
+		}
+		lines, err := publishFn(ctx, domain, body.Door)
 		if err != nil {
 			return nil, Errorf(http.StatusBadRequest, "%v", err)
 		}

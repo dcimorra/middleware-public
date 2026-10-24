@@ -100,6 +100,18 @@ function overviewTab(domain) {
   // The names the house published for this site, from GET /publish:
   // [name, record] pairs, refreshed on publish.* events.
   let published = [];
+  // The other nodes of this one's network, online: where the site can be
+  // moved. Empty without a network, and the button is not shown.
+  let otherNodes = [];
+  // The move's progress, kept across the redraws a moving site causes.
+  let moveBox = null;
+  (async () => {
+    try {
+      const info = await api.get("/nodes");
+      otherNodes = (info.members || []).filter((x) => x.id !== info.self.id && x.online && !x.removed);
+      if (otherNodes.length) render();
+    } catch { /* no network: nothing to move to */ }
+  })();
   async function loadPublished() {
     try {
       const recs = await api.get("/publish");
@@ -152,6 +164,39 @@ function overviewTab(domain) {
     return h("div", { class: "card" }, h("h2", null, t("site.domains")), h("p", { class: "small muted" }, t("site.domainsHint")), list, form);
   }
 
+  // Moving the site to another node: chosen, said (a short stop), and then
+  // followed step by step from the events until it runs there.
+  async function moveSite() {
+    const sel = h("select", null, ...otherNodes.map((x) => h("option", { value: x.id }, x.name)));
+    const node = await open({
+      title: t("site.moveQ", { domain }),
+      body: [h("p", { class: "dim" }, t("site.moveBody")), field(t("site.moveTo"), sel)],
+      buttons: [{ label: t("common.cancel"), value: null }, { label: t("site.move"), primary: true, value: "go" }],
+    });
+    if (node !== "go") return;
+    const name = sel.selectedOptions[0].textContent;
+    try {
+      await api.post(`/sites/${enc(domain)}/move`, { node: sel.value });
+    } catch (e) { toastError(e); return; }
+    const box = h("div", { class: "notice info" }, t("site.moving", { node: name }));
+    moveBox = box;
+    el.prepend(box);
+    const off = onEvent("relocate.", (ev) => {
+      if (ev.subject !== domain) return;
+      const step = ev.type.slice("relocate.".length);
+      box.textContent = t("site.moveStep." + step, { node: name }) + (ev.message ? " — " + ev.message : "");
+      if (step === "done") {
+        off();
+        box.className = "notice ok";
+        toast(t("site.moved", { domain, node: name }), "ok");
+      } else if (step === "failed") {
+        off();
+        box.className = "notice bad";
+      }
+    });
+    subs.push(off);
+  }
+
   // A name the zone already points somewhere else: said, and taken only
   // with an explicit yes, because the record may be somebody's shop or mail.
   function conflictEl(name, r) {
@@ -170,6 +215,7 @@ function overviewTab(domain) {
   function render() {
     const s = store.site(domain);
     clear(el);
+    if (moveBox) el.append(moveBox);
     if (!s) { el.append(empty(t("site.gone"), t("site.goneHint"))); return; }
     const mode = siteMode(s);
     const m = s.manifest || {};
@@ -202,6 +248,7 @@ function overviewTab(domain) {
       actions.append(h("a", { class: "btn", href: apiURL(`/sites/${enc(domain)}/download.zip`), download: `${domain}.zip`, title: t("site.downloadHint") }, icon("download"), t("site.download")));
       actions.append(btn(t(mode === "project" ? "site.giveDomain" : "site.rename"), "edit", rename));
       actions.append(btn(t("site.exec"), "terminal", runCommand));
+      if (otherNodes.length) actions.append(btn(t("site.move"), "upload", moveSite));
     }
     actions.append(btn(t("site.delete"), "trash", del, "danger"));
 

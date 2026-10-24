@@ -29,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Report is what went in, or came out, and what did not.
@@ -64,16 +65,102 @@ func Pack(ctx context.Context, dir, dest string) (Report, error) {
 	}
 	gz := gzip.NewWriter(f)
 	tw := tar.NewWriter(gz)
-	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+	err = addTree(ctx, tw, dir, "", &rep)
+	if err != nil {
+		return fail(err)
+	}
+	if err := tw.Close(); err != nil {
+		return fail(err)
+	}
+	if err := gz.Close(); err != nil {
+		return fail(err)
+	}
+	if err := f.Sync(); err != nil {
+		return fail(err)
+	}
+	if err := f.Close(); err != nil {
+		return fail(err)
+	}
+	return rep, os.Rename(tmp, dest)
+}
+
+// Part is one path in a bundle and the name it goes under.
+type Part struct {
+	// Name is the entry's name in the bundle ("site", "data/homes/x").
+	Name string
+	// Path is where it is on this machine: a folder (walked) or a file.
+	Path string
+}
+
+// PackParts writes parts to w as one .tar.gz, each under its name, with
+// the same faithfulness as Pack. A part that does not exist is left out:
+// a site with no conversation has no conversation file. What moves a site
+// to another machine sends this straight into the connection.
+func PackParts(ctx context.Context, w io.Writer, parts []Part) (Report, error) {
+	return PackPartsSince(ctx, w, parts, time.Time{})
+}
+
+// IndexName is the entry a partial bundle ends with: every name the parts
+// had when it was packed, one per line, so the far side removes what was
+// removed here.
+const IndexName = ".bundle-index"
+
+// PackPartsSince is PackParts with only the regular files changed at or
+// after since (folders and links always go, they cost nothing), and the
+// index of every name at the end. The zero time is everything and no
+// index. It is what makes a move's last copy, the one made with the site
+// stopped, take seconds instead of the whole site again.
+func PackPartsSince(ctx context.Context, w io.Writer, parts []Part, since time.Time) (Report, error) {
+	var rep Report
+	gz := gzip.NewWriter(w)
+	tw := tar.NewWriter(gz)
+	var index []string
+	for _, p := range parts {
+		if _, err := os.Lstat(p.Path); errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err := addTreeSince(ctx, tw, p.Path, strings.Trim(filepath.ToSlash(p.Name), "/"), &rep, since, &index); err != nil {
+			return rep, err
+		}
+	}
+	if !since.IsZero() {
+		body := []byte(strings.Join(index, "\n"))
+		if err := tw.WriteHeader(&tar.Header{Name: IndexName, Mode: 0o600, Size: int64(len(body)), Typeflag: tar.TypeReg, ModTime: time.Now()}); err != nil {
+			return rep, err
+		}
+		if _, err := tw.Write(body); err != nil {
+			return rep, err
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return rep, err
+	}
+	return rep, gz.Close()
+}
+
+// addTree writes root (a folder, walked, or a single file) under prefix.
+func addTree(ctx context.Context, tw *tar.Writer, root, prefix string, rep *Report) error {
+	return addTreeSince(ctx, tw, root, prefix, rep, time.Time{}, nil)
+}
+
+func addTreeSince(ctx context.Context, tw *tar.Writer, root, prefix string, rep *Report, since time.Time, index *[]string) error {
+	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if err != nil {
 			return err
 		}
-		rel, _ := filepath.Rel(dir, p)
+		rel, _ := filepath.Rel(root, p)
 		if rel == "." {
-			return nil
+			if prefix == "" {
+				return nil
+			}
+			rel = ""
+		}
+		name := filepath.ToSlash(rel)
+		if prefix != "" {
+			name = strings.TrimSuffix(prefix+"/"+name, "/")
 		}
 		info, err := d.Info()
 		if err != nil {
@@ -96,11 +183,20 @@ func Pack(ctx context.Context, dir, dest string) (Report, error) {
 			rep.skip(filepath.ToSlash(rel) + " (" + mode.Type().String() + ")")
 			return nil
 		}
+		if index != nil {
+			*index = append(*index, name)
+		}
+		if mode.IsRegular() && !since.IsZero() && info.ModTime().Before(since) {
+			// Unchanged since the copy the far side already has.
+			rep.Files--
+			rep.Bytes -= info.Size()
+			return nil
+		}
 		hdr, err := tar.FileInfoHeader(info, link)
 		if err != nil {
 			return err
 		}
-		hdr.Name = filepath.ToSlash(rel)
+		hdr.Name = name
 		if mode.IsDir() {
 			hdr.Name += "/"
 		}
@@ -120,36 +216,27 @@ func Pack(ctx context.Context, dir, dest string) (Report, error) {
 		}
 		return nil
 	})
-	if err != nil {
-		return fail(err)
-	}
-	if err := tw.Close(); err != nil {
-		return fail(err)
-	}
-	if err := gz.Close(); err != nil {
-		return fail(err)
-	}
-	if err := f.Sync(); err != nil {
-		return fail(err)
-	}
-	if err := f.Close(); err != nil {
-		return fail(err)
-	}
-	return rep, os.Rename(tmp, dest)
 }
 
 // Unpack restores src into dir, which must not exist yet.
 func Unpack(ctx context.Context, src, dir string) (Report, error) {
+	f, err := os.Open(src)
+	if err != nil {
+		return Report{}, err
+	}
+	defer f.Close()
+	return UnpackFrom(ctx, f, dir)
+}
+
+// UnpackFrom restores a .tar.gz read from r into dir, which must not exist
+// yet, with the same checks as Unpack: what arrives from another machine
+// is read as carefully as an archive of this one.
+func UnpackFrom(ctx context.Context, r io.Reader, dir string) (Report, error) {
 	var rep Report
 	if _, err := os.Lstat(dir); err == nil {
 		return rep, fmt.Errorf("%s already exists", dir)
 	}
-	f, err := os.Open(src)
-	if err != nil {
-		return rep, err
-	}
-	defer f.Close()
-	gz, err := gzip.NewReader(f)
+	gz, err := gzip.NewReader(r)
 	if err != nil {
 		return rep, err
 	}

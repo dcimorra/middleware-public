@@ -117,6 +117,8 @@ type Server struct {
 	// publisher, when set, publishes sites on creation and unpublishes
 	// them on deletion (RegisterInbound sets it).
 	publisher *publish.Publisher
+	// moves are the sites moving to another node, by name.
+	moves moves
 	// dnsEnabled says whether a DNS provider is on, which decides the
 	// default of "publish" on creation.
 	dnsEnabled func() bool
@@ -197,6 +199,7 @@ func New(opts Options) *Server {
 	}
 	s.registerAuth()
 	s.registerSites()
+	s.registerRelocateTarget()
 	s.registerEvents()
 	s.registerSystem()
 	s.registerPages()

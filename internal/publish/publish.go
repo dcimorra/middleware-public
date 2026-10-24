@@ -243,7 +243,8 @@ func (p *Publisher) Publish(ctx context.Context, site string, door inbound.Door)
 	for _, h := range hosts {
 		r := p.f.Names[h]
 		if r == nil || r.Door != door || r.State == StateRetiring {
-			p.f.Names[h] = &Record{Site: site, Door: door, State: StatePending}
+			takeover := r != nil && r.Takeover
+			p.f.Names[h] = &Record{Site: site, Door: door, State: StatePending, Takeover: takeover}
 		} else {
 			r.Next = time.Time{}
 		}
@@ -255,6 +256,22 @@ func (p *Publisher) Publish(ctx context.Context, site string, door inbound.Door)
 	p.mu.Unlock()
 	p.emit("publish.requested", site, "", "on the "+string(door)+" door", map[string]any{"names": hosts})
 	return p.reconcileSiteLocked(ctx, site), nil
+}
+
+// PublishOver is Publish for a site that arrives from another node of the
+// network: its names point at that node, and taking them over is the
+// point of the move, so no name of it stops in conflict.
+func (p *Publisher) PublishOver(ctx context.Context, site string, door inbound.Door) ([]inbound.Line, error) {
+	p.mu.Lock()
+	for _, h := range p.hostsOf(site) {
+		if r := p.f.Names[h]; r != nil {
+			r.Takeover = true
+		} else {
+			p.f.Names[h] = &Record{Site: site, Takeover: true}
+		}
+	}
+	p.mu.Unlock()
+	return p.Publish(ctx, site, door)
 }
 
 // Unpublish takes every name of site off the internet and forgets the
@@ -331,6 +348,29 @@ func (p *Publisher) Published(site string) (inbound.Door, bool) {
 	defer p.mu.Unlock()
 	in, ok := p.f.Sites[site]
 	return in.Door, ok && !in.Suspended
+}
+
+// Covers says which of names this house can publish by itself (its DNS
+// provider manages their zone) and which it cannot. With no provider, it
+// can publish none.
+func (p *Publisher) Covers(ctx context.Context, names []string) (yes, no []string, err error) {
+	dns := p.dns()
+	for _, n := range names {
+		if dns == nil {
+			no = append(no, n)
+			continue
+		}
+		ok, err := dns.Covers(ctx, n)
+		if err != nil {
+			return nil, nil, err
+		}
+		if ok {
+			yes = append(yes, n)
+		} else {
+			no = append(no, n)
+		}
+	}
+	return yes, no, nil
 }
 
 // HostsOf is every name site answers to now.
