@@ -1,5 +1,29 @@
 # middleware
 
+**Build, test and ship from one place.**
+
+For many web projects the usual stack (a repo, CI, a server, a proxy, DNS,
+certificates, a dashboard per service and a laptop with everything
+installed) is too much machinery. middleware replaces it in those cases
+with one binary on your own server:
+
+- **Build** by talking to AI agents (Claude, Codex, Antigravity…) that work
+  inside each site's folder and cannot leave it.
+- **Test** on the server where it will live, with the same data and the
+  same environment.
+- **Ship** with one button: DNS, certificate and a deploy that drops no
+  request.
+- **Without trading away security:** each site with its own HOME and
+  environment, each agent jailed and audited, the panel behind a VPN if
+  you want.
+
+**Outgrown one machine? Add another in under 2 minutes.** Make a code in the
+panel, paste it on the other machine, and they form an encrypted network.
+One panel sees and manages them all, and a site moves from one to another
+with a stop of seconds, its DNS following on its own.
+
+## How it works
+
 One Go binary in front of every site on a machine. It reads the `Host`
 header and either serves `sites/<domain>/` or forwards to the process that
 site's manifest describes. One process per site, always; deployments hand
