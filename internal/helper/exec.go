@@ -24,7 +24,7 @@ type Exec interface {
 // Binaries the helper may run. A name outside this list is refused by
 // SystemExec even if an operation asked for it, so a bug in an operation
 // cannot widen what the helper executes.
-var Binaries = []string{"nft", "wg", "wg-quick", "sysctl"}
+var Binaries = []string{"nft", "wg", "wg-quick", "sysctl", "systemd-run", "systemctl"}
 
 // SystemExec runs the real binaries with a timeout.
 type SystemExec struct {

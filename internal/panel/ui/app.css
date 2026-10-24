@@ -802,3 +802,5 @@ svg.dash-spark .mem { stroke: var(--warn); stroke-dasharray: 3 2; }
 .move-pill > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .move-dialog .dash-bar { height: 10px; }
 .move-more > summary { cursor: pointer; margin: 4px 0 8px; }
+/* The installer's output, followed live: its own lines, wrapped on a phone. */
+.req-log { margin: 0; max-height: 60vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; background: var(--surface-2); border-radius: var(--radius); padding: 10px; }

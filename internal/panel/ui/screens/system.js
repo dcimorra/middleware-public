@@ -4,6 +4,7 @@
 
 import { icon } from "../lib/icons.js";
 import { vitalsCard } from "./system-vitals.js";
+import { requirementsCard } from "./system-requirements.js";
 import { h, clear, append, fmtBytes, fmtDuration } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
@@ -21,7 +22,8 @@ export function systemScreen() {
   const portsCard = h("div", { class: "card" });
   const updateCard = h("div", { class: "card" });
   const vitals = vitalsCard();
-  p.body.append(stats, vitals.el, info, updateCard, procs, portsCard);
+  const reqs = requirementsCard();
+  p.body.append(stats, vitals.el, info, updateCard, reqs.el, procs, portsCard);
   const subs = [];
   let timer = null;
 
@@ -162,5 +164,5 @@ export function systemScreen() {
   subs.push(onEvent("middleware.", all));
   subs.push(onEvent("update.", () => renderUpdate(false).catch(() => {})));
   subs.push(onEvent("instance.", () => { renderProcs().catch(() => {}); renderPorts().catch(() => {}); }));
-  return { el: p.el, destroy() { clearInterval(timer); vitals.destroy(); subs.forEach((u) => u()); } };
+  return { el: p.el, destroy() { clearInterval(timer); vitals.destroy(); reqs.destroy(); subs.forEach((u) => u()); } };
 }

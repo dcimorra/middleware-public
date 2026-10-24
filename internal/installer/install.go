@@ -57,6 +57,10 @@ type Installer struct {
 	// Node installs nvm under the root and the current LTS with it; nil
 	// skips the step (tests). New sets it.
 	Node func(root string) (bool, string, error)
+	// AsRoot is a run as root for Params.User (Deps from the panel,
+	// through the helper): what it creates under the root as root is
+	// handed to that user at the end.
+	AsRoot bool
 
 	// setupOutput is what `middleware setup` printed, shown after the step
 	// lines so the one-time code is the last thing on screen.
@@ -70,7 +74,7 @@ func New(p Params) *Installer {
 			p.User = u.Username
 		}
 	}
-	return &Installer{Exec: System{}, Params: p, Paths: SystemPaths(), Out: os.Stdout, Node: prepareNode}
+	return &Installer{Exec: System{}, Params: p, Paths: SystemPaths(), Out: os.Stdout, Node: prepareNode, AsRoot: os.Geteuid() == 0 && p.User != "root"}
 }
 
 // Step is one re-runnable unit of work. changed is false when the machine
@@ -186,6 +190,36 @@ func shortErr(err error, cost string) string {
 		msg = msg[:i]
 	}
 	return msg + tail
+}
+
+// Requirements runs only the requirement steps of Install: the packages, docker,
+// nvm, the browser when Params.Browser is "yes", fail2ban, and the
+// ownership of what it made as root. No unit, no binary, no restart: what
+// the panel may start (the helper's requirements.install). It says whether the
+// operator was added to docker's group, which reaches the supervisor only
+// when it restarts.
+func (in *Installer) Requirements() (Report, bool, error) {
+	if err := in.defaults(); err != nil {
+		return Report{}, false, err
+	}
+	if os.Geteuid() == 0 && in.Params.User == "root" {
+		return Report{}, false, errors.New("refusing to install for root")
+	}
+	dockerChanged := false
+	rep, err := in.runSteps([]Step{
+		{"package manager", in.stepPackageManager},
+		{"git, curl, wireguard, nftables", in.stepPackages},
+		{"docker", optional("sites in containers will not start here", func() (bool, string, error) {
+			c, d, err := in.stepDocker()
+			dockerChanged = c
+			return c, d, err
+		})},
+		{"node (nvm)", optional("the first site that asks for a Node installs nvm itself, and waits for it", in.stepNode)},
+		{"headless browser", optional("the panel works without the pictures", in.stepBrowser)},
+		{"fail2ban", optional("SSH has no bans", in.stepFail2ban)},
+		{"ownership", in.stepOwnership},
+	})
+	return rep, dockerChanged, err
 }
 
 // Install runs every step in order and stops at the first failure, which is

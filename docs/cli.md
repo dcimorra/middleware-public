@@ -33,6 +33,7 @@ in the API ([api.md](api.md)) and the panel.
 | command | what |
 | --- | --- |
 | `install [--root] [--user] [--no-helper] [--no-start] [--yes]` | put middleware on this machine; one line per step, re-runnable. [install.md](install.md) |
+| `install --requirements [--browser yes]` | only the house's requirements: packages, docker and its group, nvm with the LTS, fail2ban, a headless Chromium with `--browser yes`; no unit, binary or restart. What Sistema → "The house's requirements" runs through the helper |
 | `uninstall [--yes] [--keep-binary]` | stop and remove the units. Keeps the root directory and the sites. |
 | `doctor` | binary, units, loopback socket, helper, root directory, reserved ports, docker, wg, disk: one line each, exit 1 if any fails |
 | `setup [--password]` | create the operator: prints a one-time code to enter in the panel, or asks for the password on the terminal with `--password`. Refuses once an operator exists. |

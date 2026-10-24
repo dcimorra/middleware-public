@@ -285,6 +285,10 @@ func buildWire(a *app.App) app.Hook {
 		wireSiteDoor(a, srv, set)
 	}
 	srv.RegisterContainerize(api.ContainOptions{Chat: chatManager})
+	srv.RegisterRequirements(func(ctx context.Context, browser bool) error {
+		_, err := helper.Dial("").InstallRun(ctx, browser)
+		return err
+	})
 	if taskScheduler != nil {
 		srv.RegisterTasks(api.TasksOptions{Scheduler: taskScheduler, Root: a.Root})
 	}

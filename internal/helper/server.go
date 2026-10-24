@@ -58,6 +58,9 @@ type Server struct {
 	Binary string
 	Arch   string
 	Exit   func()
+	// SystemdDir is where the installed units are (install.run reads the
+	// service's); empty is /etc/systemd/system.
+	SystemdDir string
 	// Log receives one line per call. nil means stderr, which under
 	// systemd is the journal.
 	Log *log.Logger
@@ -109,6 +112,7 @@ func (s *Server) init() {
 			OpSysctlReserve:   s.sysctlReservePorts,
 			OpUpdateInstall:   s.updateInstall,
 			OpMeshFirewall:    s.meshFirewall,
+			OpInstallRun:      s.installRun,
 		}
 	})
 }

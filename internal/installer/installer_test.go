@@ -497,3 +497,38 @@ func TestTheFail2banJailWatchesSSHAndSharesItsBansWithTheHouse(t *testing.T) {
 		}
 	}
 }
+
+// The requirements alone: packages, docker, nvm, the browser, fail2ban,
+// and, run as root from the panel, what it made under the root handed to
+// the operator. No unit, no binary, no restart.
+func TestTheRequirementsTouchNoUnitNoBinaryAndHandBackWhatRootMade(t *testing.T) {
+	in, rec, out := testInstaller(t)
+	in.AsRoot = true
+	rec.Path["docker"] = true
+	rec.Path["fail2ban-client"] = true
+	rep, _, err := in.Requirements()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, c := range rec.Calls {
+		if strings.Contains(c, "systemctl restart") || strings.Contains(c, in.Params.Binary) || strings.Contains(c, "daemon-reload") {
+			t.Errorf("a requirements run did %s", c)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(in.Paths.SystemdDir, ServiceUnit)); err == nil {
+		t.Error("a unit was written")
+	}
+	chown := false
+	for _, c := range rec.Calls {
+		if strings.HasPrefix(c, "sudo find "+in.Params.Root) && strings.Contains(c, "chown -h alice:"+in.Params.Group) {
+			chown = true
+		}
+	}
+	if !chown {
+		t.Fatalf("what root made was not handed back: %v", rec.Calls)
+	}
+	_ = rep
+	if got := out.String(); !strings.Contains(got, "docker") || !strings.Contains(got, "fail2ban") || strings.Contains(got, "units and config") {
+		t.Fatalf("steps: %s", got)
+	}
+}

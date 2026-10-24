@@ -78,10 +78,34 @@ func installCmd(args []string) error {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	noStart := fs.Bool("no-start", false, "render and enable the units but do not start them")
 	yes := fs.Bool("yes", false, "do not ask for confirmation")
+	panel := fs.Bool("panel", false, "started from the panel (the helper's requirements.install): the last line says how it ended, for the panel to read")
+	deps := fs.Bool("requirements", false, "only the house's requirements: packages, docker, nvm, fail2ban and, with --browser yes, a headless Chromium; no unit, binary or restart")
 	p, err := installParams(fs, args)
 	if err != nil {
 		return err
 	}
+	if *deps {
+		in := installer.New(p)
+		in.Live = isTerminal(os.Stdout)
+		_, restart, err := in.Requirements()
+		if *panel {
+			// What the panel reads to know it ended: the unit is collected
+			// when it exits, and its status with it.
+			switch {
+			case err != nil:
+				fmt.Printf("\n%s%v\n", installer.PanelFailed, err)
+			case restart:
+				fmt.Printf("\n%s\n", installer.PanelRestart)
+			default:
+				fmt.Printf("\n%s\n", installer.PanelFinished)
+			}
+		}
+		return err
+	}
+	return runInstall(p, *noStart, *yes)
+}
+
+func runInstall(p installer.Params, noStart, yes bool) error {
 	if p.User == "root" {
 		return errors.New("refusing to install for root: run as the user that will operate the panel; sudo is used where needed")
 	}
@@ -126,7 +150,7 @@ func installCmd(args []string) error {
 		return fmt.Errorf("%q is not a domain name", p.Domain)
 	}
 	in := installer.New(p)
-	in.NoStart = *noStart
+	in.NoStart = noStart
 	in.Live = isTerminal(os.Stdout)
 	panel := p.Domain + " (" + p.Door + ")"
 	if p.Domain == "" {
@@ -145,7 +169,7 @@ func installCmd(args []string) error {
 		browser = "none (no site pictures)"
 	}
 	fmt.Printf("middleware %s install\n  user    %s\n  group   %s\n  root    %s\n  binary  %s\n  helper  %v\n  panel   %s\n  browser %s\n\n", Version, p.User, p.Group, p.Root, p.Binary, p.Helper, panel, browser)
-	if !*yes && !confirm("Continue? Steps that need root will ask for your sudo password. [y/N] ") {
+	if !yes && !confirm("Continue? Steps that need root will ask for your sudo password. [y/N] ") {
 		return errors.New("cancelled")
 	}
 	if _, err := in.Install(); err != nil {
