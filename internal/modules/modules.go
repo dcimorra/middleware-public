@@ -108,6 +108,16 @@ type Binaries interface {
 	Binaries() []string
 }
 
+// BinariesFor is implemented by modules whose binaries depend on how they
+// are set up: Cloudflare runs cloudflared only with a tunnel, and with DNS
+// alone installs none. Without it, a DNS-only module read as "activated,
+// but its binary is not installed; activate it again", and activating it
+// again skipped the binary again, for ever. Manager.Installed asks this,
+// with the stored config, before Binaries.
+type BinariesFor interface {
+	BinariesFor(cfg Config) []string
+}
+
 // Info is a module as the panel and the CLI list it.
 type Info struct {
 	Key         string `json:"key"`

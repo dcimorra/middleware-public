@@ -134,11 +134,17 @@ func (m *Manager) Installed(key string) bool {
 }
 
 func (m *Manager) installed(mod Module) bool {
-	b, ok := mod.(Binaries)
-	if !ok {
-		return true
+	var names []string
+	if bf, ok := mod.(BinariesFor); ok {
+		cfg, err := m.st.decrypt(mod.Needs(), m.st.data.Config[mod.Key()])
+		if err != nil {
+			cfg = Config{}
+		}
+		names = bf.BinariesFor(cfg)
+	} else if b, ok := mod.(Binaries); ok {
+		names = b.Binaries()
 	}
-	for _, name := range b.Binaries() {
+	for _, name := range names {
 		info, err := os.Stat(filepath.Join(m.BinDir(), name))
 		if err != nil || info.IsDir() || info.Mode().Perm()&0o100 == 0 {
 			return false

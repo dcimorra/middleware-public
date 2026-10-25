@@ -387,3 +387,21 @@ func TestForeignNamesWhatPointsElsewhereAndNotWhatIsTheHouses(t *testing.T) {
 		t.Fatalf("apex: %q", got)
 	}
 }
+
+// DNS alone needs no cloudflared: enabled that way, the module is
+// installed, not "activated but its binary is missing" for ever (activating
+// it again skipped the binary again). With a tunnel it needs it.
+func TestADNSOnlyModuleNeedsNoConnectorToBeInstalled(t *testing.T) {
+	f := newFakeAPI()
+	defer f.srv.Close()
+	_, mgr := newModule(t, f)
+	if _, err := mgr.Enable(context.Background(), "cloudflare", modules.Config{"token": "good-token"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !mgr.Installed("cloudflare") {
+		t.Fatal("DNS only, and said not installed")
+	}
+	if got := (&Module{}).BinariesFor(modules.Config{"tunnel_id": "tun1"}); len(got) != 1 || got[0] != BinaryName {
+		t.Fatalf("with a tunnel: %v", got)
+	}
+}

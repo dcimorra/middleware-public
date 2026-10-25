@@ -65,6 +65,15 @@ func (m *Module) Needs() []modules.Need {
 // Binaries implements modules.Binaries.
 func (m *Module) Binaries() []string { return []string{BinaryName} }
 
+// BinariesFor implements modules.BinariesFor: cloudflared only with a
+// tunnel, as Install does; DNS alone needs no binary.
+func (m *Module) BinariesFor(cfg modules.Config) []string {
+	if cfg["tunnel_id"] == "" {
+		return nil
+	}
+	return m.Binaries()
+}
+
 // client builds a Client for a config, without touching the store.
 func (m *Module) client(cfg modules.Config) *Client {
 	return &Client{Token: cfg["token"], AccountID: cfg["account_id"], TunnelID: cfg["tunnel_id"], Service: m.Service, BaseURL: m.BaseURL, HTTP: m.HTTP}
