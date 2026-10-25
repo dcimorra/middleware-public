@@ -501,8 +501,8 @@ func (t meshTarget) Commit(ctx context.Context, domain string, m []byte) error {
 	return t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/commit", map[string]string{"manifest": base64.StdEncoding.EncodeToString(m)}, nil)
 }
 
-func (t meshTarget) Prepare(ctx context.Context, domain string) (string, error) {
-	if err := t.older(t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/prepare", nil, nil)); err != nil {
+func (t meshTarget) Prepare(ctx context.Context, domain string, dirs []string) (string, error) {
+	if err := t.older(t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/prepare", map[string]any{"dirs": dirs}, nil)); err != nil {
 		return "", err
 	}
 	// Asked every few seconds, each a short request: the install runs

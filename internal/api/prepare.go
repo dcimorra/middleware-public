@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,6 +49,27 @@ func (s *Server) registerPrepare(rc relocate.Receiver) {
 		if _, err := os.Stat(dir); err != nil {
 			return nil, Errorf(http.StatusBadRequest, "%v", relocate.ErrNoStaging)
 		}
+		// Where the source left node_modules behind, each relative to the
+		// site; none said (an older node) is its root, as before.
+		var body struct {
+			Dirs []string `json:"dirs"`
+		}
+		if r.ContentLength != 0 {
+			if err := ReadJSON(r, &body); err != nil {
+				return nil, err
+			}
+		}
+		if len(body.Dirs) == 0 {
+			body.Dirs = []string{"."}
+		}
+		var targets []string
+		for _, d := range body.Dirs {
+			c := filepath.Clean(filepath.FromSlash(d))
+			if filepath.IsAbs(c) || c == ".." || strings.HasPrefix(c, ".."+string(filepath.Separator)) {
+				return nil, Errorf(http.StatusBadRequest, "dirs: %q is not inside the site", d)
+			}
+			targets = append(targets, c)
+		}
 		s.prepares.mu.Lock()
 		defer s.prepares.mu.Unlock()
 		if s.prepares.jobs == nil {
@@ -61,9 +83,24 @@ func (s *Server) registerPrepare(rc relocate.Receiver) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), prepareTime)
 			defer cancel()
-			said, err := installDeps(ctx, dir)
+			var saids []string
+			var err error
+			for _, c := range targets {
+				var said string
+				said, err = installDeps(ctx, filepath.Join(dir, c))
+				if c != "." {
+					said = filepath.ToSlash(c) + ": " + said
+					if err != nil {
+						err = fmt.Errorf("%s: %w", filepath.ToSlash(c), err)
+					}
+				}
+				if err != nil {
+					break
+				}
+				saids = append(saids, said)
+			}
 			s.prepares.mu.Lock()
-			job.Done, job.Output = true, said
+			job.Done, job.Output = true, strings.Join(saids, " · ")
 			if err != nil {
 				job.Error = err.Error()
 			}

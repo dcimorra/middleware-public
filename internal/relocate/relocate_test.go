@@ -234,9 +234,11 @@ type preparingTarget struct {
 	*localTarget
 	sawModules bool
 	prepared   bool
+	dirs       []string
 }
 
-func (t *preparingTarget) Prepare(_ context.Context, d string) (string, error) {
+func (t *preparingTarget) Prepare(_ context.Context, d string, dirs []string) (string, error) {
+	t.dirs = dirs
 	mods := filepath.Join(t.rc.StagingSite(d), "node_modules")
 	_, err := os.Stat(mods)
 	t.sawModules = err == nil
@@ -262,8 +264,8 @@ func TestANodeSitesModulesAreInstalledThereNotCarried(t *testing.T) {
 	if _, err := m.Move(context.Background(), "a.test", tg, func(step, _ string) { steps = append(steps, step) }); err != nil {
 		t.Fatal(err)
 	}
-	if !tg.prepared || tg.sawModules {
-		t.Fatalf("prepared %v, node_modules carried %v", tg.prepared, tg.sawModules)
+	if !tg.prepared || tg.sawModules || strings.Join(tg.dirs, ",") != "." {
+		t.Fatalf("prepared %v (in %v), node_modules carried %v", tg.prepared, tg.dirs, tg.sawModules)
 	}
 	if got := strings.Join(steps, " "); !strings.HasPrefix(got, "check copy install install stop") {
 		t.Fatalf("steps: %s", got)
@@ -340,5 +342,21 @@ func TestABuildsOwnNodeModulesTravelsWithTheSite(t *testing.T) {
 	link := filepath.Join(dst, "sites", "a.test", ".next-blue", "node_modules", "@prisma", "client-2c3a283f")
 	if target, err := os.Readlink(link); err != nil || target != "../../../node_modules/@prisma/client" {
 		t.Fatalf("the build's link: %q %v", target, err)
+	}
+}
+
+// The folders whose dependencies are left behind are the ones with a
+// package.json beside node_modules, wherever they are in the site.
+func TestTheFoldersWhoseDependenciesAreLeftBehindAreFound(t *testing.T) {
+	site := t.TempDir()
+	for _, d := range []string{".", "frontend", "packages/api"} {
+		os.MkdirAll(filepath.Join(site, d, "node_modules", "x"), 0o755)
+		os.WriteFile(filepath.Join(site, d, "package.json"), []byte("{}"), 0o644)
+	}
+	os.MkdirAll(filepath.Join(site, ".next", "node_modules", "@prisma"), 0o755) // a build's own
+	os.MkdirAll(filepath.Join(site, "docs"), 0o755)
+	os.WriteFile(filepath.Join(site, "docs", "package.json"), []byte("{}"), 0o644) // never installed: nothing to put back
+	if got := strings.Join(LeftBehind(site), ","); got != ".,frontend,packages/api" {
+		t.Fatalf("left behind: %s", got)
 	}
 }

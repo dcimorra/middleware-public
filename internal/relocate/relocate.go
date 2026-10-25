@@ -30,6 +30,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -56,6 +57,35 @@ func MoveParts(root, domain string) []archive.Part {
 // reinstalls them. The first moves left every node_modules behind and the
 // moved site answered its front page and failed every page that used the
 // database with "Cannot find module '@prisma/client-…'".
+// LeftBehind is every folder of a site whose dependencies are left behind
+// for the target to install (Reinstalled), relative to the site, "." for
+// its root: what the target installs, folder by folder. A site whose
+// package.json is in frontend/ (litterae.cc) arrived with its root
+// installed, which has none, and frontend/ without node_modules: "fork/exec
+// frontend/node_modules/.bin/vite: no such file or directory".
+func LeftBehind(siteDir string) []string {
+	var out []string
+	_ = filepath.WalkDir(siteDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return nil
+		}
+		if d.Name() == ".git" {
+			return filepath.SkipDir
+		}
+		if Reinstalled(p) {
+			rel, _ := filepath.Rel(siteDir, filepath.Dir(p))
+			out = append(out, filepath.ToSlash(rel))
+			return filepath.SkipDir
+		}
+		if d.Name() == "node_modules" {
+			return filepath.SkipDir // a build's own: travels, nothing to look for inside
+		}
+		return nil
+	})
+	sort.Strings(out) // "." first
+	return out
+}
+
 func Reinstalled(dir string) bool {
 	if filepath.Base(dir) != "node_modules" {
 		return false

@@ -106,11 +106,11 @@ func jsonBody(v any) io.Reader {
 // long request (which a Cloudflare tunnel cuts at 100 seconds, and the
 // install with it). A house too old to have the route installs at the
 // commit, as before.
-func (t HTTPTarget) Prepare(ctx context.Context, d string) (string, error) {
+func (t HTTPTarget) Prepare(ctx context.Context, d string, dirs []string) (string, error) {
 	if !t.Install {
 		return "", nil
 	}
-	if err := t.do(ctx, "POST", "/relocate/"+d+"/prepare", "", nil, nil); err != nil {
+	if err := t.do(ctx, "POST", "/relocate/"+d+"/prepare", "application/json", jsonBody(map[string]any{"dirs": dirs}), nil); err != nil {
 		if strings.Contains(err.Error(), "answered 404") || strings.Contains(err.Error(), "answered 403") {
 			return "", nil
 		}

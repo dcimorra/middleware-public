@@ -41,7 +41,9 @@ type Target interface {
 type Preparer interface {
 	// Prepare says what it installed, which the move's step shows: an
 	// install that leaves out what the start needs looks done otherwise.
-	Prepare(ctx context.Context, domain string) (string, error)
+	// dirs are the site's folders whose dependencies were left behind
+	// (LeftBehind), relative to it.
+	Prepare(ctx context.Context, domain string, dirs []string) (string, error)
 }
 
 // Finisher is a target told that the move ended well, so it forgets what
@@ -186,7 +188,7 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	// the install is not part of the time it is down.
 	if pr, ok := t.(Preparer); ok && m.Install {
 		progress(StepInstall, "installing its dependencies on "+t.Name()+", for that machine, while it serves here")
-		said, err := pr.Prepare(ctx, domain)
+		said, err := pr.Prepare(ctx, domain, LeftBehind(dir))
 		if err != nil {
 			return rep, undone(fmt.Errorf("installing its dependencies there: %w", err), m.undo(t, domain, false))
 		}
