@@ -220,6 +220,19 @@ it each node reaches only the others' middleware (TCP 46101 on the mesh
 address). To try several installations on one machine without root, start
 them with `MIDDLEWARE_MESH_LOOPBACK=1`: no tunnel, addresses on loopback.
 
+A new machine can join at install instead of getting a domain: where the
+installer asks how the panel is reached, the second answer takes an
+invitation code (or `middleware install --join <code>`, or
+`MIDDLEWARE_JOIN`). The node joins that network once its service is up and
+has no domain and no operator of its own: it is managed from the network's
+panels, and nothing of it is public but its sites. `--endpoint ip:port` is
+its address for the mesh; without it, the house's guess (its public address
+and UDP 51821), and behind NAT it only calls out. A node that already has a
+domain can drop it from the Dashboard (its card, **Network only**): its
+record and tunnel route are retired. It is refused outside a network, or
+with no other node answering, because the panel would then be reached only
+through an SSH tunnel. Giving it a domain again in its Settings undoes it.
+
 ## Updating
 
 ```sh

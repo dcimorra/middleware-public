@@ -41,6 +41,8 @@ func installParams(fs *flag.FlagSet, args []string) (installer.Params, error) {
 	fs.StringVar(&p.Domain, "domain", os.Getenv("MIDDLEWARE_DOMAIN"), "the panel's domain (asked when there is a terminal; MIDDLEWARE_DOMAIN works too)")
 	fs.StringVar(&p.Browser, "browser", os.Getenv("MIDDLEWARE_BROWSER"), "yes installs a headless Chromium for the site pictures when there is none (asked when there is a terminal)")
 	fs.StringVar(&p.Door, "door", os.Getenv("MIDDLEWARE_DOOR"), "how the panel's domain is reached: ports (80/443) or tunnel (asked when there is a terminal; MIDDLEWARE_DOOR works too)")
+	fs.StringVar(&p.Join, "join", os.Getenv("MIDDLEWARE_JOIN"), "an invitation code from another node's panel (Dashboard → Invite): join that network instead of giving the panel a domain, and be managed from it (MIDDLEWARE_JOIN works too)")
+	fs.StringVar(&p.MeshEndpoint, "endpoint", os.Getenv("MIDDLEWARE_ENDPOINT"), "with --join: this machine's public ip:port for the network (default: the one the house works out; empty behind NAT works, the node then only calls out)")
 	if err := fs.Parse(args); err != nil {
 		return p, err
 	}
@@ -113,21 +115,37 @@ func runInstall(p installer.Params, noStart, yes bool) error {
 	// server starts (it hands us the terminal even when piped from curl).
 	// Without one the panel is loopback only and the first sign-in needs
 	// an SSH tunnel, which is the step a new operator does not know.
-	if p.Domain == "" && isTerminal(os.Stdin) {
+	if p.Domain == "" && p.Join == "" && isTerminal(os.Stdin) {
 		if s, err := settings.Load(p.Root); err != nil || s.PanelDomain == "" {
-			fmt.Print("Domain for the panel, e.g. panel.example.com (point its DNS at this server).\nEmpty keeps it on this machine only, reached through an SSH tunnel: ")
-			line, _ := stdin().ReadString('\n')
-			p.Domain = strings.ToLower(strings.TrimSpace(line))
-			// Neither door is required: a server behind a NAT may have
-			// no 80/443, and one without Cloudflare no tunnel.
-			if p.Domain != "" && p.Door == "" {
-				fmt.Print("How is it reached? 1) ports 80/443, with a certificate of its own  2) a Cloudflare tunnel [1]: ")
+			// Three ways to reach the panel: its own domain, the network of
+			// nodes this machine joins (managed from another node's panel,
+			// with no domain and nothing public), or an SSH tunnel.
+			fmt.Print("How will you reach this server's panel?\n  1) its own domain (panel.example.com, pointed at this server)\n  2) join an existing network of nodes, with an invitation code from another node's panel (Dashboard → Invite)\n  3) neither for now: this machine only, through an SSH tunnel\n[1]: ")
+			choice, _ := stdin().ReadString('\n')
+			switch strings.TrimSpace(choice) {
+			case "2":
+				fmt.Print("Invitation code: ")
+				code, _ := stdin().ReadString('\n')
+				p.Join = strings.TrimSpace(code)
+			case "3":
+			default:
+				fmt.Print("Domain for the panel, e.g. panel.example.com (point its DNS at this server): ")
 				line, _ := stdin().ReadString('\n')
-				if a := strings.TrimSpace(strings.ToLower(line)); a == "2" || a == "tunnel" {
-					p.Door = "tunnel"
+				p.Domain = strings.ToLower(strings.TrimSpace(line))
+				// Neither door is required: a server behind a NAT may have
+				// no 80/443, and one without Cloudflare no tunnel.
+				if p.Domain != "" && p.Door == "" {
+					fmt.Print("How is it reached? 1) ports 80/443, with a certificate of its own  2) a Cloudflare tunnel [1]: ")
+					line, _ := stdin().ReadString('\n')
+					if a := strings.TrimSpace(strings.ToLower(line)); a == "2" || a == "tunnel" {
+						p.Door = "tunnel"
+					}
 				}
 			}
 		}
+	}
+	if p.Join != "" && p.Domain != "" {
+		return errors.New("--join and --domain: a node joins a network or gets a domain at install, not both (it can drop or take a domain later)")
 	}
 	if p.Door == "" {
 		p.Door = "ports"
@@ -153,7 +171,9 @@ func runInstall(p installer.Params, noStart, yes bool) error {
 	in.NoStart = noStart
 	in.Live = isTerminal(os.Stdout)
 	panel := p.Domain + " (" + p.Door + ")"
-	if p.Domain == "" {
+	if p.Join != "" {
+		panel = "none: joins a network of nodes and is managed from it"
+	} else if p.Domain == "" {
 		panel = "none (loopback only)"
 		// A re-run keeps the name an earlier one gave it.
 		if s, err := settings.Load(p.Root); err == nil && s.PanelDomain != "" {

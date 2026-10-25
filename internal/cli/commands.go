@@ -135,12 +135,17 @@ func (e *Env) setup(args []string) error {
 	reset := fs.Bool("reset", false, "with an operator already set, print a code that sets a new password from the panel")
 	domain := fs.String("domain", "", "the panel's domain, so the first sign-in is at https://<domain>")
 	door := fs.String("door", "ports", "how the panel's domain is reached: ports (80/443) or tunnel (cloudflare); new sites follow it")
+	join := fs.String("join", "", "an invitation code from another node's panel: join its network and be managed from it, with no domain")
+	endpoint := fs.String("endpoint", "", "with --join: this machine's public ip:port for the network (default: the one the house works out)")
 	if _, err := parse(fs, args); err != nil {
 		return err
 	}
 	root := settings.Root(c.root)
 	if _, err := os.Stat(root); err != nil {
 		return fmt.Errorf("root %s: %w", root, err)
+	}
+	if *join != "" {
+		return e.joinNetwork(root, strings.TrimSpace(*join), strings.TrimSpace(*endpoint))
 	}
 	store := auth.New(root, events.New(""))
 	if *domain != "" {
@@ -942,5 +947,46 @@ func (e *Env) nodes(args []string) error {
 		fmt.Fprintln(e.Stdout)
 		Table(e.Stdout, []string{"NODE", "IP", "ENDPOINT", "VERSION", "ONLINE"}, rows)
 	}
+	return nil
+}
+
+// joinNetwork enters the network an invitation was made in, through the
+// running supervisor (it holds the mesh and asks the helper for the
+// interface). The installer calls it right after starting the service,
+// so the socket is given a moment. With no endpoint, the one the house
+// suggests (its public address with the mesh port) is used: behind a NAT
+// it is not reachable, and the node then only calls out, which works.
+func (e *Env) joinNetwork(root, code, endpoint string) error {
+	cl, err := e.Connect(root)
+	for i := 0; err != nil && i < 30; i++ {
+		time.Sleep(time.Second)
+		cl, err = e.Connect(root)
+	}
+	if err != nil {
+		return fmt.Errorf("the service is not answering: %w", err)
+	}
+	if endpoint == "" {
+		var info struct {
+			Suggested string `json:"suggested_endpoint"`
+		}
+		var raw []byte
+		if cl.Do("GET", "/api/v1/nodes", nil, &raw) == nil && json.Unmarshal(raw, &info) == nil {
+			endpoint = info.Suggested
+		}
+	}
+	var raw []byte
+	if err := cl.Do("POST", "/api/v1/nodes/join", map[string]string{"code": code, "endpoint": endpoint}, &raw); err != nil {
+		return err
+	}
+	var out struct {
+		Inviter string `json:"inviter"`
+		Members int    `json:"members"`
+	}
+	_ = json.Unmarshal(raw, &out)
+	where := endpoint
+	if where == "" {
+		where = "no public endpoint: it calls out"
+	}
+	fmt.Fprintf(e.Stdout, "Joined the network of %s (%d other nodes; this one at %s).\nManage it from their panels: Dashboard, this node's card. It has no domain and no operator of its own; `middleware setup --domain <name>` gives it one later.\n", out.Inviter, out.Members, where)
 	return nil
 }

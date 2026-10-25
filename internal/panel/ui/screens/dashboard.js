@@ -174,6 +174,11 @@ export function dashboardScreen() {
     const mine = cards[0] && cards[0].summary && cards[0].summary.version;
     for (const c of cards) {
       const acts = [h("button", { type: "button", class: "btn sm", title: t("dash.openHint"), onClick: () => go(c, "/sites") }, icon("external"), t("dash.open"))];
+      // A node in a network can drop its panel's domain and be managed
+      // from here alone: its record and route retired, nothing public.
+      if (info && info.network && c.ok && c.summary && c.summary.panel_domain) {
+        acts.push(h("button", { type: "button", class: "btn sm", title: t("dash.networkOnlyHint"), onClick: () => networkOnly(c) }, icon("lock"), t("dash.networkOnly")));
+      }
       if (c.self) {
         acts.push(h("button", { type: "button", class: "btn sm", onClick: () => rename(c) }, icon("edit"), t("dash.rename")));
         if (info && info.network) acts.push(h("button", { type: "button", class: "btn sm danger", onClick: leave }, t("dash.leave")));
@@ -223,6 +228,18 @@ export function dashboardScreen() {
       onSubmit: async () => { await api.put("/nodes/self", { name: name.value }, { node: "" }); return true; },
     });
     if (done) load();
+  }
+
+  async function networkOnly(c) {
+    const domain = c.summary.panel_domain;
+    const here = c.self && location.hostname === domain;
+    const ok = await confirm({ title: t("dash.networkOnlyQ", { name: c.name, domain }), body: t(here ? "dash.networkOnlyBodyHere" : "dash.networkOnlyBody", { domain }), confirmLabel: t("dash.networkOnly"), danger: here });
+    if (!ok) return;
+    try {
+      const r = await api.at(c.self ? "" : c.id).post("/system/panel/network-only");
+      toast(t("dash.networkOnlyDone", { name: c.name, from: (r.manage_from || []).join(", ") }), "ok");
+      load();
+    } catch (e) { toastError(e); }
   }
 
   async function expel(c) {

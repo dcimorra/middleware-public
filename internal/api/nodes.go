@@ -31,6 +31,9 @@ func (s *Server) RegisterNodes(m *nodes.Mesh, canClose func() error) {
 	s.Handle("DELETE", Prefix+"/nodes/{id}", "Remove a node from the network, for every node", s.nodesExpel)
 	s.Handle("GET", Prefix+"/nodes/overview", "Every node's summary, this one first, asked in parallel; an unreachable node says why", s.nodesOverview)
 	s.Handle("GET", Prefix+"/node/summary", "What the dashboard shows of this node: machine, sites, conversations, recent trouble", s.nodeSummary)
+	// Under /system, not /nodes: another node's panel asks it through the
+	// mesh, and /nodes is what a node may not ask of another (nodeMay).
+	s.Handle("POST", Prefix+"/system/panel/network-only", "Take this node's panel off its domain: its DNS record and tunnel route are retired and it is managed only from the network (another node's panel, through the mesh) or locally. Refused outside a network or with no other node answering", s.panelNetworkOnly)
 	s.registerRelocateSource(m)
 	for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
 		s.Handle(method, Prefix+"/nodes/{id}/api/{path...}", "The API of another node, through the mesh: what the panel uses to work on another machine", s.nodesProxy)
@@ -251,11 +254,56 @@ type SiteTrouble struct {
 	Why    string `json:"why"`
 }
 
+// panelNetworkOnly takes the panel off its domain, for a node in a network.
+// What makes it safe is the network: another node's panel reaches this one
+// through the mesh, and a node with no other node answering would be left
+// with an SSH tunnel as the only way in, so it is refused there. Undone by
+// giving the panel a domain again (Settings).
+func (s *Server) panelNetworkOnly(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := s.meshOf()
+	if err != nil {
+		return nil, err
+	}
+	if !m.InNetwork() {
+		return nil, Errorf(http.StatusConflict, "this node is in no network: without its domain its panel would only be reached through an SSH tunnel; join a network first")
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	var from []string
+	for _, x := range m.Info(ctx).Members {
+		if x.Online {
+			from = append(from, x.Name)
+		}
+	}
+	if len(from) == 0 {
+		return nil, Errorf(http.StatusConflict, "no other node of the network answers now: without its domain this panel could not be reached from anywhere but an SSH tunnel")
+	}
+	if s.opts.SaveSettings == nil {
+		return nil, Errorf(http.StatusNotImplemented, "settings cannot be saved here")
+	}
+	st := s.opts.Settings()
+	was := st.PanelDomain
+	if was == "" {
+		return nil, Errorf(http.StatusConflict, "the panel has no domain already")
+	}
+	st.PanelDomain = ""
+	if err := s.opts.SaveSettings(st); err != nil {
+		return nil, err
+	}
+	if s.opts.Bus != nil {
+		s.opts.Bus.Emit(events.Event{Type: "panel.network_only", Actor: "operator", Level: "warn", Message: "the panel left " + was + ": its record and route are retired, and it is managed from the network (" + strings.Join(from, ", ") + ")", Data: map[string]any{"was": was}})
+	}
+	return map[string]any{"ok": true, "was": was, "manage_from": from}, nil
+}
+
 func (s *Server) nodeSummary(w http.ResponseWriter, r *http.Request) (any, error) {
 	out := map[string]any{
 		"version":  s.opts.Version,
 		"started":  s.opts.Started,
 		"hostname": hostname(),
+	}
+	if s.opts.Settings != nil {
+		out["panel_domain"] = s.opts.Settings().PanelDomain
 	}
 	if m, err := s.meshOf(); err == nil {
 		self := m.Self()

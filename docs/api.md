@@ -517,6 +517,7 @@ network and the credentials are decided at each machine's own panel.
 | PUT | `/nodes/settings` | `{panel_vpn_only}` → the network's settings, for every node within a round. Closing is refused (409) from a node without its VPN on and a device in it |
 | POST | `/nodes/invite` | `{endpoint}` (this node's public `ip:port`, needed only when the invitation creates the network) → `{code, expires}`; the code carries a key pair made for the newcomer, which replaces it on joining; single use, fifteen minutes. 503 without the helper |
 | POST | `/nodes/join` | `{code, endpoint}` (this node's public `ip:port`; empty behind NAT) → `{ok, inviter, members}`; the first contact goes through the tunnel, retried for forty seconds. 409 when already in a network, 502 naming the cause when the inviter does not answer |
+| POST | `/system/panel/network-only` | → `{ok, was, manage_from}`: the panel leaves its domain (its record and tunnel route retired) and the node is managed from the network alone; under `/system` so another node's panel can ask it through the mesh. 409 outside a network, with no other node answering, or with no domain |
 | POST | `/nodes/leave` | → `{ok}`; tells the others, takes the interface down |
 | DELETE | `/nodes/{id}` | → `{ok, name}`; removes the node for every node, and tells it |
 | GET | `/nodes/overview` | → `[{id, name, ip, version, self, ok, error, latency_ms, summary}]`, this node first, every member asked in parallel (8 s each) |

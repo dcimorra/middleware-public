@@ -691,6 +691,9 @@ func (in *Installer) stepStart(restart bool) (bool, string, error) {
 // stepSetup runs `middleware setup` once, so the install ends with the
 // one-time code on screen instead of a second command to remember.
 func (in *Installer) stepSetup() (bool, string, error) {
+	if in.Params.Join != "" {
+		return in.stepJoin()
+	}
 	exists := in.OperatorExists(in.Params.Root)
 	if exists && in.Params.Domain == "" {
 		return false, "exists", nil
@@ -714,4 +717,24 @@ func (in *Installer) stepSetup() (bool, string, error) {
 		return true, "the panel's domain is " + in.Params.Domain, nil
 	}
 	return true, "created; the one-time code is below", nil
+}
+
+// stepJoin enters the network an invitation code was made in, through the
+// running supervisor: the node has no domain and no operator of its own,
+// and is managed from the network's panels. The code is single-use and
+// lasts fifteen minutes: a failure says to make another.
+func (in *Installer) stepJoin() (bool, string, error) {
+	if in.NoStart {
+		return false, fmt.Sprintf("not joined: run `%s setup --join <code> --root %s` after starting", in.Params.Binary, in.Params.Root), nil
+	}
+	args := []string{"setup", "--root", in.Params.Root, "--join", in.Params.Join}
+	if in.Params.MeshEndpoint != "" {
+		args = append(args, "--endpoint", in.Params.MeshEndpoint)
+	}
+	out, err := in.Exec.Run(in.Params.Binary, args...)
+	if err != nil {
+		return false, "", fmt.Errorf("joining the network: %v: %s (an invitation lasts fifteen minutes and opens once: make another in a node's panel, Dashboard → Invite, and run %s setup --join <code>)", err, strings.TrimSpace(out), in.Params.Binary)
+	}
+	in.setupOutput = out
+	return true, "joined the network; managed from its panels", nil
 }

@@ -33,6 +33,11 @@ type Params struct {
 	Domain string
 	// Door is how that name is reached: "ports" (80/443) or "tunnel".
 	Door string
+	// Join is an invitation code from another node's panel: instead of a
+	// domain, the node joins that network and is managed from it.
+	// MeshEndpoint is this machine's ip:port for the network, empty for
+	// the one the house suggests.
+	Join, MeshEndpoint string
 	// Browser is "yes" to install a headless Chromium when there is none
 	// (for the site pictures), "no" or empty to leave it.
 	Browser string

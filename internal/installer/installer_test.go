@@ -532,3 +532,27 @@ func TestTheRequirementsTouchNoUnitNoBinaryAndHandBackWhatRootMade(t *testing.T)
 		t.Fatalf("steps: %s", got)
 	}
 }
+
+// With an invitation code the install ends joining that network, through
+// setup --join, instead of creating an operator: the node is managed from
+// the network's panels.
+func TestAnInstallWithACodeJoinsTheNetworkInsteadOfMakingAnOperator(t *testing.T) {
+	in, rec, out := testInstaller(t)
+	in.OperatorExists = func(string) bool { return false }
+	in.Params.Join = "CODE123"
+	if _, err := in.Install(); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	joined := false
+	for _, c := range rec.Calls {
+		if strings.Contains(c, in.Params.Binary+" setup") {
+			if !strings.Contains(c, "--join CODE123") {
+				t.Fatalf("setup ran without the code: %s", c)
+			}
+			joined = true
+		}
+	}
+	if !joined {
+		t.Fatalf("setup --join did not run: %v", rec.Calls)
+	}
+}

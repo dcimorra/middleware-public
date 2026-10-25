@@ -9,6 +9,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/settings"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -328,5 +329,34 @@ func TestThePanelOnTheTunnelDoorOpensNoPort(t *testing.T) {
 	}
 	if err := e.Run("setup", []string{"--root", root, "--domain", "panel.example.com", "--door", "local"}); err == nil {
 		t.Fatal("the local door was accepted for the panel")
+	}
+}
+
+// setup --join enters the network through the running service, with the
+// endpoint the house suggests when none is given, and says where the node
+// is managed from.
+func TestSetupJoinEntersTheNetworkThroughTheService(t *testing.T) {
+	var got map[string]string
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/nodes", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"suggested_endpoint":"203.0.113.9:51821"}`))
+	})
+	mux.HandleFunc("POST /api/v1/nodes/join", func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&got)
+		w.Write([]byte(`{"ok":true,"inviter":"alpha","members":2}`))
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	cl := &Client{Base: ts.URL, HTTP: ts.Client(), Via: ts.URL}
+	root := t.TempDir()
+	out, err := run(t, cl, "setup", "--root", root, "--join", "CODE123")
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if got["code"] != "CODE123" || got["endpoint"] != "203.0.113.9:51821" {
+		t.Fatalf("join asked with %v", got)
+	}
+	if !strings.Contains(out, "network of alpha") || !strings.Contains(out, "no operator of its own") {
+		t.Fatalf("output: %s", out)
 	}
 }

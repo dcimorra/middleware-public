@@ -15,14 +15,16 @@ import (
 
 	"github.com/dcimorra/middleware-public/internal/helper"
 	"github.com/dcimorra/middleware-public/internal/nodes"
+	"github.com/dcimorra/middleware-public/internal/settings"
 	"github.com/dcimorra/middleware-public/internal/wireguard"
 )
 
 // meshNet stands in for the kernel's interface; the mesh door and every
 // call between the nodes are real HTTP on loopback addresses.
 type meshNet struct {
-	mu sync.Mutex
-	up bool
+	mu    sync.Mutex
+	up    bool
+	peers []wireguard.PeerStatus
 }
 
 func (f *meshNet) Apply(context.Context, wireguard.ServerConfig, bool) error {
@@ -38,7 +40,7 @@ func (f *meshNet) Firewall(context.Context, helper.MeshFirewallArgs) error {
 func (f *meshNet) Status(context.Context) (helper.VPNStatus, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return helper.VPNStatus{Up: f.up}, nil
+	return helper.VPNStatus{Up: f.up, Peers: f.peers}, nil
 }
 
 func meshPort(t *testing.T) int {
@@ -192,5 +194,50 @@ func getJSON(t *testing.T, f *fixture, path string, v any) {
 	defer res.Body.Close()
 	if err := json.NewDecoder(res.Body).Decode(v); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A node in a network drops its panel's domain and is managed from the
+// network; outside one, or with no other node answering, it is refused,
+// because the panel would then be reachable only through an SSH tunnel.
+func TestAPanelLeavesItsDomainOnlyWhereTheNetworkReachesIt(t *testing.T) {
+	port := meshPort(t)
+	a, _ := nodeFixture(t, "alpha", port)
+	b := newFixture(t).withToken()
+	bnet := &meshNet{}
+	bm, err := nodes.Open(nodes.Options{Dir: filepath.Join(b.root, "data", "nodes"), Hostname: "beta", Version: "test", Net: bnet, Subnet: netip.MustParsePrefix("127.77.0.0/16"), APIPort: port})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.srv.RegisterNodes(bm, nil)
+	bm.Serve(b.srv)
+	t.Cleanup(func() { _ = bm.Leave(context.Background()) })
+	st := settings.Defaults()
+	st.PanelDomain = "beta.example"
+	b.srv.opts.Settings = func() settings.Settings { return st }
+	b.srv.opts.SaveSettings = func(n settings.Settings) error { st = n; return nil }
+
+	if res, out := b.call("POST", "/api/v1/system/panel/network-only", nil); res.StatusCode != 409 || !strings.Contains(text(out), "no network") {
+		t.Fatalf("outside a network: %d %s", res.StatusCode, text(out))
+	}
+	_, inv := a.call("POST", "/api/v1/nodes/invite", map[string]string{"endpoint": "198.51.100.1:51821"})
+	if res, out := b.call("POST", "/api/v1/nodes/join", map[string]string{"code": inv["code"].(string)}); res.StatusCode != 200 {
+		t.Fatalf("join: %d %s", res.StatusCode, text(out))
+	}
+	if res, out := b.call("POST", "/api/v1/system/panel/network-only", nil); res.StatusCode != 409 || !strings.Contains(text(out), "answers") {
+		t.Fatalf("with no other node answering: %d %s", res.StatusCode, text(out))
+	}
+	if st.PanelDomain != "beta.example" {
+		t.Fatal("the domain went although it was refused")
+	}
+	// alpha answers through the tunnel now.
+	for _, x := range bm.Members() {
+		bnet.mu.Lock()
+		bnet.peers = append(bnet.peers, wireguard.PeerStatus{PublicKey: x.PublicKey, LastHandshake: time.Now()})
+		bnet.mu.Unlock()
+	}
+	res, out := b.call("POST", "/api/v1/system/panel/network-only", nil)
+	if res.StatusCode != 200 || st.PanelDomain != "" || !strings.Contains(text(out), "alpha") {
+		t.Fatalf("in a network with alpha answering: %d %s (domain %q)", res.StatusCode, text(out), st.PanelDomain)
 	}
 }

@@ -37,6 +37,7 @@ in the API ([api.md](api.md)) and the panel.
 | `uninstall [--yes] [--keep-binary]` | stop and remove the units. Keeps the root directory and the sites. |
 | `doctor` | binary, units, loopback socket, helper, root directory, reserved ports, docker, wg, disk: one line each, exit 1 if any fails |
 | `setup [--password]` | create the operator: prints a one-time code to enter in the panel, or asks for the password on the terminal with `--password`. Refuses once an operator exists. |
+| `setup --join <code> [--endpoint ip:port]` | join the network another node's invitation was made in, through the running service: no domain and no operator of its own, managed from the network's panels. What `install --join` runs. |
 
 ## Sites
 
