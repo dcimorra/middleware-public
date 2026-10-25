@@ -875,6 +875,11 @@ svg.dash-spark .mem { stroke: var(--warn); stroke-dasharray: 3 2; }
 /* A protected zone of a site (Access): its path and buttons on top, the
    password and message beside each other, the addresses under. */
 .zones > .btn { align-self: flex-start; }
+.move-plan { margin-top: 8px; }
+.move-plan h3 { margin: 6px 0 4px; font-size: 14px; }
+.plan-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.plan-list ul { margin: 4px 0 0; padding-left: 16px; }
+.plan-list code { overflow-wrap: anywhere; }
 .zone { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .zone-head { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
 .zone-head > .field { flex: 1 1 220px; min-width: 0; margin: 0; }

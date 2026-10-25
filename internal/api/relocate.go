@@ -241,15 +241,9 @@ func installDeps(ctx context.Context, dir string) (string, error) {
 	if _, err := os.Stat(filepath.Join(dir, "node_modules")); err == nil {
 		return "node_modules already there", nil
 	}
-	argv := []string{"npm", "install", "--include=dev", "--no-audit", "--no-fund"}
-	switch {
-	case fileThere(filepath.Join(dir, "package-lock.json")):
-		argv = []string{"npm", "ci", "--include=dev", "--no-audit", "--no-fund"}
-	case fileThere(filepath.Join(dir, "pnpm-lock.yaml")):
-		argv = []string{"corepack", "pnpm", "install", "--frozen-lockfile", "--prod=false"}
-	case fileThere(filepath.Join(dir, "yarn.lock")):
-		argv = []string{"corepack", "yarn", "install", "--frozen-lockfile", "--production=false"}
-	}
+	// The same command the analysis shows before the move (one choice,
+	// not two that could say different things).
+	argv, _ := relocate.InstallCommand(dir)
 	path := os.Getenv("PATH")
 	bin := argv[0]
 	if goruntime.NodeDir != nil {
@@ -411,6 +405,53 @@ func (s *Server) registerRelocateSource(m *nodes.Mesh) {
 		c := job.copy()
 		s.moves.mu.Unlock()
 		return c, nil
+	})
+	s.Handle("GET", Prefix+"/sites/{domain}/move/plan", "What moving the site would do, before it does it (?node= the target, which is asked whether it can take it): bytes and files copied, where dependencies are installed and with what, its Node, the names that follow, links that leave its folder, warnings", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		domain, err := domainOf(r)
+		if err != nil {
+			return nil, err
+		}
+		mgr, err := s.sitesManager()
+		if err != nil {
+			return nil, err
+		}
+		site, err := mgr.Get(domain)
+		if err != nil {
+			return nil, err
+		}
+		dir := mgr.Dir(domain)
+		src := siteSource{s: s, mgr: mgr}
+		install := installsThere(dir, site.Manifest)
+		parts := relocate.Parts
+		if install {
+			parts = relocate.MoveParts
+		}
+		var names []string
+		if _, ok := src.Published(domain); ok {
+			names = src.Names(domain)
+		}
+		a := relocate.Analyze(dir, parts(s.opts.Root, domain), install, names)
+		out := map[string]any{"analysis": a}
+		if install && a.Node == "" {
+			if v := siteNodeMajor(r.Context(), dir, site.Manifest.Run.Command); v != "" {
+				// Written in its manifest when the move starts, so the
+				// target runs it on the same major.
+				out["node_pinned"] = v
+			}
+		}
+		if id := r.URL.Query().Get("node"); id != "" {
+			x, ok := m.Member(id)
+			if !ok {
+				return nil, Errorf(http.StatusNotFound, "%v", nodes.ErrNotFound)
+			}
+			out["node"] = x.Name
+			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+			defer cancel()
+			if err := (meshTarget{m: m, x: x}).Check(ctx, domain, relocate.NeedsOf(s.opts.Root, domain, src)); err != nil {
+				out["check_error"] = err.Error()
+			}
+		}
+		return out, nil
 	})
 	s.Handle("GET", Prefix+"/sites/{domain}/move", "The site's last move to another node: each operation with its state, and how it ended", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		domain, err := domainOf(r)

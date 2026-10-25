@@ -36,6 +36,7 @@ func importCmd(args []string) error {
 	command := fs.String("command", "", "how the app starts, when its folder does not say (\"node server.js\")")
 	stop := fs.String("stop", "", "a shell line that stops the app here for the last copy (\"pm2 stop shop\")")
 	start := fs.String("start", "", "a shell line that starts it here again if the import fails")
+	dryRun := fs.Bool("dry-run", false, "say what the import would do (what is copied, where dependencies are installed, what will not travel well) and stop")
 	rest, err := parseInterleaved(fs, args)
 	if err != nil {
 		return err
@@ -84,6 +85,34 @@ func importCmd(args []string) error {
 			fmt.Printf("  note: no --stop given: it is copied while it runs; a database it writes meanwhile may arrive torn\n")
 		}
 		mover.Root, mover.Dir, mover.Source, mover.Parts = filepath.Dir(dir), dir, src, src.Parts
+	}
+	// What it will do, before it does it: the same analysis a move between
+	// nodes shows in the panel.
+	parts := relocate.ImportParts
+	if mover.Parts != nil {
+		parts = mover.Parts
+	}
+	plan := relocate.Analyze(dir, parts(mover.Root, domain), true, nil)
+	fmt.Printf("  plan: copies %.1f MB in %d files", float64(plan.Bytes)/(1<<20), plan.Files)
+	if plan.Node != "" {
+		fmt.Printf(", Node %s", plan.Node)
+	}
+	fmt.Println()
+	if len(plan.Installs) == 0 {
+		fmt.Println("  plan: no dependencies to install there")
+	}
+	for _, in := range plan.Installs {
+		fmt.Printf("  plan: installs dependencies there in %s (%s)\n", in.Dir, strings.Join(in.Command[:2], " "))
+	}
+	for _, l := range plan.Links {
+		fmt.Printf("  plan: link out of the folder: %s -> %s\n", l.Path, l.Target)
+	}
+	for _, w := range plan.Warnings {
+		fmt.Printf("  warning: %s\n", w)
+	}
+	if *dryRun {
+		fmt.Println("Nothing was moved (--dry-run).")
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	defer cancel()

@@ -241,3 +241,26 @@ func TestAPanelLeavesItsDomainOnlyWhereTheNetworkReachesIt(t *testing.T) {
 		t.Fatalf("in a network with alpha answering: %d %s (domain %q)", res.StatusCode, text(out), st.PanelDomain)
 	}
 }
+
+// The move's plan is asked before it is confirmed: what it would do, and
+// whether the target can take it.
+func TestAMovesPlanIsReadBeforeItIsConfirmed(t *testing.T) {
+	port := meshPort(t)
+	a, _ := nodeFixture(t, "alpha", port)
+	b, bm := nodeFixture(t, "beta", port)
+	_, inv := a.call("POST", "/api/v1/nodes/invite", map[string]string{"endpoint": "198.51.100.1:51821"})
+	if res, out := b.call("POST", "/api/v1/nodes/join", map[string]string{"code": inv["code"].(string)}); res.StatusCode != 200 {
+		t.Fatalf("join: %s", text(out))
+	}
+	if res, out := a.call("POST", "/api/v1/sites", map[string]any{"domain": "p.test", "template": "static", "publish": false}); res.StatusCode != 201 {
+		t.Fatalf("site: %s", text(out))
+	}
+	res, out := a.call("GET", "/api/v1/sites/p.test/move/plan?node="+bm.Self().ID, nil)
+	if res.StatusCode != 200 || out["node"] != "beta" || out["check_error"] != nil {
+		t.Fatalf("%d %s", res.StatusCode, text(out))
+	}
+	an, _ := out["analysis"].(map[string]any)
+	if an == nil || an["files"].(float64) < 1 {
+		t.Fatalf("analysis: %v", out)
+	}
+}

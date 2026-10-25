@@ -2,7 +2,7 @@
 // re-renders from the store so a restart pressed here shows "handing
 // over" within the tick that does it, from the same event the list sees.
 
-import { h, clear, append, shortRev, fmtTime } from "../lib/dom.js";
+import { h, clear, append, shortRev, fmtTime, fmtBytes } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, apiURL, enc } from "../lib/api.js";
 import { onEvent } from "../lib/stream.js";
@@ -219,16 +219,56 @@ function overviewTab(domain) {
   // followed step by step from the events until it runs there.
   async function moveSite() {
     const sel = h("select", null, ...otherNodes.map((x) => h("option", { value: x.id }, x.name)));
+    // What the move will do, read before it is confirmed (GET move/plan):
+    // what is copied, where the target installs and with what, the Node,
+    // the names, and what will not travel well. Asked again when the
+    // target changes, since the target is asked whether it can take it.
+    const planEl = h("div", { class: "move-plan" }, loading());
+    let plan = null;
+    async function readPlan() {
+      plan = null;
+      clear(planEl).append(loading());
+      try { plan = await api.get(`/sites/${enc(domain)}/move/plan?node=${enc(sel.value)}`); } catch (e) { clear(planEl).append(notice("bad", e.message)); return; }
+      clear(planEl).append(planView(plan));
+    }
+    sel.addEventListener("change", readPlan);
+    readPlan();
     const node = await open({
       title: t("site.moveQ", { domain }),
-      body: [h("p", { class: "dim" }, t("site.moveBody")), field(t("site.moveTo"), sel)],
+      body: [h("p", { class: "dim" }, t("site.moveBody")), field(t("site.moveTo"), sel), planEl],
       buttons: [{ label: t("common.cancel"), value: null }, { label: t("site.move"), primary: true, value: "go" }],
     });
     if (node !== "go") return;
+    if (plan && plan.check_error) { toast(plan.check_error, "bad"); return; }
     try {
       await api.post(`/sites/${enc(domain)}/move`, { node: sel.value });
     } catch (e) { toastError(e); return; }
     openMove(domain);
+  }
+
+  function planView(p) {
+    const a = p.analysis || {};
+    const items = [];
+    items.push(h("li", null, t("plan.copy", { size: fmtBytes(a.bytes || 0), files: (a.files || 0).toLocaleString() })));
+    if ((a.installs || []).length) {
+      items.push(h("li", null, t("plan.installs"), h("ul", null, ...a.installs.map((i) => h("li", null, h("code", null, i.dir === "." ? t("plan.root") : i.dir + "/"), " — ", h("code", { class: "small" }, i.command.slice(0, 2).join(" ")), i.lockfile ? null : h("span", { class: "badge warn" }, t("plan.noLock")))))));
+    } else {
+      items.push(h("li", null, t("plan.noInstalls")));
+    }
+    const node = a.node || p.node_pinned;
+    if (node) items.push(h("li", null, t(a.node ? "plan.node" : "plan.nodePinned", { v: node })));
+    if (a.docker) items.push(h("li", null, t("plan.docker")));
+    if ((a.names || []).length) items.push(h("li", null, t("plan.names", { names: a.names.join(", ") })));
+    else items.push(h("li", null, t("plan.noNames")));
+    const out = [h("h3", null, t("plan.title")), h("ul", { class: "plan-list" }, ...items)];
+    for (const w of a.warnings || []) out.push(notice("warn", w));
+    if ((a.outside_links || []).length) {
+      out.push(h("details", { class: "small" }, h("summary", null, t("plan.links", { n: a.outside_links.length })),
+        h("ul", null, ...a.outside_links.map((l) => h("li", null, h("code", null, l.path), " → ", h("code", null, l.target))))));
+    }
+    if (p.check_error) out.push(notice("bad", t("plan.cannot", { node: p.node || "", why: p.check_error })));
+    else if (p.node) out.push(h("p", { class: "small level-ok" }, t("plan.can", { node: p.node })));
+    return h("div", { class: "stack-sm" }, ...out);
   }
 
   // The site's redirects: an old address sent to a new one with a 3xx,
