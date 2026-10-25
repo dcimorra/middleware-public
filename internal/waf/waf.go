@@ -647,8 +647,9 @@ func (w *WAF) Wrap(next http.Handler) http.Handler {
 			rw = rec
 		}
 		var site Site
+		isSite := false
 		if w.opts.Lookup != nil {
-			site, _ = w.opts.Lookup(host)
+			site, isSite = w.opts.Lookup(host)
 		}
 		pol := w.effectiveFor(site.WAF)
 		if pol.rate != nil && !w.allow(host, addr, pol.rate) {
@@ -656,7 +657,7 @@ func (w *WAF) Wrap(next http.Handler) http.Handler {
 			w.trip(ip)
 			return
 		}
-		if pol.maxBody > 0 {
+		if pol.maxBody > 0 && !(!isSite && relocateUpload(r)) {
 			if r.ContentLength > pol.maxBody {
 				w.refuse(rw, r, ip, "toolarge", http.StatusRequestEntityTooLarge)
 				return
@@ -678,6 +679,24 @@ func (w *WAF) Wrap(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(rw, r)
 	})
+}
+
+// relocateUpload is a site's bundle coming into this house from another
+// (a move between nodes, an import with its one-site token): gigabytes on
+// purpose, and authorized by the API behind, not by size. max_body is for
+// what visitors send; applied here it cut a 160 MB move at 20 MB halfway
+// through. Only on a host that is not a site's: a site's own path that
+// happens to look like this one keeps its limit.
+func relocateUpload(r *http.Request) bool {
+	if r.Method != http.MethodPut {
+		return false
+	}
+	rest, ok := strings.CutPrefix(r.URL.Path, "/api/v1/relocate/")
+	if !ok {
+		return false
+	}
+	domain, tail, _ := strings.Cut(rest, "/")
+	return domain != "" && (tail == "" || tail == "delta")
 }
 
 func matchesAny(s string, subs []string) bool {

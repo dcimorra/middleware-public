@@ -114,6 +114,14 @@ helper is present the block is also pushed to nftables (`firewall.block`)
 so a flood stops at layer 3 and never reaches Go. Blocks have a TTL and are
 written down, so a restart neither forgets nor keeps them forever.
 
+The body limit (`max_body`, 20m by default) is for what visitors send. It
+does not apply to a site's bundle coming into this house (`PUT
+/api/v1/relocate/{domain}` and its `/delta`, on a host that is not a site):
+a move or an import is hundreds of megabytes on purpose, and the API behind
+authorizes it (the network's secret or a one-site import token). A body cut
+by the limit halfway through, as a streamed one is, answers 413 naming the
+limit and where to change it.
+
 **Guard.** Rules written in code (a site writing outside its folder, a
 process spawning a browser, `npm audit` findings, a port that should not be
 listening) produce incidents; the rule decides and acts, and only then may a

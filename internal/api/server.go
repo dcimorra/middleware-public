@@ -427,6 +427,18 @@ func statusOf(err error) (int, string) {
 		return 499, "client went away"
 	}
 	msg := err.Error()
+	// A body cut by the WAF's max_body halfway through (it streams, so
+	// Content-Length did not say it first) came out of whatever was reading
+	// it as a 500 "request body too large". It is the sender's size against
+	// a limit the operator set, and the answer says which and where.
+	var mb *http.MaxBytesError
+	if errors.As(err, &mb) || strings.Contains(msg, "http: request body too large") {
+		limit := "its limit"
+		if mb != nil {
+			limit = fmt.Sprintf("%d MB", mb.Limit>>20)
+		}
+		return http.StatusRequestEntityTooLarge, "the request body passed the WAF's max_body (" + limit + "): raise it in the panel, Security → WAF (max_body, for every site and the panel), or in the site's manifest (waf.max_body)"
+	}
 	if strings.HasPrefix(msg, "manifest:") || strings.HasPrefix(msg, "body:") {
 		return http.StatusBadRequest, msg
 	}

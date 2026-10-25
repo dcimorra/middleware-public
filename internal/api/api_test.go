@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -686,4 +687,37 @@ func TestACookieRequestFromASiblingSubdomainIsRefused(t *testing.T) {
 	if c := post("Sec-Fetch-Site: same-origin"); c != 200 {
 		t.Fatalf("the panel itself: %d", c)
 	}
+}
+
+// A body cut halfway by a MaxBytesReader (the WAF's max_body on a streamed
+// upload) answers 413 naming the limit and where it is changed, not 500.
+func TestABodyCutByTheWAFsLimitIs413NamingIt(t *testing.T) {
+	f := newFixture(t).withToken()
+	f.srv.Handle("PUT", Prefix+"/test/upload", "test", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		_, err := io.Copy(io.Discard, r.Body)
+		return nil, fmt.Errorf("receiving: %w", err)
+	})
+	req, _ := http.NewRequest("PUT", f.http.URL+"/api/v1/test/upload", io.LimitReader(zeros{}, 2<<20))
+	req.ContentLength = -1
+	req.Header.Set("Authorization", "Bearer "+f.token)
+	req.Header.Set("X-Requested-With", "middleware")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 413 || !strings.Contains(string(body), "max_body (1 MB)") || !strings.Contains(string(body), "Security") {
+		t.Fatalf("%d %s", res.StatusCode, body)
+	}
+}
+
+type zeros struct{}
+
+func (zeros) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 0
+	}
+	return len(p), nil
 }

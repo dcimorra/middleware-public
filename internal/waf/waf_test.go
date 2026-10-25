@@ -3,6 +3,7 @@ package waf
 import (
 	"errors"
 	"github.com/dcimorra/middleware-public/internal/attack"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -397,5 +398,46 @@ func TestPolicyValidationRejectsWhatCannotBeApplied(t *testing.T) {
 	}
 	if n, _ := ParseSize("512k"); n != 512<<10 {
 		t.Fatalf("512k = %d", n)
+	}
+}
+
+// A site's bundle moving into this house is gigabytes on purpose and
+// authorized by the API: max_body does not cut it at the panel. A site's
+// own path that looks the same keeps its limit, and so does anything else.
+func TestAMovesUploadIsNotCutByMaxBodyAtThePanel(t *testing.T) {
+	w, _, _ := newTestWAF(t, t.TempDir(), func(host string) (Site, bool) { return Site{}, host == "shop.example" })
+	p := DefaultPolicy()
+	p.MaxBody = "1k"
+	if err := w.SetPolicy(p); err != nil {
+		t.Fatal(err)
+	}
+	h := w.Wrap(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			rw.WriteHeader(http.StatusRequestEntityTooLarge)
+			return
+		}
+		rw.WriteHeader(200)
+	}))
+	send := func(method, url string) int {
+		r := httptest.NewRequest(method, url, strings.NewReader(strings.Repeat("x", 4096)))
+		r.ContentLength = -1 // streamed, as a move sends it
+		r.RemoteAddr = "203.0.113.2:1"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	for url, want := range map[string]int{
+		"http://panel.example/api/v1/relocate/napnap.es":       200,
+		"http://panel.example/api/v1/relocate/napnap.es/delta": 200,
+		"http://panel.example/api/v1/relocate/napnap.es/other": 413,
+		"http://panel.example/api/v1/sites":                    413,
+		"http://shop.example/api/v1/relocate/napnap.es":        413,
+	} {
+		if got := send(http.MethodPut, url); got != want {
+			t.Errorf("PUT %s: %d, want %d", url, got, want)
+		}
+	}
+	if got := send(http.MethodPost, "http://panel.example/api/v1/relocate/napnap.es"); got != 413 {
+		t.Errorf("POST to the upload's path: %d, want 413", got)
 	}
 }
