@@ -441,3 +441,44 @@ func TestAMovesUploadIsNotCutByMaxBodyAtThePanel(t *testing.T) {
 		t.Errorf("POST to the upload's path: %d, want 413", got)
 	}
 }
+
+// The operator's own session on the panel is not rate-limited nor tripped
+// into a block, from whatever address: the same burst without it is.
+func TestTheOperatorsOwnPanelTrafficIsNotRateLimited(t *testing.T) {
+	w, _, _ := newTestWAF(t, t.TempDir(), nil)
+	p := DefaultPolicy()
+	p.Rate = &manifest.Rate{Requests: 5, Window: manifest.Duration(time.Minute), Burst: 5}
+	p.Trips = 3
+	if err := w.SetPolicy(p); err != nil {
+		t.Fatal(err)
+	}
+	w.SetOperator(func(r *http.Request) bool { return r.Header.Get("Cookie") == "mw_session=good" })
+	h := w.Wrap(okHandler())
+	send := func(remote, cookie string) int {
+		r := httptest.NewRequest(http.MethodGet, "http://panel.example/api/v1/agents/waiting", nil)
+		r.RemoteAddr = remote
+		if cookie != "" {
+			r.Header.Set("Cookie", cookie)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	for i := 0; i < 60; i++ {
+		if c := send("203.0.113.7:1", "mw_session=good"); c != 200 {
+			t.Fatalf("the operator's request %d: %d", i, c)
+		}
+	}
+	if w.IsBlocked(net.ParseIP("203.0.113.7")) {
+		t.Fatal("the operator's address was blocked")
+	}
+	limited := false
+	for i := 0; i < 60; i++ {
+		if c := send("203.0.113.8:1", "mw_session=stolen-or-none"); c == http.StatusTooManyRequests || c == http.StatusForbidden {
+			limited = true
+		}
+	}
+	if !limited || !w.IsBlocked(net.ParseIP("203.0.113.8")) {
+		t.Fatal("the same burst without the session was not limited and blocked")
+	}
+}

@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/attack"
@@ -169,6 +170,10 @@ type WAF struct {
 	// OnUnblock is its way back: an address taken off the list here must
 	// leave the kernel's too, or it stays cut until the kernel's timer.
 	OnUnblock func(ip net.IP)
+
+	// operator says a request carries the operator's own panel session
+	// (SetOperator); nil is no one.
+	operator atomic.Pointer[func(*http.Request) bool]
 
 	// offenders are the addresses with strikes (fail2ban.go); trusted the
 	// ones the operator logged in from.
@@ -604,6 +609,21 @@ func hostOf(r *http.Request) string {
 	return strings.ToLower(strings.TrimSuffix(h, "."))
 }
 
+// SetOperator installs how a request is known to carry the operator's own
+// session. Such a request is the panel's own traffic and is not counted:
+// a phone on the panel (the dashboard, the bar asking every node, the
+// stream, the moves) passed the rate limit in a minute, tripped it twenty
+// times and was blocked for ten minutes; trusting the address after a
+// login did not help, as a phone's address changes while its cookie does
+// not.
+func (w *WAF) SetOperator(f func(*http.Request) bool) {
+	if f == nil {
+		w.operator.Store(nil)
+		return
+	}
+	w.operator.Store(&f)
+}
+
 // Wrap implements app.Hook.
 func (w *WAF) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
@@ -624,6 +644,13 @@ func (w *WAF) Wrap(next http.Handler) http.Handler {
 				next.ServeHTTP(rw, r)
 				return
 			}
+		}
+		if op := w.operator.Load(); op != nil && (*op)(r) {
+			// The operator, on the panel: not rate-limited, not tripped,
+			// and the address trusted for the strikes too.
+			w.Trust(ip, 7*24*time.Hour)
+			next.ServeHTTP(rw, r)
+			return
 		}
 		if w.IsBlocked(ip) {
 			w.refuse(rw, r, ip, "forbidden", http.StatusForbidden)

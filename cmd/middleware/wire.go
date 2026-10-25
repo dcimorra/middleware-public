@@ -23,6 +23,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/api"
 	"github.com/dcimorra/middleware-public/internal/app"
 	"github.com/dcimorra/middleware-public/internal/audit"
+	"github.com/dcimorra/middleware-public/internal/auth"
 	"github.com/dcimorra/middleware-public/internal/autofix"
 	"github.com/dcimorra/middleware-public/internal/chat"
 	"github.com/dcimorra/middleware-public/internal/deps"
@@ -418,6 +419,20 @@ func buildWire(a *app.App) app.Hook {
 	// a flood stops before it reaches Go. Without the helper the firewall
 	// says so once and the block stays at layer 7.
 	fw := firewall.New(helper.Dial(""), a.Bus)
+	if theWAF != nil && srv != nil {
+		// The operator's own session on the panel is the panel's traffic,
+		// not a visitor's: not rate-limited (waf.SetOperator).
+		store := srv.Auth()
+		theWAF.SetOperator(func(r *http.Request) bool {
+			panel := a.Proxy.PanelDomain()
+			host := strings.ToLower(strings.Split(r.Host, ":")[0])
+			if panel == "" || host != panel || store == nil {
+				return false
+			}
+			c, err := r.Cookie(auth.CookieName)
+			return err == nil && store.ValidSession(c.Value)
+		})
+	}
 	if theWAF != nil {
 		theWAF.OnBlock = func(ip net.IP, d time.Duration) { _ = fw.OnBlock(ip.String(), d) }
 		theWAF.OnUnblock = func(ip net.IP) { _ = fw.Unblock(ip.String()) }

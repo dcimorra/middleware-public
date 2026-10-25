@@ -122,6 +122,13 @@ authorizes it (the network's secret or a one-site import token). A body cut
 by the limit halfway through, as a streamed one is, answers 413 naming the
 limit and where to change it.
 
+The operator's own session on the panel's domain is not rate-limited nor
+counted toward a block: it is the panel's own traffic (the dashboard, the
+bar asking every node, the stream), which on a phone passed the limit in a
+minute and blocked the operator for ten. It is recognised by its cookie,
+not its address, which on a phone changes; and the address it came from is
+trusted for a week, as after a login.
+
 **Guard.** Rules written in code (a site writing outside its folder, a
 process spawning a browser, `npm audit` findings, a port that should not be
 listening) produce incidents; the rule decides and acts, and only then may a
