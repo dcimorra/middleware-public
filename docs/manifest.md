@@ -421,10 +421,17 @@ re-adopted after a supervisor restart, but never handed over: they restart.
   "timeout": "1h",
   "overlap": "skip",
   "env": { "KEEP_DAYS": "30" },
+  "timezone": "Europe/Madrid",
+  "title": "Nightly backup",
+  "note": "Why it runs at this hour.",
   "disabled": false
 }
 ```
 
 `site` makes the command run inside that site's folder with that site's
 environment. Without it, the task runs from the root directory. `overlap` is
-`skip` (default) or `queue`.
+`skip` (default) or `queue`. `timezone` reads `schedule` in that zone, so a
+daylight-saving change moves nothing; without it the schedule is in the
+machine's clock. `title` and `note` are for people. A site's tasks go with
+it when it moves to another node or is imported, and are turned off where
+it was.

@@ -65,6 +65,15 @@ func importCmd(args []string) error {
 			for _, n := range notes {
 				fmt.Printf("  note: %s\n", n)
 			}
+			// Before anything moves: a task that does not convert stops
+			// the import here, not after the site is down.
+			taskNotes, err := src.TaskNotes(domain)
+			if err != nil {
+				return fmt.Errorf("its tasks: %w", err)
+			}
+			for _, n := range taskNotes {
+				fmt.Printf("  plan: %s\n", n)
+			}
 			mover.Root, mover.Source, mover.Parts = root, src, relocate.ImportParts
 		} else {
 			v1 = false

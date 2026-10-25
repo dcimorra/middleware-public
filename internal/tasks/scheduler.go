@@ -110,6 +110,8 @@ type Status struct {
 	Name     string    `json:"name"`
 	Schedule string    `json:"schedule"`
 	Site     string    `json:"site,omitempty"`
+	Title    string    `json:"title,omitempty"`
+	Timezone string    `json:"timezone,omitempty"`
 	Disabled bool      `json:"disabled,omitempty"`
 	Next     time.Time `json:"next"`
 	Last     *Run      `json:"last,omitempty"`
@@ -129,8 +131,9 @@ func (s *Scheduler) List() []Status {
 			st.Error = err.Error()
 		} else {
 			st.Schedule, st.Site, st.Disabled = t.Schedule, t.Site, t.Disabled
+			st.Title, st.Timezone = t.Title, t.Timezone
 			if sched, err := cron.Parse(t.Schedule); err == nil && !t.Disabled {
-				st.Next = sched.Next(now)
+				st.Next = sched.Next(now.In(t.Location()))
 			}
 		}
 		if r := LoadRecord(s.opts.Root, name); len(r.Runs) > 0 {
@@ -184,7 +187,9 @@ func (s *Scheduler) tick() {
 			s.invalid(name, err)
 			continue
 		}
-		due := sched.Next(since)
+		// Read in the task's zone: cron.Next matches the fields in the
+		// location of the time it is given.
+		due := sched.Next(since.In(t.Location()))
 		if due.IsZero() || due.After(now) {
 			continue
 		}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/dcimorra/middleware-public/internal/archive"
 	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/migrate"
 )
 
@@ -152,8 +153,34 @@ func (t HTTPTarget) SendDelta(ctx context.Context, d string, r io.Reader) error 
 }
 
 // Commit implements Target.
-func (t HTTPTarget) Commit(ctx context.Context, d string, m []byte) error {
-	return t.do(ctx, "POST", "/relocate/"+d+"/commit", "application/json", jsonBody(map[string]any{"manifest": base64.StdEncoding.EncodeToString(m), "install": t.Install}), nil)
+func (t HTTPTarget) Commit(ctx context.Context, d string, m []byte, taskFiles map[string][]byte) error {
+	body := map[string]any{"manifest": base64.StdEncoding.EncodeToString(m), "install": t.Install}
+	if len(taskFiles) > 0 {
+		body["tasks"] = EncodeTasks(taskFiles)
+	}
+	return t.do(ctx, "POST", "/relocate/"+d+"/commit", "application/json", jsonBody(body), nil)
+}
+
+// EncodeTasks is how task files travel in a commit's body, by name.
+func EncodeTasks(taskFiles map[string][]byte) map[string]string {
+	out := make(map[string]string, len(taskFiles))
+	for name, data := range taskFiles {
+		out[name] = base64.StdEncoding.EncodeToString(data)
+	}
+	return out
+}
+
+// DecodeTasks is EncodeTasks undone, for the receiving side.
+func DecodeTasks(in map[string]string) (map[string][]byte, error) {
+	out := make(map[string][]byte, len(in))
+	for name, s := range in {
+		data, err := base64.StdEncoding.DecodeString(s)
+		if err != nil {
+			return nil, fmt.Errorf("task %s: not base64", name)
+		}
+		out[name] = data
+	}
+	return out, nil
 }
 
 // Discard implements Target.
@@ -263,6 +290,7 @@ type V1Source struct {
 	original  []byte
 	converted []byte
 	docker    bool
+	heldTasks map[string][]byte
 }
 
 // Convert reads and converts the V1 manifest, before anything moves: a
@@ -289,7 +317,7 @@ func (s *V1Source) Convert(domain string) (notes []string, err error) {
 	return res.Notes, nil
 }
 
-// Needs implements Needer.
+// Needs implements Needer. The mover adds the tasks (Tasker).
 func (s *V1Source) Needs(string) Needs { return Needs{Docker: s.docker} }
 
 // Stop writes disabled into the V1 manifest, which is how V1 stops a site,
@@ -343,7 +371,10 @@ func (s *V1Source) Start(domain string, _ []byte) error {
 // Published implements Source: the names follow the site, on the target's
 // door for new sites (empty), and are pointed there once it answers. The
 // operator used to do it by hand, name by name ("Point it here").
-func (s *V1Source) Published(string) (string, bool) { return "", true }
+//
+// A project answers no name, and asking the target to publish it only
+// ended the import with a warning that was not one.
+func (s *V1Source) Published(domain string) (string, bool) { return "", !manifest.IsProject(domain) }
 
 // Names implements Source.
 func (s *V1Source) Names(string) []string { return nil }

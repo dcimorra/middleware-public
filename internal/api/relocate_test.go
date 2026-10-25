@@ -53,8 +53,8 @@ func (t httpTarget) Send(_ context.Context, d string, r io.Reader) error {
 func (t httpTarget) SendDelta(_ context.Context, d string, r io.Reader) error {
 	return t.do("PUT", "/relocate/"+d+"/delta", "application/gzip", r, nil)
 }
-func (t httpTarget) Commit(_ context.Context, d string, m []byte) error {
-	body, _ := json.Marshal(map[string]string{"manifest": base64.StdEncoding.EncodeToString(m)})
+func (t httpTarget) Commit(_ context.Context, d string, m []byte, ts map[string][]byte) error {
+	body, _ := json.Marshal(map[string]any{"manifest": base64.StdEncoding.EncodeToString(m), "tasks": relocate.EncodeTasks(ts)})
 	return t.do("POST", "/relocate/"+d+"/commit", "application/json", bytes.NewReader(body), nil)
 }
 func (t httpTarget) Discard(_ context.Context, d string) error {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/relocate"
+	"github.com/dcimorra/middleware-public/internal/tasks"
 )
 
 // A V1 site comes into a V2 house with the token the V2 panel made for it:
@@ -205,5 +206,59 @@ func TestAnImportedSitesNamesArePointedHereByThemselves(t *testing.T) {
 	res.Body.Close()
 	if res.StatusCode != 403 {
 		t.Fatalf("another site's token publishing over: %d", res.StatusCode)
+	}
+}
+
+// A V1 site's tasks go with it, through the commit's body: converted,
+// running there, and turned off in V1, where they would otherwise run
+// against the same database the moment someone starts the site again.
+func TestAV1SitesTasksGoWithItAndAreTurnedOffInV1(t *testing.T) {
+	v2 := newFixture(t).withToken()
+	_, out := v2.call("POST", "/api/v1/relocate/import-token", map[string]any{"domain": "old.test", "base": v2.http.URL})
+	tok, _ := out["token"].(string)
+
+	v1 := t.TempDir()
+	site := filepath.Join(v1, "sites", "old.test")
+	os.MkdirAll(filepath.Join(site, "public"), 0o755)
+	os.MkdirAll(filepath.Join(site, "node_modules", ".bin"), 0o755)
+	os.WriteFile(filepath.Join(site, "node_modules", ".bin", "tsx"), []byte("#!/bin/sh\n"), 0o755)
+	os.WriteFile(filepath.Join(site, "site.json"), []byte(`{"title":"old","root":"public"}`), 0o644)
+	os.MkdirAll(filepath.Join(v1, "tasks"), 0o755)
+	nightly := `{"title":"Sync","group":"old","note":"why at 00:50","schedule":"50 0 * * *","command":["tsx","scripts/sync.ts"],"site":"old.test","env":{"NODE_ENV":"production"},"timezone":"Europe/Madrid","timeout":"4h"}`
+	off := `{"title":"Old","group":"old","schedule":"0 5 * * *","command":["/usr/bin/bash","x.sh"],"site":"old.test","disabled":true}`
+	other := `{"title":"Other","group":"x","schedule":"0 5 * * *","command":["/bin/true"],"site":"other.test"}`
+	for name, body := range map[string]string{"old-sync": nightly, "old-off": off, "other-task": other} {
+		os.WriteFile(filepath.Join(v1, "tasks", name+".json"), []byte(body), 0o644)
+	}
+
+	src := &relocate.V1Source{Root: v1, Running: func(string) bool { return false }}
+	if _, err := src.Convert("old.test"); err != nil {
+		t.Fatal(err)
+	}
+	m := &relocate.Mover{Root: v1, Source: src, Parts: relocate.ImportParts, Poll: 20 * time.Millisecond, ReadyWait: 5 * time.Second}
+	if _, err := m.Move(context.Background(), "old.test", relocate.HTTPTarget{Base: v2.http.URL, Token: tok}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := tasks.Load(v2.root, "old-sync")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Timezone != "Europe/Madrid" || got.Title != "Sync" || got.Note != "why at 00:50" || time.Duration(got.Timeout) != 4*time.Hour ||
+		got.Command[0] != "./node_modules/.bin/tsx" || got.Site != "old.test" || got.Disabled {
+		t.Fatalf("the task arrived as %+v", got)
+	}
+	if g, err := tasks.Load(v2.root, "old-off"); err != nil || !g.Disabled || time.Duration(g.Timeout) != 30*time.Minute {
+		t.Fatalf("a task off in V1 arrived as %+v (%v): off, and with V1's 30m it had without saying", g, err)
+	}
+	if _, err := os.Stat(tasks.Path(v2.root, "other-task")); err == nil {
+		t.Fatal("another site's task came with it")
+	}
+	raw, _ := os.ReadFile(filepath.Join(v1, "tasks", "old-sync.json"))
+	if !strings.Contains(string(raw), `"disabled": true`) || !strings.Contains(string(raw), `"why at 00:50"`) {
+		t.Fatalf("the V1 task was not turned off, or lost what it said: %s", raw)
+	}
+	if raw, _ := os.ReadFile(filepath.Join(v1, "tasks", "other-task.json")); string(raw) != other {
+		t.Fatalf("another site's V1 task was touched: %s", raw)
 	}
 }

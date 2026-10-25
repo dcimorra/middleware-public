@@ -343,3 +343,23 @@ func TestARunningTaskCanBeStopped(t *testing.T) {
 		t.Fatalf("status %s", runs[len(runs)-1].Status)
 	}
 }
+
+// A schedule is read in its task's zone: 00:50 in Madrid is 22:50 UTC in
+// summer and 23:50 in winter, on a machine whose clock is UTC.
+func TestATasksScheduleIsReadInItsTimezone(t *testing.T) {
+	root := newRoot(t)
+	writeTask(t, root, "night", `{"version":2,"schedule":"50 0 * * *","command":["/bin/true"],"timezone":"Europe/Madrid"}`)
+	summer := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	s := NewScheduler(Options{Root: root, Now: func() time.Time { return summer }})
+	if next := s.List()[0].Next.UTC(); !next.Equal(time.Date(2026, 7, 1, 22, 50, 0, 0, time.UTC)) {
+		t.Fatalf("summer: next %s", next)
+	}
+	winter := time.Date(2026, 12, 1, 12, 0, 0, 0, time.UTC)
+	s = NewScheduler(Options{Root: root, Now: func() time.Time { return winter }})
+	if next := s.List()[0].Next.UTC(); !next.Equal(time.Date(2026, 12, 1, 23, 50, 0, 0, time.UTC)) {
+		t.Fatalf("winter: next %s", next)
+	}
+	if _, err := Parse([]byte(`{"version":2,"schedule":"* * * * *","command":["x"],"timezone":"Mars/Olympus"}`)); err == nil {
+		t.Fatal("a zone that does not exist was accepted")
+	}
+}

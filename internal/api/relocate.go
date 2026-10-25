@@ -23,6 +23,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/nodes"
 	"github.com/dcimorra/middleware-public/internal/relocate"
 	"github.com/dcimorra/middleware-public/internal/sites"
+	"github.com/dcimorra/middleware-public/internal/tasks"
 )
 
 // Moving a site to another node of the network. Both ends are here: the
@@ -60,6 +61,11 @@ func (s *Server) registerRelocateTarget() {
 		var body relocate.Needs
 		if err := ReadJSON(r, &body); err != nil {
 			return nil, err
+		}
+		for _, name := range body.Tasks {
+			if err := rc.CheckTask(domain, name, nil); err != nil {
+				return nil, Errorf(http.StatusConflict, "%v: the site's task could not come with it", err)
+			}
 		}
 		if body.Docker {
 			if err := dockerAnswers(r.Context()); err != nil {
@@ -103,6 +109,9 @@ func (s *Server) registerRelocateTarget() {
 			// leaves node_modules behind, built for the other machine);
 			// they are installed here before the site is put in place.
 			Install bool `json:"install"`
+			// Tasks are the site's task files by name, base64: they run
+			// here from the moment it is in place.
+			Tasks map[string]string `json:"tasks"`
 		}
 		if err := ReadJSON(r, &body); err != nil {
 			return nil, err
@@ -110,6 +119,10 @@ func (s *Server) registerRelocateTarget() {
 		raw, err := base64.StdEncoding.DecodeString(body.Manifest)
 		if err != nil {
 			return nil, Errorf(http.StatusBadRequest, "manifest: not base64")
+		}
+		taskFiles, err := relocate.DecodeTasks(body.Tasks)
+		if err != nil {
+			return nil, Errorf(http.StatusBadRequest, "%v", err)
 		}
 		domain := r.PathValue("domain")
 		if body.Install {
@@ -120,7 +133,7 @@ func (s *Server) registerRelocateTarget() {
 				return nil, Errorf(http.StatusUnprocessableEntity, "installing its dependencies here failed, so it was not put in place: %v", err)
 			}
 		}
-		if err := rc.Commit(domain, raw); err != nil {
+		if err := rc.Commit(domain, raw, taskFiles); err != nil {
 			return nil, bad(err)
 		}
 		_ = relocate.MarkArrived(s.opts.Root, domain, time.Now())
@@ -509,6 +522,45 @@ func (src siteSource) Unpublish(ctx context.Context, domain string) {
 	}
 }
 
+// Tasks implements relocate.Tasker.
+func (src siteSource) Tasks(domain string) (map[string][]byte, error) {
+	return tasks.OfSite(src.s.opts.Root, domain)
+}
+
+// HoldTasks implements relocate.Tasker.
+func (src siteSource) HoldTasks(domain string) ([]string, error) {
+	files, err := tasks.OfSite(src.s.opts.Root, domain)
+	if err != nil {
+		return nil, err
+	}
+	var held []string
+	for _, name := range relocate.SortedNames(files) {
+		t, err := tasks.Parse(files[name])
+		if err != nil || t.Disabled {
+			continue
+		}
+		if err := tasks.SetDisabled(src.s.opts.Root, name, true); err != nil {
+			return held, fmt.Errorf("task %s: %w", name, err)
+		}
+		held = append(held, name)
+	}
+	return held, nil
+}
+
+// ReleaseTasks implements relocate.Tasker.
+func (src siteSource) ReleaseTasks(names []string) error {
+	var failed []string
+	for _, name := range names {
+		if err := tasks.SetDisabled(src.s.opts.Root, name, false); err != nil {
+			failed = append(failed, name+": "+err.Error())
+		}
+	}
+	if len(failed) > 0 {
+		return errors.New(strings.Join(failed, "; "))
+	}
+	return nil
+}
+
 func (src siteSource) Archive(ctx context.Context, domain string, m []byte) (string, error) {
 	return src.mgr.ArchiveMoved(ctx, domain, m)
 }
@@ -539,8 +591,12 @@ func (t meshTarget) SendDelta(ctx context.Context, domain string, body io.Reader
 	return t.older(t.m.Stream(ctx, t.x, "PUT", "/relocate/"+domain+"/delta", "application/gzip", body, nil))
 }
 
-func (t meshTarget) Commit(ctx context.Context, domain string, m []byte) error {
-	return t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/commit", map[string]string{"manifest": base64.StdEncoding.EncodeToString(m)}, nil)
+func (t meshTarget) Commit(ctx context.Context, domain string, m []byte, taskFiles map[string][]byte) error {
+	body := map[string]any{"manifest": base64.StdEncoding.EncodeToString(m)}
+	if len(taskFiles) > 0 {
+		body["tasks"] = relocate.EncodeTasks(taskFiles)
+	}
+	return t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/commit", body, nil)
 }
 
 func (t meshTarget) Prepare(ctx context.Context, domain string, dirs []string) (string, error) {

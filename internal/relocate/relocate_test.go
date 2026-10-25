@@ -36,8 +36,10 @@ func (t *localTarget) SendDelta(ctx context.Context, d string, r io.Reader) erro
 	_, err := t.rc.ReceiveDelta(ctx, d, r)
 	return err
 }
-func (t *localTarget) Commit(_ context.Context, d string, m []byte) error { return t.rc.Commit(d, m) }
-func (t *localTarget) Discard(_ context.Context, d string) error          { return t.rc.Discard(d) }
+func (t *localTarget) Commit(_ context.Context, d string, m []byte, ts map[string][]byte) error {
+	return t.rc.Commit(d, m, ts)
+}
+func (t *localTarget) Discard(_ context.Context, d string) error { return t.rc.Discard(d) }
 func (t *localTarget) Remove(_ context.Context, d string) error {
 	t.removed = true
 	return os.RemoveAll(filepath.Join(t.rc.Root, "sites", d))

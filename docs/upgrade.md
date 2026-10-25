@@ -144,6 +144,16 @@ one they wait in Publish); archive it in the V1 panel once it has served a
 while. What V1 keeps of the site under its own `data/` (conversations,
 cost) stays in V1.
 
+Its tasks (the V1 `tasks/*.json` whose `site` is it) go with it: converted
+(`timezone` kept, or the V1 machine's zone written down when the task had
+none; V1's unstated 30-minute timeout written; `group` dropped; a bare
+program such as `tsx` pointed at the site's own `node_modules/.bin` when it
+has one, otherwise said in the plan, since V1 found it in its own `PATH`),
+placed in V2 with the site, and turned off in V1 by writing `disabled` in
+each, so the same job never runs on both machines. An import that is
+undone puts each V1 task back word for word. A database outside the folder
+(a server such as PostgreSQL) does not travel: move it first.
+
 ### From any server
 
 The same command takes an app from a machine that is not a V1 house: a

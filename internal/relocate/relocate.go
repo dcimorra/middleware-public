@@ -37,6 +37,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/archive"
 	"github.com/dcimorra/middleware-public/internal/fsx"
 	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/middleware-public/internal/tasks"
 )
 
 // Parts are what moves with a site: its folder, and what the house keeps
@@ -245,9 +246,17 @@ func (r Receiver) ReceiveDelta(ctx context.Context, domain string, body io.Reade
 // last, because the engine serves a folder the moment it sees one with a
 // manifest. manifestData, when not empty, is the manifest the site had
 // before it was stopped for the move.
-func (r Receiver) Commit(domain string, manifestData []byte) error {
+func (r Receiver) Commit(domain string, manifestData []byte, taskFiles map[string][]byte) error {
 	if err := r.check(domain); err != nil {
 		return err
+	}
+	// Every task is checked before anything is placed: one that does not
+	// read here, or whose name is taken, refuses the commit whole rather
+	// than leaving the site here with part of its jobs.
+	for _, name := range SortedNames(taskFiles) {
+		if err := r.CheckTask(domain, name, taskFiles[name]); err != nil {
+			return err
+		}
 	}
 	dir := r.staging(domain)
 	site := filepath.Join(dir, "site")
@@ -294,6 +303,15 @@ func (r Receiver) Commit(domain string, manifestData []byte) error {
 		}
 		placed.Parts = append(placed.Parts, part.Name)
 	}
+	// The tasks are placed like the parts under data/: written down, so a
+	// site that does not come up takes them out with it.
+	for _, name := range SortedNames(taskFiles) {
+		if err := fsx.WriteAtomic(tasks.Path(r.Root, name), taskFiles[name], 0o644); err != nil {
+			_ = fsx.WriteJSON(r.placedPath(domain), placed, 0o644)
+			return err
+		}
+		placed.Parts = append(placed.Parts, "tasks/"+name+".json")
+	}
 	if err := os.MkdirAll(filepath.Join(r.Root, "sites"), 0o755); err != nil {
 		return err
 	}
@@ -304,6 +322,28 @@ func (r Receiver) Commit(domain string, manifestData []byte) error {
 		return err
 	}
 	return os.RemoveAll(dir)
+}
+
+// CheckTask says a task of domain's can be placed here: it reads, it is
+// the site's, and its name is free.
+func (r Receiver) CheckTask(domain, name string, data []byte) error {
+	if !tasks.ValidName(name) {
+		return fmt.Errorf("task %q: not a task name", name)
+	}
+	if fsx.Exists(tasks.Path(r.Root, name)) {
+		return fmt.Errorf("task %s: one with that name is already here", name)
+	}
+	if data == nil {
+		return nil
+	}
+	t, err := tasks.Parse(data)
+	if err != nil {
+		return fmt.Errorf("task %s: %w", name, err)
+	}
+	if t.Site != domain {
+		return fmt.Errorf("task %s: it runs in %q, not in %s", name, t.Site, domain)
+	}
+	return nil
 }
 
 // placedRecord is what Commit put under data/ for a site, and what it set

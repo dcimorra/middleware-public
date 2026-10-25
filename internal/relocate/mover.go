@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,8 +22,9 @@ type Target interface {
 	// Send and SendDelta stream a bundle into the target's staging.
 	Send(ctx context.Context, domain string, body io.Reader) error
 	SendDelta(ctx context.Context, domain string, body io.Reader) error
-	// Commit puts the staged site in place with its manifest.
-	Commit(ctx context.Context, domain string, manifestData []byte) error
+	// Commit puts the staged site in place with its manifest and its
+	// tasks (task files by name).
+	Commit(ctx context.Context, domain string, manifestData []byte, tasks map[string][]byte) error
 	// Discard throws the staging away; Remove deletes a committed site
 	// that did not come up (it is a copy: the source still has it).
 	Discard(ctx context.Context, domain string) error
@@ -80,6 +82,20 @@ type Source interface {
 	Archive(ctx context.Context, domain string, manifestData []byte) (string, error)
 }
 
+// Tasker is a Source whose site has tasks, which go with it: a site that
+// arrives without its nightly jobs serves, and nothing says what stopped.
+type Tasker interface {
+	// Tasks are the site's tasks as V2 task files, by name, as they are
+	// before the move turns them off.
+	Tasks(domain string) (map[string][]byte, error)
+	// HoldTasks turns off here the ones that are on, so none runs while
+	// the site moves nor after (two nodes running the same job against
+	// the same database), and says which it turned off.
+	HoldTasks(domain string) ([]string, error)
+	// ReleaseTasks turns those on again: the move was undone.
+	ReleaseTasks(names []string) error
+}
+
 // Needs are what a site asks of the node it moves to.
 type Needs struct {
 	// Names are the ones published where it is: the target must be able
@@ -89,6 +105,8 @@ type Needs struct {
 	// that answers. A container site moved to a machine without docker
 	// is a site that does not start there.
 	Docker bool `json:"docker,omitempty"`
+	// Tasks are the names of its task files: none may be taken there.
+	Tasks []string `json:"tasks,omitempty"`
 }
 
 // Steps of a move, in order.
@@ -177,6 +195,14 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	if n, ok := m.Source.(Needer); ok {
 		need = n.Needs(domain)
 	}
+	tasker, _ := m.Source.(Tasker)
+	if tasker != nil {
+		ts, err := tasker.Tasks(domain)
+		if err != nil {
+			return rep, fmt.Errorf("its tasks: %w", err)
+		}
+		need.Tasks = SortedNames(ts)
+	}
 	progress(StepCheck, "asking "+t.Name()+" whether it can take "+domain)
 	if err := t.Check(ctx, domain, need); err != nil {
 		return rep, err
@@ -212,8 +238,25 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	}
 
 	progress(StepStop, "stopping "+domain+" here for the last copy")
+	// Its tasks first, read as they are and then turned off: one starting
+	// between the stop and the commit would write what the last copy
+	// leaves behind.
+	var taskFiles map[string][]byte
+	var held []string
+	if tasker != nil {
+		if taskFiles, err = tasker.Tasks(domain); err == nil {
+			held, err = tasker.HoldTasks(domain)
+		}
+		if err != nil {
+			_ = tasker.ReleaseTasks(held)
+			return rep, undone(fmt.Errorf("turning its tasks off here: %w", err), m.undo(t, domain, false))
+		}
+	}
 	original, err := m.Source.Stop(ctx, domain)
 	if err != nil {
+		if tasker != nil {
+			_ = tasker.ReleaseTasks(held)
+		}
 		return rep, undone(fmt.Errorf("stop: %w", err), m.undo(t, domain, false))
 	}
 	stopped := time.Now()
@@ -223,6 +266,11 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 		progress(StepRestore, "starting it here again, as it was")
 		if err := m.Source.Start(domain, original); err != nil {
 			return rep, fmt.Errorf("%w; and starting it here again failed too: %v", cause, err)
+		}
+		if tasker != nil {
+			if err := tasker.ReleaseTasks(held); err != nil {
+				return rep, fmt.Errorf("%w; it runs here again, but its tasks are still off (%s): %v", cause, strings.Join(held, ", "), err)
+			}
 		}
 		return rep, fmt.Errorf("%w; it runs here again, as it was", cause)
 	}
@@ -235,7 +283,7 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	rep.Last = n
 
 	progress(StepCommit, "putting it in place on "+t.Name())
-	if err := t.Commit(ctx, domain, original); err != nil {
+	if err := t.Commit(ctx, domain, original, taskFiles); err != nil {
 		return restore(undone(fmt.Errorf("commit: %w", err), m.undo(t, domain, false)))
 	}
 
@@ -297,6 +345,16 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	rep.Archive = path
 	progress(StepDone, fmt.Sprintf("%s runs on %s; it was down %s", domain, t.Name(), rep.Down))
 	return rep, nil
+}
+
+// SortedNames are the keys of a set of task files, in order.
+func SortedNames(m map[string][]byte) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // undo takes out of the target what reached it: the staging and, once

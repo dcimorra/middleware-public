@@ -15,6 +15,10 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	// A timezone must resolve on a machine without /usr/share/zoneinfo
+	// too (a minimal image): a task that refuses to load there is one
+	// that never runs.
+	_ "time/tzdata"
 
 	"github.com/dcimorra/middleware-public/internal/cron"
 	"github.com/dcimorra/middleware-public/internal/fsx"
@@ -34,6 +38,27 @@ type Task struct {
 	Overlap  string            `json:"overlap,omitempty"` // "skip" (default) | "queue"
 	Env      map[string]string `json:"env,omitempty"`
 	Disabled bool              `json:"disabled,omitempty"`
+	// Title and Note are what a person reads about the task: what it is,
+	// and why it runs when and how it does. V1 tasks carry both, and a
+	// note is often the only record of why the hour is that hour.
+	Title string `json:"title,omitempty"`
+	Note  string `json:"note,omitempty"`
+	// Timezone reads the schedule in that zone ("Europe/Madrid"); empty is
+	// the machine's. Without it a chain of nightly tasks written in local
+	// hours moves one hour at every daylight-saving change, and two when
+	// it lands on a machine set to UTC.
+	Timezone string `json:"timezone,omitempty"`
+}
+
+// Location is the zone the schedule is read in.
+func (t *Task) Location() *time.Location {
+	if t.Timezone == "" {
+		return time.Local
+	}
+	if loc, err := time.LoadLocation(t.Timezone); err == nil {
+		return loc
+	}
+	return time.Local
 }
 
 var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
@@ -79,6 +104,11 @@ func (t *Task) Validate() error {
 	if t.Timeout < 0 {
 		return errors.New("timeout: negative")
 	}
+	if t.Timezone != "" {
+		if _, err := time.LoadLocation(t.Timezone); err != nil {
+			return fmt.Errorf("timezone: %q is not a zone (Europe/Madrid, UTC…)", t.Timezone)
+		}
+	}
 	return nil
 }
 
@@ -123,6 +153,43 @@ func Names(root string) []string {
 		out = append(out, n)
 	}
 	return out
+}
+
+// OfSite is every task that runs in site's folder, as its file holds it.
+func OfSite(root, site string) (map[string][]byte, error) {
+	out := map[string][]byte{}
+	for _, name := range Names(root) {
+		data, err := os.ReadFile(Path(root, name))
+		if err != nil {
+			return nil, err
+		}
+		t, err := Parse(data)
+		if err != nil {
+			// One that does not parse is not left behind in silence: the
+			// site would arrive without it and nobody would know.
+			var loose struct {
+				Site string `json:"site"`
+			}
+			if json.Unmarshal(data, &loose) == nil && loose.Site == site {
+				return nil, fmt.Errorf("task %s does not read (%v): fix it or remove it before moving %s", name, err, site)
+			}
+			continue
+		}
+		if t.Site == site {
+			out[name] = data
+		}
+	}
+	return out, nil
+}
+
+// SetDisabled turns a task off or on again, keeping everything else.
+func SetDisabled(root, name string, disabled bool) error {
+	t, err := Load(root, name)
+	if err != nil {
+		return err
+	}
+	t.Disabled = disabled
+	return Save(root, name, t)
 }
 
 // Run statuses.
