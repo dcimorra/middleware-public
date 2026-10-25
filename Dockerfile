@@ -14,7 +14,7 @@
 # the WireGuard vpn work inside the container; without them it runs the
 # supervisor alone, as before.
 
-FROM golang:1.24 AS build
+FROM golang:1.27 AS build
 WORKDIR /src
 # No go.sum to copy: the core has no dependencies, so there is nothing to
 # download and the build is fully offline.

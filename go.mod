@@ -1,3 +1,3 @@
 module github.com/dcimorra/middleware-public
 
-go 1.24
+go 1.27
