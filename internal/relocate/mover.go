@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/archive"
@@ -41,6 +42,12 @@ type Preparer interface {
 	// Prepare says what it installed, which the move's step shows: an
 	// install that leaves out what the start needs looks done otherwise.
 	Prepare(ctx context.Context, domain string) (string, error)
+}
+
+// Finisher is a target told that the move ended well, so it forgets what
+// it would have taken out had the site not come up.
+type Finisher interface {
+	Finish(ctx context.Context, domain string) error
 }
 
 // Source is this node's side of a move.
@@ -167,8 +174,7 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	since := time.Now().Add(-2 * time.Second)
 	n, err := m.stream(ctx, parts, time.Time{}, func(r io.Reader) error { return t.Send(ctx, domain, r) })
 	if err != nil {
-		_ = t.Discard(ctx, domain)
-		return rep, fmt.Errorf("first copy: %w", err)
+		return rep, undone(fmt.Errorf("first copy: %w", err), m.undo(t, domain, false))
 	}
 	rep.First = n
 
@@ -182,8 +188,7 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 		progress(StepInstall, "installing its dependencies on "+t.Name()+", for that machine, while it serves here")
 		said, err := pr.Prepare(ctx, domain)
 		if err != nil {
-			_ = t.Discard(ctx, domain)
-			return rep, fmt.Errorf("installing its dependencies there: %w", err)
+			return rep, undone(fmt.Errorf("installing its dependencies there: %w", err), m.undo(t, domain, false))
 		}
 		if said != "" {
 			// The same step again: its message becomes what was done.
@@ -194,8 +199,7 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	progress(StepStop, "stopping "+domain+" here for the last copy")
 	original, err := m.Source.Stop(ctx, domain)
 	if err != nil {
-		_ = t.Discard(ctx, domain)
-		return rep, fmt.Errorf("stop: %w", err)
+		return rep, undone(fmt.Errorf("stop: %w", err), m.undo(t, domain, false))
 	}
 	stopped := time.Now()
 	// From here every failure before the target answers puts the source
@@ -211,21 +215,18 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	progress(StepFinal, "sending what changed")
 	n, err = m.stream(ctx, parts, since, func(r io.Reader) error { return t.SendDelta(ctx, domain, r) })
 	if err != nil {
-		_ = t.Discard(ctx, domain)
-		return restore(fmt.Errorf("last copy: %w", err))
+		return restore(undone(fmt.Errorf("last copy: %w", err), m.undo(t, domain, false)))
 	}
 	rep.Last = n
 
 	progress(StepCommit, "putting it in place on "+t.Name())
 	if err := t.Commit(ctx, domain, original); err != nil {
-		_ = t.Discard(ctx, domain)
-		return restore(fmt.Errorf("commit: %w", err))
+		return restore(undone(fmt.Errorf("commit: %w", err), m.undo(t, domain, false)))
 	}
 
 	progress(StepStart, "waiting for it to answer on "+t.Name())
 	if err := m.waitReady(ctx, domain, t); err != nil {
-		_ = t.Remove(ctx, domain)
-		return restore(err)
+		return restore(undone(err, m.undo(t, domain, true)))
 	}
 	rep.Down = time.Since(stopped).Round(time.Second)
 
@@ -245,6 +246,12 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 		}
 	}
 
+	if f, ok := t.(Finisher); ok {
+		// It stays there: the target forgets how to take it out. A target
+		// that does not answer keeps the record, which takes nothing out
+		// while the site is there.
+		_ = f.Finish(ctx, domain)
+	}
 	progress(StepCleanup, "archiving the copy that stays here")
 	path, err := m.Source.Archive(ctx, domain, original)
 	if err != nil {
@@ -253,6 +260,36 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	rep.Archive = path
 	progress(StepDone, fmt.Sprintf("%s runs on %s; it was down %s", domain, t.Name(), rep.Down))
 	return rep, nil
+}
+
+// undo takes out of the target what reached it: the staging and, once
+// committed, the site (placed) and what it put under data/. On its own
+// time: the move's may be what ran out. Before, every one of these was
+// "_ = t.Discard(...)", and a target that kept the copy said nothing.
+func (m *Mover) undo(t Target, domain string, placed bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	var errs []string
+	if placed {
+		if err := t.Remove(ctx, domain); err != nil {
+			errs = append(errs, "the site: "+err.Error())
+		}
+	}
+	if err := t.Discard(ctx, domain); err != nil {
+		errs = append(errs, "what was received: "+err.Error())
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("what reached %s could not all be removed (%s); it is listed there as a leftover", t.Name(), strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// undone is cause, with what undoing it could not do.
+func undone(cause, undoErr error) error {
+	if undoErr == nil {
+		return cause
+	}
+	return fmt.Errorf("%w; and %v", cause, undoErr)
 }
 
 // stream packs parts (since, for the last copy) into a pipe that send

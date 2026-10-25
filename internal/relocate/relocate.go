@@ -23,6 +23,7 @@ package relocate
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -216,7 +217,11 @@ func (r Receiver) Commit(domain string, manifestData []byte) error {
 			return err
 		}
 	}
-	// The parts under data/, by the same list they were packed with.
+	// The parts under data/, by the same list they were packed with. What
+	// each one set aside is written down (placed), so a site that does not
+	// come up is taken out exactly: what arrived removed, what was there
+	// before put back (Unplace).
+	placed := placedRecord{Domain: domain, Aside: map[string]string{}}
 	for _, part := range Parts(r.Root, domain) {
 		if !strings.HasPrefix(part.Name, "data/") {
 			continue
@@ -229,22 +234,98 @@ func (r Receiver) Commit(domain string, manifestData []byte) error {
 		if _, err := os.Lstat(dst); err == nil {
 			// Something of an earlier life of this name here: set aside,
 			// never mixed with or lost under what arrived.
-			_ = os.Rename(dst, dst+".before-"+time.Now().UTC().Format("20060102T150405Z"))
+			aside := dst + ".before-" + time.Now().UTC().Format("20060102T150405Z")
+			if os.Rename(dst, aside) == nil {
+				placed.Aside[part.Name] = aside
+			}
 		}
 		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			_ = fsx.WriteJSON(r.placedPath(domain), placed, 0o644)
 			return err
 		}
 		if err := os.Rename(src, dst); err != nil {
+			_ = fsx.WriteJSON(r.placedPath(domain), placed, 0o644)
 			return err
 		}
+		placed.Parts = append(placed.Parts, part.Name)
 	}
 	if err := os.MkdirAll(filepath.Join(r.Root, "sites"), 0o755); err != nil {
+		return err
+	}
+	if err := fsx.WriteJSON(r.placedPath(domain), placed, 0o644); err != nil {
 		return err
 	}
 	if err := os.Rename(site, filepath.Join(r.Root, "sites", domain)); err != nil {
 		return err
 	}
 	return os.RemoveAll(dir)
+}
+
+// placedRecord is what Commit put under data/ for a site, and what it set
+// aside to make room, until the move ends.
+type placedRecord struct {
+	Domain string            `json:"domain"`
+	Parts  []string          `json:"parts"`
+	Aside  map[string]string `json:"aside,omitempty"`
+}
+
+func (r Receiver) placedPath(domain string) string {
+	return filepath.Join(r.Root, "data", "relocate", "placed", domain+".json")
+}
+
+// Unplace takes out what Commit put under data/ for a site that did not
+// come up, and puts back what it set aside: the target as it was before
+// the move. The site's folder is the sites manager's to delete (it stops
+// the engine's instance first). Before this, a failed move left the site's
+// HOME, conversations and history behind, and every retry set the last
+// one aside as ".before-…", a full copy of a HOME each time.
+func (r Receiver) Unplace(domain string) error {
+	if !manifest.ValidName(domain) {
+		return ErrBadName
+	}
+	raw, err := os.ReadFile(r.placedPath(domain))
+	if err != nil {
+		return nil // nothing placed, or already taken out
+	}
+	// Never under a site that is here: what it placed is that site's HOME
+	// and conversations now. The folder goes first (Remove), then this.
+	if _, err := os.Lstat(filepath.Join(r.Root, "sites", domain)); err == nil {
+		return fmt.Errorf("%s is here: its data is not taken out while its folder is", domain)
+	}
+	var rec placedRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return fmt.Errorf("the record of what was placed: %w", err)
+	}
+	var failed []string
+	for _, name := range rec.Parts {
+		dst := filepath.Join(r.Root, filepath.FromSlash(name))
+		if err := os.RemoveAll(dst); err != nil {
+			failed = append(failed, name+": "+err.Error())
+			continue
+		}
+		if aside := rec.Aside[name]; aside != "" {
+			if err := os.Rename(aside, dst); err != nil {
+				failed = append(failed, "putting back "+aside+": "+err.Error())
+			}
+		}
+	}
+	if len(failed) > 0 {
+		return errors.New(strings.Join(failed, "; "))
+	}
+	return os.Remove(r.placedPath(domain))
+}
+
+// Placed ends a move that worked: the record goes, what was set aside
+// stays (it is an earlier life of the name, the operator's to keep or
+// clean as a leftover).
+func (r Receiver) Placed(domain string) error {
+	if !manifest.ValidName(domain) {
+		return ErrBadName
+	}
+	if err := os.Remove(r.placedPath(domain)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // StagingSite is where a received site's folder waits for its commit.
@@ -259,5 +340,10 @@ func (r Receiver) Discard(domain string) error {
 	}
 	dir := r.staging(domain)
 	_ = os.RemoveAll(dir + ".delta")
-	return os.RemoveAll(dir)
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	// And what a commit put under data/, when it got that far: a commit
+	// that failed halfway, or a site removed because it did not come up.
+	return r.Unplace(domain)
 }

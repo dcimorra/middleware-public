@@ -801,7 +801,49 @@ svg.dash-spark .mem { stroke: var(--warn); stroke-dasharray: 3 2; }
 .move-pills { position: fixed; left: var(--gutter); bottom: var(--gutter); z-index: 55; display: flex; flex-direction: column; gap: 6px; max-width: min(380px, calc(100vw - 2 * var(--gutter))); }
 .move-pill { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow-lg); font: inherit; font-size: 13px; color: var(--text); cursor: pointer; min-width: 0; text-align: left; }
 .move-pill > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.move-dialog .dash-bar { height: 10px; }
-.move-more > summary { cursor: pointer; margin: 4px 0 8px; }
+/* The move dialog: where it goes, a bar, the step, and the plan as a
+   timeline with a mark per step (done, running, failed, to come). */
+.move-dialog { width: min(560px, calc(100vw - 2 * var(--gutter))); }
+.move-head { display: flex; align-items: flex-start; gap: 12px; padding: 18px 20px 4px; }
+.move-title { flex: 1; min-width: 0; }
+.move-title h2 { margin: 0; font-size: 18px; overflow-wrap: anywhere; }
+.move-sub { display: flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 13px; margin-top: 2px; overflow-wrap: anywhere; }
+.move-progress { display: flex; align-items: center; gap: 10px; }
+.move-bar { flex: 1; height: 8px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
+.move-bar-fill { height: 100%; width: 0; border-radius: 999px; background: var(--accent); transition: width .5s ease; }
+.move-dialog[data-state="ok"] .move-bar-fill { background: var(--ok); }
+.move-dialog[data-state="warn"] .move-bar-fill { background: var(--warn); }
+.move-dialog[data-state="failed"] .move-bar-fill { background: var(--bad); }
+.move-dialog[data-state="running"] .move-bar-fill { background-image: linear-gradient(90deg, transparent, rgba(255,255,255,.25), transparent); background-size: 200% 100%; animation: shimmer 1.6s linear infinite; }
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.move-pct { font-size: 13px; font-weight: 600; min-width: 3.2em; text-align: right; }
+.move-status { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.move-now { font-weight: 550; overflow-wrap: anywhere; }
+.move-meta { color: var(--text-3); font-size: 12.5px; }
+.move-dialog .notice { display: flex; align-items: flex-start; gap: 6px; }
+.move-more > summary { list-style: none; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; color: var(--text-2); font-size: 13px; padding: 4px 6px 4px 0; border-radius: 6px; }
+.move-more > summary::-webkit-details-marker { display: none; }
+.move-more > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.move-more > summary:focus:not(:focus-visible) { outline: none; }
+.move-more > summary svg { transition: transform var(--dur) ease; }
+.move-more[open] > summary svg { transform: rotate(90deg); }
+.tl { list-style: none; margin: 8px 0 0; padding: 0; }
+.tl-step { display: flex; gap: 10px; position: relative; padding-bottom: 12px; }
+.tl-step:not(:last-child)::before { content: ""; position: absolute; left: 10px; top: 22px; bottom: 0; width: 2px; background: var(--border); }
+.tl-step.ok:not(:last-child)::before { background: color-mix(in srgb, var(--ok) 45%, var(--border)); }
+.tl-mark { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; border: 2px solid var(--border); background: var(--surface); color: var(--text-3); }
+.tl-step.ok .tl-mark { background: var(--ok); border-color: var(--ok); color: #fff; }
+.tl-step.failed .tl-mark { background: var(--bad); border-color: var(--bad); color: #fff; }
+.tl-step.warn .tl-mark { background: var(--warn); border-color: var(--warn); color: #fff; }
+.tl-step.running .tl-mark { border-color: var(--accent); }
+.tl-step.pending, .tl-step.skipped { color: var(--text-3); }
+.spin-dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--accent); border-right-color: transparent; animation: spin .8s linear infinite; }
+.tl-body { flex: 1; min-width: 0; padding-top: 1px; }
+.tl-label { display: flex; justify-content: space-between; gap: 8px; overflow-wrap: anywhere; }
+.tl-time { flex: none; color: var(--text-3); font-size: 12px; }
+.tl-note { font-size: 12px; color: var(--text-3); overflow-wrap: anywhere; margin-top: 2px; }
+.tl-error { font-size: 12.5px; color: var(--bad); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 14em; overflow: auto; margin-top: 4px; padding: 8px; border-radius: 8px; background: color-mix(in srgb, var(--bad) 10%, transparent); }
+.leftover { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; min-width: 0; }
+.leftover code { overflow-wrap: anywhere; }
 /* The installer's output, followed live: its own lines, wrapped on a phone. */
 .req-log { margin: 0; max-height: 60vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; background: var(--surface-2); border-radius: var(--radius); padding: 10px; }

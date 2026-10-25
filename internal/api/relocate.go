@@ -126,7 +126,36 @@ func (s *Server) registerRelocateTarget() {
 		s.emitMove("relocate.arrived", domain, "", "arrived from another node", nil)
 		return OK, nil
 	})
-	s.Handle("DELETE", Prefix+"/relocate/{domain}", "Throw away what was received for a site that did not finish moving in", func(w http.ResponseWriter, r *http.Request) (any, error) {
+	s.Handle("GET", Prefix+"/relocate/leftovers", "What moves left on this node: receptions that never finished, earlier copies a commit set aside (.before-…), sites placed here that were not taken out, and records of moves that never said how they ended; the largest first", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		return relocate.Leftovers(s.opts.Root, time.Now()), nil
+	})
+	s.Handle("POST", Prefix+"/relocate/leftovers/clean", "The operator only: remove the leftovers named (body: paths, as GET lists them); only what is listed now is touched", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		if c := auth.FromContext(r.Context()); len(c.Scopes) > 0 {
+			return nil, Errorf(http.StatusForbidden, "only the operator removes leftovers")
+		}
+		var body struct {
+			Paths []string `json:"paths"`
+		}
+		if err := ReadJSON(r, &body); err != nil {
+			return nil, err
+		}
+		out := map[string]string{}
+		for _, p := range body.Paths {
+			if err := relocate.Clean(s.opts.Root, p, time.Now()); err != nil {
+				out[p] = err.Error()
+			} else {
+				out[p] = "removed"
+			}
+		}
+		return map[string]any{"results": out}, nil
+	})
+	s.Handle("POST", Prefix+"/relocate/{domain}/placed", "A move into this node ended well: forget how to take the site out again", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		if err := rc.Placed(r.PathValue("domain")); err != nil {
+			return nil, bad(err)
+		}
+		return OK, nil
+	})
+	s.Handle("DELETE", Prefix+"/relocate/{domain}", "Throw away what was received for a site that did not finish moving in: the staging and, when it was put in place and its folder already removed, what it put under data/, with what was there before put back", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		if err := rc.Discard(r.PathValue("domain")); err != nil {
 			return nil, bad(err)
 		}
@@ -500,6 +529,10 @@ func (t meshTarget) Prepare(ctx context.Context, domain string) (string, error) 
 
 func (t meshTarget) Discard(ctx context.Context, domain string) error {
 	return t.m.Call(ctx, t.x, "DELETE", "/relocate/"+domain, nil, nil)
+}
+
+func (t meshTarget) Finish(ctx context.Context, domain string) error {
+	return t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/placed", nil, nil)
 }
 
 func (t meshTarget) Remove(ctx context.Context, domain string) error {

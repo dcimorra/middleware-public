@@ -580,8 +580,11 @@ without a docker that answers, is refused before anything moves.
 | PUT | `/relocate/{domain}/delta` | the last copy: changed files and the index, laid over what was received |
 | POST | `/relocate/{domain}/prepare` | the network, or an import token for that site: start installing a received site's dependencies in its staging, for this machine (`npm ci --include=dev`, or pnpm or yarn by the lockfile, dev dependencies included, with the Node the site gets here) → `{started}`. It runs on its own, not inside the request (a connection between nodes, or Cloudflare's 100 seconds, would cut it); a move calls it after the first copy, while the site still serves where it was, for a Node site on the machine, whose `node_modules` is left behind |
 | GET | `/relocate/{domain}/prepare` | → `{done, output?, error?}`: what the install said, or why it failed; a process killed says by what (its 30 minutes, the kernel for lack of memory with the machine's memory, or another SIGKILL) |
+| POST | `/relocate/{domain}/placed` | the network, or an import token for that site: the move into this node ended well; the record of what to take out if it had not is dropped |
+| GET | `/relocate/leftovers` | → `[{path, kind, domain, bytes, modified}]`: what moves left on this node, the largest first; `kind` is `staging` (a reception still for an hour), `aside` (an earlier copy a commit set aside, `.before-…`), `placed` (a site placed here that did not come up and was not taken out) or `record` (a site that came up whose move never said it ended) |
+| POST | `/relocate/leftovers/clean` | the operator only: `{paths}` → `{results: {path: "removed" or why not}}`; only what `GET` lists now is touched, and a `placed` site is taken out as a failed move would (what arrived removed, what was there before put back) |
 | POST | `/relocate/{domain}/commit` | `{manifest, install?}` (base64, the one the site had before it stopped; `install` installs a Node site's dependencies in the staging folder first, `npm ci` with a lockfile) → `{ok}`; the site is put in place and the engine starts it |
-| DELETE | `/relocate/{domain}` | → `{ok}`; what was received is thrown away |
+| DELETE | `/relocate/{domain}` | throw away what was received for a site that did not finish moving in: the staging and, once it was put in place and its folder removed, what it put under `data/` (HOME, conversations, history), with what was there before under that name put back; refused while the site's folder is here |
 
 ## VPN
 

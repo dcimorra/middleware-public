@@ -161,6 +161,11 @@ func (t HTTPTarget) Discard(ctx context.Context, d string) error {
 	return t.do(ctx, "DELETE", "/relocate/"+d, "", nil, nil)
 }
 
+// Finish implements Finisher.
+func (t HTTPTarget) Finish(ctx context.Context, d string) error {
+	return t.do(ctx, "POST", "/relocate/"+d+"/placed", "", nil, nil)
+}
+
 // Remove implements Target.
 func (t HTTPTarget) Remove(ctx context.Context, d string) error {
 	return t.do(ctx, "DELETE", "/sites/"+d, "", nil, nil)

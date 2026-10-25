@@ -276,3 +276,41 @@ func TestANodeSitesModulesAreInstalledThereNotCarried(t *testing.T) {
 		t.Fatal("what the install put in node_modules was gone when the site started")
 	}
 }
+
+// A site that does not come up leaves the target as it was: its folder,
+// and its HOME and conversations under data/, gone; an earlier life of the
+// name that the commit set aside, put back. Before, the data stayed, and
+// each retry set the last copy aside as ".before-…".
+func TestAFailedMoveLeavesTheTargetAsItWas(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	seed(t, src)
+	os.MkdirAll(filepath.Join(dst, "data", "homes", "a.test"), 0o755)
+	os.WriteFile(filepath.Join(dst, "data", "homes", "a.test", "earlier"), []byte("an earlier life"), 0o644)
+	tg := &localTarget{rc: Receiver{Root: dst}, ready: false}
+	m := &Mover{Root: src, Source: &localSource{root: src}, Poll: 10 * time.Millisecond, ReadyWait: 50 * time.Millisecond}
+	if _, err := m.Move(context.Background(), "a.test", tg, nil); err == nil || !strings.Contains(err.Error(), "runs here again") {
+		t.Fatalf("err: %v", err)
+	}
+	for _, rel := range []string{"sites/a.test", "data/chat/a.test.json", "data/agents/cost/a.test.json", "data/relocate/a.test", "data/relocate/placed/a.test.json"} {
+		if _, err := os.Stat(filepath.Join(dst, rel)); err == nil {
+			t.Errorf("%s was left on the target", rel)
+		}
+	}
+	if got, _ := os.ReadFile(filepath.Join(dst, "data", "homes", "a.test", "earlier")); string(got) != "an earlier life" {
+		t.Error("the HOME that was there before was not put back")
+	}
+	if m, _ := filepath.Glob(filepath.Join(dst, "data", "homes", "a.test.before-*")); len(m) != 0 {
+		t.Errorf("set-aside copies left: %v", m)
+	}
+	// Never under a site that is there.
+	os.MkdirAll(filepath.Join(dst, "sites", "b.test"), 0o755)
+	os.MkdirAll(filepath.Join(dst, "data", "relocate", "placed"), 0o755)
+	os.WriteFile(filepath.Join(dst, "data", "relocate", "placed", "b.test.json"), []byte(`{"domain":"b.test","parts":["data/homes/b.test"]}`), 0o644)
+	os.MkdirAll(filepath.Join(dst, "data", "homes", "b.test"), 0o755)
+	if err := (Receiver{Root: dst}).Discard("b.test"); err == nil {
+		t.Fatal("a site that is here had its data taken out")
+	}
+	if _, err := os.Stat(filepath.Join(dst, "data", "homes", "b.test")); err != nil {
+		t.Fatal("the HOME of a site that is here was removed")
+	}
+}

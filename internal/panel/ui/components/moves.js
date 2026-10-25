@@ -9,6 +9,7 @@ import { h, clear, fmtAgo, fmtDuration, fmtTime, debounce } from "../lib/dom.js"
 import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
 import { onEvent } from "../lib/stream.js";
+import { icon } from "../lib/icons.js";
 
 const BADGE = { running: "info", ok: "ok", failed: "bad", warn: "warn" };
 
@@ -46,7 +47,7 @@ function jobEl(j, open) {
     // The failed step already says why; the job's own error is said only
     // when no step carries it (one cut before its first step).
     j.error && !(j.steps || []).some((s) => s.error) ? h("div", { class: "notice bad small move-error" }, j.error) : null,
-    j.report && j.report.down && state !== "failed" ? h("p", { class: "small muted" }, t("moves.down", { down: j.report.down })) : null);
+    downFor(j) && state !== "failed" ? h("p", { class: "small muted" }, t("moves.down", { down: downFor(j) })) : null);
   return h("details", { class: "move-job", open: open || state === "running" }, head, body);
 }
 
@@ -99,25 +100,59 @@ async function fetchMove(domain, id) {
   return (id && list.find((j) => j.id === id)) || list[0] || null;
 }
 
-// openMove shows one move in a dialog: the bar, the step it is in, and
-// "See details" with every operation. Closing it does not stop anything:
-// the move goes on on the server, and the pill brings the dialog back.
+// downFor is how long the site was down, said: the report carries it as
+// Go's duration, in nanoseconds (4000000000 is four seconds, which is what
+// the first version of this dialog printed).
+function downFor(j) {
+  const ns = j.report && j.report.down;
+  return ns ? fmtDuration(ns / 1e9) || "0s" : "";
+}
+
+// timeline is every step of the plan, in order: done, running, failed,
+// still to come, and the way back when there was one.
+function timeline(j) {
+  const plan = j.plan && j.plan.length ? j.plan : (j.steps || []).map((s) => s.step);
+  const byStep = new Map((j.steps || []).map((s) => [s.step, s]));
+  const names = [...plan];
+  for (const s of j.steps || []) if (!names.includes(s.step)) names.push(s.step);
+  const failedAt = (j.steps || []).findIndex((s) => s.state === "failed");
+  return names.map((name) => {
+    const s = byStep.get(name);
+    // After a failure the rest of the plan will not happen: not "pending".
+    const state = s ? s.state : (j.done ? "skipped" : "pending");
+    const mark = { ok: icon("check", { size: 14, stroke: 2.5 }), failed: icon("x", { size: 14, stroke: 2.5 }), running: h("span", { class: "spin-dot" }), warn: icon("alert", { size: 14 }), skipped: icon("minus", { size: 14 }), pending: null }[state];
+    return h("li", { class: "tl-step " + state },
+      h("span", { class: "tl-mark", "aria-hidden": "true" }, mark),
+      h("div", { class: "tl-body" },
+        h("div", { class: "tl-label" }, t("site.moveStep." + name, { node: j.node }),
+          h("span", { class: "tl-time mono" }, s ? fmtDuration(secs(s.started, s.ended)) : "")),
+        s && name === "install" && s.state !== "running" && s.message ? h("div", { class: "tl-note" }, s.message) : null,
+        s && s.error ? h("div", { class: "tl-error" }, s.error) : null));
+  });
+}
+
+// openMove shows one move in a dialog: where it goes, the bar with the
+// step it is in, the outcome when it ends, and "See details" with the
+// whole plan as a timeline. Closing it does not stop anything: the move
+// goes on on the server, and the pill brings the dialog back.
 export function openMove(domain, id) {
-  const bar = h("div", { class: "dash-bar-fill" });
-  const pctEl = h("strong", { class: "mono" });
-  const now = h("div", { class: "small" });
-  const steps = h("ol", { class: "move-steps" });
+  const bar = h("div", { class: "move-bar-fill" });
+  const pctEl = h("span", { class: "move-pct mono" });
+  const now = h("div", { class: "move-now" });
+  const meta = h("div", { class: "move-meta" });
   const outcome = h("div");
-  const more = h("details", { class: "move-more" }, h("summary", null, t("moves.details")), steps);
-  const body = h("div", { class: "stack-sm" },
-    h("div", { class: "row" }, h("div", { class: "dash-bar grow", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100" }, bar), pctEl),
-    now, outcome, more);
-  const dlg = h("dialog", { class: "move-dialog" });
-  const close = h("button", { type: "button", class: "btn" }, t("moves.hide"));
+  const steps = h("ol", { class: "tl" });
+  const more = h("details", { class: "move-more" }, h("summary", null, icon("chevronRight", { size: 16 }), t("moves.details")), steps);
+  const pill = h("span", { class: "badge" });
   const title = h("h2", null, domain);
-  dlg.append(h("div", { class: "dlg" },
-    h("div", { class: "dlg-head" }, title),
-    h("div", { class: "dlg-body" }, body),
+  const sub = h("div", { class: "move-sub" });
+  const close = h("button", { type: "button", class: "btn", autofocus: true }, t("moves.hide"));
+  const dlg = h("dialog", { class: "move-dialog" }, h("div", { class: "dlg" },
+    h("div", { class: "move-head" }, h("div", { class: "move-title" }, title, sub), pill),
+    h("div", { class: "dlg-body stack-sm" },
+      h("div", { class: "move-progress" }, h("div", { class: "move-bar", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100" }, bar), pctEl),
+      h("div", { class: "move-status" }, now, meta),
+      outcome, more),
     h("div", { class: "dlg-foot" }, h("span", { class: "small muted grow" }, t("moves.background")), close)));
   document.body.append(dlg);
   let off = () => {};
@@ -132,27 +167,32 @@ export function openMove(domain, id) {
     id = j.id;
     const state = jobState(j);
     const p = progress(j);
-    title.textContent = t("moves.title1", { domain: j.domain, node: j.node });
+    title.textContent = j.domain;
+    clear(sub).append(icon("upload", { size: 14 }), t("moves.to", { node: j.node }));
+    pill.className = "badge " + BADGE[state];
+    pill.textContent = t("moves.state." + state);
+    dlg.dataset.state = state;
     bar.style.width = p + "%";
-    bar.className = "dash-bar-fill " + ({ failed: "bad", warn: "warn" }[state] || "");
     bar.parentElement.setAttribute("aria-valuenow", String(p));
     pctEl.textContent = p + "%";
+    const plan = j.plan && j.plan.length ? j.plan : [];
+    const doneN = (j.steps || []).filter((s) => plan.includes(s.step) && s.state === "ok").length;
     const last = (j.steps || [])[j.steps.length - 1];
-    now.textContent = last ? t("site.moveStep." + last.step, { node: j.node }) + " · " + fmtDuration(secs(j.started, j.ended)) : t("moves.starting");
+    now.textContent = state === "running" ? (last ? t("site.moveStep." + last.step, { node: j.node }) : t("moves.starting")) : t("moves.ended." + state);
+    meta.textContent = (plan.length ? t("moves.stepOf", { n: Math.min(doneN + (state === "running" ? 1 : 0), plan.length), of: plan.length }) + " · " : "") + fmtDuration(secs(j.started, j.ended));
     clear(outcome);
-    if (state === "ok") outcome.append(h("div", { class: "notice ok small" }, t("moves.okSay", { domain: j.domain, node: j.node }) + (j.report && j.report.down ? " " + t("moves.down", { down: j.report.down }) : "")));
-    if (state === "warn") outcome.append(h("div", { class: "notice warn small" }, t("moves.warnSay")));
+    if (state === "ok") outcome.append(h("div", { class: "notice ok" }, icon("check", { size: 16 }), " ", t("moves.okSay", { domain: j.domain, node: j.node }), downFor(j) ? " " + t("moves.down", { down: downFor(j) }) : ""));
+    if (state === "warn") outcome.append(h("div", { class: "notice warn" }, icon("alert", { size: 16 }), " ", t("moves.warnSay")));
     if (state === "failed") {
-      const failed = (j.steps || []).find((s) => s.state === "failed");
       const back = (j.steps || []).some((s) => s.step === "restore" && s.state === "ok");
-      outcome.append(h("div", { class: "notice bad small move-error" },
-        h("strong", null, t(back ? "moves.failedBack" : "moves.failedSay")), failed && failed.error ? "\n" + failed.error : j.error ? "\n" + j.error : ""));
+      outcome.append(h("div", { class: "notice bad" }, icon("alert", { size: 16 }), " ", t(back ? "moves.failedBack" : "moves.failedSay")));
       more.open = true;
     }
-    clear(steps).append(...(j.steps || []).map((s) => stepRow(j, s)));
+    clear(steps).append(...timeline(j));
   }
   off = onEvent("relocate.", (ev) => { if (ev.subject === domain) load(); });
   dlg.showModal();
+  close.focus();
   load();
 }
 
