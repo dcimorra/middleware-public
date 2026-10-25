@@ -36,6 +36,13 @@ type house struct {
 // newHouse opens the ports door on two free loopback ports with a fake CA
 // that validates HTTP-01 by knocking on the real port-80 listener.
 func newHouse(t *testing.T, sites ...string) *house {
+	return newHouseWith(t, nil, sites...)
+}
+
+// newHouseWith sets the hook's fields with configure before it runs: set
+// after, they race with its loop, which reads them on every tick (the race
+// detector caught a test doing that).
+func newHouseWith(t *testing.T, configure func(*inbound.Hook), sites ...string) *house {
 	t.Helper()
 	root := t.TempDir()
 	ca := acmetest.New(t)
@@ -74,6 +81,9 @@ func newHouse(t *testing.T, sites ...string) *house {
 	hook.Handler = hook.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, "site="+r.Host+" proto="+r.Header.Get("X-Forwarded-Proto"))
 	}))
+	if configure != nil {
+		configure(hook)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	if err := hook.Run(ctx, nil); err != nil {
@@ -654,19 +664,21 @@ func (p *prefixed) Read(b []byte) (int, error) { return p.r.Read(b) }
 // passes the connection still encrypted, and beta serves it with its own
 // certificate as one that came through the VPN, from that device.
 func TestOneNodesVPNReachesAnotherNodesVPNOnlySite(t *testing.T) {
-	a := newHouse(t, "a.test")
-	b := newHouse(t, "vpnb.test")
-	b.hook.VPNOnly = func(host string) ([]string, bool) { return []string{"phone"}, host == "vpnb.test" }
-	a.hook.VPNPorts = inbound.VPNPorts{HTTP: "0", HTTPS: "0", DNS: "0"}
-	a.hook.VPNAddress = func() (netip.Addr, bool) { return netip.MustParseAddr("127.0.0.1"), true }
-	a.hook.DeviceOf = func(netip.Addr) string { return "phone" }
-	a.hook.Elsewhere = func(host string) bool { return host == "vpnb.test" }
+	b := newHouseWith(t, func(h *inbound.Hook) {
+		h.VPNOnly = func(host string) ([]string, bool) { return []string{"phone"}, host == "vpnb.test" }
+	}, "vpnb.test")
 	relayed := make(chan string, 1)
-	a.hook.Relay = func(c net.Conn, host string, pre []byte, device string) error {
-		relayed <- host + " " + device
-		b.hook.AcceptRelayed(&prefixed{Conn: c, r: io.MultiReader(bytes.NewReader(pre), c)}, device)
-		return nil
-	}
+	a := newHouseWith(t, func(h *inbound.Hook) {
+		h.VPNPorts = inbound.VPNPorts{HTTP: "0", HTTPS: "0", DNS: "0"}
+		h.VPNAddress = func() (netip.Addr, bool) { return netip.MustParseAddr("127.0.0.1"), true }
+		h.DeviceOf = func(netip.Addr) string { return "phone" }
+		h.Elsewhere = func(host string) bool { return host == "vpnb.test" }
+		h.Relay = func(c net.Conn, host string, pre []byte, device string) error {
+			relayed <- host + " " + device
+			b.hook.AcceptRelayed(&prefixed{Conn: c, r: io.MultiReader(bytes.NewReader(pre), c)}, device)
+			return nil
+		}
+	}, "a.test")
 	var vhttps, vdns string
 	for deadline := time.Now().Add(5 * time.Second); vhttps == ""; {
 		_, vhttps, vdns = a.hook.VPNAddrs()
