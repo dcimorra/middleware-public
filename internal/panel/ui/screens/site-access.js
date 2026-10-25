@@ -3,6 +3,7 @@
 // concurrent edit to run or deploy is never overwritten by this form.
 
 import { h } from "../lib/dom.js";
+import { icon } from "../lib/icons.js";
 import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
 import { store } from "../lib/store.js";
@@ -24,7 +25,11 @@ export function accessTab(domain) {
   const allow = h("textarea", { class: "mono", value: lines(access.allow), rows: "3" });
   const denyIPs = h("textarea", { class: "mono", value: lines(access.deny), rows: "3" });
   const deny = h("input", { type: "text", class: "mono", value: (access.deny_countries || []).join(", ") });
-  const routes = h("textarea", { class: "mono", rows: "4", value: Object.keys(access.routes || {}).length ? JSON.stringify(access.routes, null, 2) : "" });
+  // Zones: a path with its own password, message and addresses, asked on
+  // top of the site's (access.routes). A list to edit, not JSON in a box:
+  // with JSON only, protecting /admin alone was in practice impossible and
+  // the operator protected all of the site or none of it.
+  const zones = zonesEditor(access.routes || {});
 
   const requests = h("input", { type: "number", min: "0", value: rate.requests ?? "" });
   const window_ = h("input", { type: "text", class: "mono", placeholder: "1m", value: rate.window || "" });
@@ -41,7 +46,9 @@ export function accessTab(domain) {
       field(t("access.allow"), allow, t("access.allowHint")),
       field(t("access.deny"), denyIPs, t("access.denyIPsHint")),
       field(t("access.denyCountries"), deny, t("access.denyHint")),
-      field(t("access.routes"), routes, t("access.routesHint")),
+      h("h3", null, t("access.zones")),
+      h("p", { class: "small muted" }, t("access.zonesHint")),
+      zones.el,
     ),
     h("div", { class: "card" },
       h("h2", null, t("access.wafTitle")),
@@ -62,12 +69,10 @@ export function accessTab(domain) {
     err.hidden = true;
     let routesObj;
     try {
-      routesObj = routes.value.trim() ? JSON.parse(routes.value) : undefined;
-      if (routesObj !== undefined && (typeof routesObj !== "object" || Array.isArray(routesObj))) throw new Error(t("access.routesBad"));
+      routesObj = zones.value();
     } catch (ex) {
-      err.textContent = t("access.routesBad") + ": " + ex.message;
+      err.textContent = ex.message;
       err.hidden = false;
-      routes.focus();
       return;
     }
     const newAccess = {};
@@ -103,4 +108,83 @@ export function accessTab(domain) {
   // The VPN choice saves on its own: it writes another key of the
   // manifest, and one form must not carry the other's half-typed values.
   return { el: h("div", { class: "cards" }, form, vpnSiteCard(domain)), destroy() {} };
+}
+
+// zonesEditor edits access.routes as rows: path, password, message, allowed
+// addresses. A password left empty keeps the one the zone has (the
+// manifest holds its hash, never shown); "remove password" drops it.
+function zonesEditor(routes) {
+  const list = h("div", { class: "stack-sm" });
+  const add = h("button", { type: "button", class: "btn sm" }, icon("plus"), t("access.zoneAdd"));
+  const el = h("div", { class: "stack-sm zones" }, list, add);
+  const rows = [];
+
+  function row(path, ra) {
+    ra = ra || {};
+    const hadPassword = Boolean(ra.password);
+    let dropPassword = false;
+    const pathIn = h("input", { type: "text", class: "mono", value: path || "", placeholder: "/admin", autocomplete: "off", spellcheck: "false" });
+    const pw = h("input", { type: "password", autocomplete: "new-password", placeholder: hadPassword ? t("access.zoneKeep") : "" });
+    const msg = h("input", { type: "text", value: ra.message || "", placeholder: t("access.zoneMessagePh") });
+    const allow = h("textarea", { class: "mono", rows: "2", value: lines(ra.allow), placeholder: "203.0.113.0/24" });
+    const state = h("span", { class: "badge " + (hadPassword ? "ok" : "") }, t(hadPassword ? "access.zoneHasPassword" : "access.zoneNoPassword"));
+    const dropBtn = h("button", { type: "button", class: "btn sm ghost", hidden: !hadPassword }, t("access.zoneDropPassword"));
+    dropBtn.addEventListener("click", () => {
+      dropPassword = true;
+      state.className = "badge warn";
+      state.textContent = t("access.zoneWillDrop");
+      dropBtn.hidden = true;
+    });
+    const remove = h("button", { type: "button", class: "btn sm ghost", "aria-label": t("access.zoneRemove") }, icon("trash"), t("access.zoneRemove"));
+    const box = h("div", { class: "zone" },
+      h("div", { class: "zone-head" }, field(t("access.zonePath"), pathIn), h("div", { class: "row" }, state, dropBtn, remove)),
+      h("div", { class: "form-row" }, field(t("access.zonePassword"), pw), field(t("access.zoneMessage"), msg)),
+      field(t("access.zoneAllow"), allow, t("access.zoneAllowHint")));
+    const r = {
+      box,
+      value() {
+        const p = pathIn.value.trim();
+        if (!p) return null;
+        if (!p.startsWith("/")) throw new Error(t("access.zoneBadPath", { path: p }));
+        const out = { ...ra };
+        delete out.password;
+        if (pw.value) out.password = pw.value;
+        else if (hadPassword && !dropPassword) out.password = ra.password;
+        if (msg.value.trim()) out.message = msg.value.trim(); else delete out.message;
+        const al = parseLines(allow.value);
+        if (al.length) out.allow = al; else delete out.allow;
+        if (!out.password && !(out.allow && out.allow.length) && !(out.deny && out.deny.length)) {
+          throw new Error(t("access.zoneEmpty", { path: p }));
+        }
+        return [p, out];
+      },
+    };
+    remove.addEventListener("click", () => {
+      rows.splice(rows.indexOf(r), 1);
+      box.remove();
+      paintEmpty();
+    });
+    rows.push(r);
+    list.append(box);
+    return r;
+  }
+  const empty = h("p", { class: "small muted" }, t("access.zonesNone"));
+  function paintEmpty() { empty.hidden = rows.length > 0; }
+  list.append(empty);
+  for (const [p, ra] of Object.entries(routes)) row(p, ra);
+  paintEmpty();
+  add.addEventListener("click", () => { row("", {}).box.querySelector("input").focus(); paintEmpty(); });
+  return {
+    el,
+    value() {
+      const out = {};
+      for (const r of rows) {
+        const v = r.value();
+        if (!v) continue;
+        if (out[v[0]]) throw new Error(t("access.zoneTwice", { path: v[0] }));
+        out[v[0]] = v[1];
+      }
+      return Object.keys(out).length ? out : undefined;
+    },
+  };
 }

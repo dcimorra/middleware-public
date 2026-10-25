@@ -28,9 +28,10 @@ export function requirementsCard() {
   function paint() {
     clear(stateEl);
     if (st.state !== "none") {
-      stateEl.append(h("span", { class: "badge " + (BADGE[st.state] || "") }, t("req.state." + st.state)),
+      // Element.append writes a null as the word "null": only what is there.
+      stateEl.append(...[h("span", { class: "badge " + (BADGE[st.state] || "") }, t("req.state." + st.state)),
         st.updated ? h("span", { class: "small muted" }, fmtAgo(st.updated, t)) : null,
-        st.error ? h("span", { class: "small level-error" }, st.error) : null);
+        st.error ? h("span", { class: "small level-error" }, st.error) : null].filter(Boolean));
     }
     runBtn.disabled = st.state === "running";
     logBtn.hidden = st.state === "none";

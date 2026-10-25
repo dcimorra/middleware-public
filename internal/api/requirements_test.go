@@ -58,6 +58,12 @@ func TestTheRequirementsRunIsFollowedByItsLog(t *testing.T) {
 	if st := state(); st["state"] != "restart" {
 		t.Fatalf("restart: %v", st)
 	}
+	// The house restarted after the run: done, not "restart" for ever.
+	before := time.Now().Add(-time.Hour)
+	os.Chtimes(log, before, before)
+	if st := state(); st["state"] != "finished" {
+		t.Fatalf("after the restart: %v", st)
+	}
 	os.WriteFile(log, []byte("installing…\n"), 0o644)
 	old := time.Now().Add(-time.Hour)
 	os.Chtimes(log, old, old)

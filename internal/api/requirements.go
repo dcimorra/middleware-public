@@ -49,6 +49,10 @@ func (s *Server) requirementsStatus() RequirementsStatus {
 		last = strings.TrimSpace(lines[len(lines)-1])
 	}
 	switch {
+	case strings.HasPrefix(last, installer.PanelRestart) && s.opts.Started.After(info.ModTime()):
+		// Asked to restart, and this process started after the run ended:
+		// the restart happened, and the group reaches it now.
+		st.State = "finished"
 	case strings.HasPrefix(last, installer.PanelRestart):
 		st.State = "restart"
 	case strings.HasPrefix(last, installer.PanelFinished):
