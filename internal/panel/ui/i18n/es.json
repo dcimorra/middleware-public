@@ -535,7 +535,7 @@
   "sites.importV1Make": "Crear permiso",
   "sites.importV1Ready": "Listo para traer {domain}",
   "sites.importV1Run": "Ejecuta esto en el servidor donde está ahora, cambiando <the app's folder> por su carpeta (en una casa v1: <raíz v1>/sites/<dominio>). Si no es de la v1, añade --stop \"…\" y --start \"…\" con cómo se para y se arranca allí (pm2, systemd…), y --command \"…\" si su carpeta no dice cómo arranca. Vale hasta las {when}.",
-  "sites.importV1After": "Se copia mientras sirve, se para unos segundos para la copia final, se instalan aquí sus dependencias y arranca. Si aquí no arranca, vuelve a arrancarse allí. Después: Publicar, y «Reapuntar aquí» en cada nombre que aún apunte al servidor de antes.",
+  "sites.importV1After": "Se copia mientras sirve, se instalan aquí sus dependencias, se para unos segundos para la copia final y arranca. Cuando contesta aquí, sus nombres se reapuntan solos a esta casa (con el proveedor de DNS activado; si no, quedan en Publicar). Si aquí no arranca, vuelve a arrancarse allí y no se toca nada de sus nombres.",
   "sites.createdPublishing": "{domain} creado; publicándolo",
   "site.publish": "Publicar",
   "site.unpublish": "Despublicar",

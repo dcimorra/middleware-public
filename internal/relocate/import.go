@@ -204,8 +204,11 @@ func (t HTTPTarget) Ready(ctx context.Context, d string) (bool, string, error) {
 // Publish implements Target. An import does not move the names: the V1
 // house still has them, and taking them is the operator's yes in the V2
 // panel (Publish, then "point it here" for each name the zone has on V1).
-func (t HTTPTarget) Publish(context.Context, string, string) error {
-	return errors.New("the names are moved from the V2 panel")
+func (t HTTPTarget) Publish(ctx context.Context, d, door string) error {
+	// over: the names point at the machine the site came from, and follow
+	// it here, as a move between nodes does. A house too old to let the
+	// import token do it says so, and the names stay for the panel.
+	return t.do(ctx, "POST", "/sites/"+d+"/publish", "application/json", jsonBody(map[string]any{"door": door, "over": true}), nil)
 }
 
 // ImportParts are what an import takes: the folder, without what the
@@ -307,9 +310,10 @@ func (s *V1Source) Start(domain string, _ []byte) error {
 	return fsx.WriteAtomic(filepath.Join(s.Root, "sites", domain, "site.json"), s.original, 0o644)
 }
 
-// Published implements Source: the V1 house's names are not this
-// importer's to move.
-func (s *V1Source) Published(string) (string, bool) { return "", false }
+// Published implements Source: the names follow the site, on the target's
+// door for new sites (empty), and are pointed there once it answers. The
+// operator used to do it by hand, name by name ("Point it here").
+func (s *V1Source) Published(string) (string, bool) { return "", true }
 
 // Names implements Source.
 func (s *V1Source) Names(string) []string { return nil }

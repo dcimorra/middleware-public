@@ -155,3 +155,54 @@ func TestAnAppFromAnyServerIsImportedWithItsOwnStopAndStart(t *testing.T) {
 		t.Fatal("the app's folder was touched where it was")
 	}
 }
+
+// An imported site's names follow it, as a move's do: once it answers
+// here they are published over what pointed at the old server, with the
+// import token, and nobody presses "Point it here". The token opens that
+// for its own site only.
+func TestAnImportedSitesNamesArePointedHereByThemselves(t *testing.T) {
+	dns := &fakeDNS{enabled: true}
+	v2, _ := inboundFixture(t, dns)
+	_, out := v2.call("POST", "/api/v1/relocate/import-token", map[string]any{"domain": "shop.test", "base": v2.http.URL})
+	tok, _ := out["token"].(string)
+	app := filepath.Join(t.TempDir(), "shop")
+	os.MkdirAll(app, 0o755)
+	os.WriteFile(filepath.Join(app, "index.html"), []byte("the shop"), 0o644)
+	src := &relocate.GenericSource{Dir: app}
+	if _, err := src.Detect("shop.test"); err != nil {
+		t.Fatal(err)
+	}
+	m := &relocate.Mover{Root: filepath.Dir(app), Dir: app, Source: src, Parts: src.Parts, Poll: 20 * time.Millisecond, ReadyWait: 5 * time.Second}
+	rep, err := m.Move(context.Background(), "shop.test", relocate.HTTPTarget{Base: v2.http.URL, Token: tok}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.DNS != "moved" {
+		t.Fatalf("names: %q", rep.DNS)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		pub, _ := dns.calls()
+		if strings.Contains(strings.Join(pub, ","), "shop.test") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("published: %v", pub)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	// Another site's import token cannot take names over for this one.
+	_, out = v2.call("POST", "/api/v1/relocate/import-token", map[string]any{"domain": "other.test", "base": v2.http.URL})
+	other, _ := out["token"].(string)
+	req, _ := http.NewRequest("POST", v2.http.URL+"/api/v1/sites/shop.test/publish", strings.NewReader(`{"over":true}`))
+	req.Header.Set("Authorization", "Bearer "+other)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 403 {
+		t.Fatalf("another site's token publishing over: %d", res.StatusCode)
+	}
+}

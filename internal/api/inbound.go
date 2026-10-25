@@ -5,6 +5,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/auth"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -240,8 +241,13 @@ func (s *Server) registerPublish(pub *publish.Publisher, h *inbound.Hook) {
 		defer cancel()
 		publishFn := pub.Publish
 		if body.Over {
-			if _, ok := s.fromNode(auth.FromContext(r.Context())); !ok {
-				return nil, Errorf(http.StatusForbidden, "over is for a site moving in from another node; take a name in conflict with POST /publish/takeover")
+			// A node moving the site here, or the import token the operator
+			// made in this panel for this one site: the names follow the
+			// site, as the operator asked when making it. Anyone else takes
+			// a name in conflict one by one.
+			c := auth.FromContext(r.Context())
+			if _, ok := s.fromNode(c); !ok && !slices.Contains(c.Scopes, "import:"+domain) {
+				return nil, Errorf(http.StatusForbidden, "over is for a site moving in from another node or imported with its token; take a name in conflict with POST /publish/takeover")
 			}
 			publishFn = pub.PublishOver
 		}

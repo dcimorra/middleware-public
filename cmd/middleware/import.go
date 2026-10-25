@@ -95,7 +95,12 @@ func importCmd(args []string) error {
 		return err
 	}
 	fmt.Printf("\n%s runs on %s: it was down %s (%d bytes first, %d the last copy).\n", domain, *to, rep.Down, rep.First, rep.Last)
-	fmt.Printf("In the V2 panel: Publish it, then \"Point it here\" for each name that still points at this machine.\n")
+	switch {
+	case rep.DNS == "moved":
+		fmt.Printf("Its names point at %s now.\n", *to)
+	case rep.DNS != "":
+		fmt.Printf("Its names were not pointed there (%s): in the V2 panel, Publish it, then \"Point it here\" for each name still pointing at this machine.\n", rep.DNS)
+	}
 	if v1 {
 		fmt.Printf("It is stopped here, its folder where it was. Once it has served a while there, archive it in the V1 panel; to go back now, remove \"disabled\" from %s.\n", filepath.Join(dir, "site.json"))
 	} else if *stop != "" {

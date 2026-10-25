@@ -535,7 +535,7 @@
   "sites.importV1Make": "Make permission",
   "sites.importV1Ready": "Ready to bring {domain}",
   "sites.importV1Run": "Run this on the server it is on now, with <the app's folder> replaced by its folder (in a V1 house: <V1 root>/sites/<domain>). If it is not V1, add --stop \"…\" and --start \"…\" with how it is stopped and started there (pm2, systemd…), and --command \"…\" if its folder does not say how it starts. Valid until {when}.",
-  "sites.importV1After": "It is copied while it serves, stopped for a few seconds for the last copy, its dependencies installed here, and started. If it does not start here, it is started there again. Then: Publish, and “Point it here” for each name that still points at the old server.",
+  "sites.importV1After": "It is copied while it serves, its dependencies installed here, stopped for a few seconds for the last copy, and started. Once it answers here its names are pointed at this house by themselves (with the DNS provider on; otherwise they wait in Publish). If it does not start here, it is started there again and its names are not touched.",
   "sites.createdPublishing": "{domain} created; publishing it",
   "site.publish": "Publish",
   "site.unpublish": "Unpublish",

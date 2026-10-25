@@ -166,7 +166,7 @@ func (s *GenericSource) Start(string, []byte) error {
 }
 
 // Published implements Source.
-func (s *GenericSource) Published(string) (string, bool) { return "", false }
+func (s *GenericSource) Published(string) (string, bool) { return "", true }
 
 // Names implements Source.
 func (s *GenericSource) Names(string) []string { return nil }

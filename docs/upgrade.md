@@ -138,9 +138,10 @@ the V2 side for its machine), stops the site in V1 by writing `disabled` in
 its manifest, sends what changed, and starts it in V2. A database that lives
 in the folder (SQLite, with its `-wal` and `-shm`) travels with it, copied
 with the site stopped. If the V2 copy does not come up, V1 is started again
-as it was. The site's names stay on V1: publish it in V2 and take each name
-there ("Point it here"), then archive it in the V1 panel once it has served
-a while. What V1 keeps of the site under its own `data/` (conversations,
+as it was. Once it answers in V2 its names are pointed there by
+themselves, over what pointed at V1 (with V2's DNS provider on; without
+one they wait in Publish); archive it in the V1 panel once it has served a
+while. What V1 keeps of the site under its own `data/` (conversations,
 cost) stays in V1.
 
 ### From any server
