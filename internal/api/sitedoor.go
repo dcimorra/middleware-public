@@ -327,7 +327,13 @@ func (o SiteDoorOptions) door(r *http.Request) (doorCaller, error) {
 		domain = o.Tokens.Domain(strings.TrimSpace(tok))
 	}
 	if domain == "" {
-		if c := auth.FromContext(r.Context()); c.Authenticated() {
+		// Only the operator's full access names any site it likes. A
+		// scoped token is a service door for a closed list of routes,
+		// often for one site, and these routes are public to the gate, so
+		// the scope check never saw them: a deploy token for one site, or
+		// an import token handed to another installation, could open
+		// conversations with write tools on every site of the house.
+		if c := auth.FromContext(r.Context()); c.Authenticated() && len(c.Scopes) == 0 {
 			domain = strings.ToLower(strings.TrimSpace(r.Header.Get("X-Middleware-Site")))
 			if domain == "" {
 				return doorCaller{}, Errorf(http.StatusBadRequest, "as the operator, name the site in X-Middleware-Site")

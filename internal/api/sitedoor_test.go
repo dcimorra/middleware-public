@@ -439,3 +439,26 @@ func TestTheGatewayScreenShowsWhatWasJustSavedNotTheEnginesOldCopy(t *testing.T)
 		t.Fatalf("the screen shows %v", lim)
 	}
 }
+
+func TestAScopedTokenCannotSpeakForAnySiteThroughTheDoor(t *testing.T) {
+	f, _, p, _ := doorFixture(t, map[string]string{"open.test": `{"version":2,"claude_api":{}}`})
+	// The operator's full token may name the site: the door is open to it.
+	if resp, out := f.call("GET", "/api/v1/site", nil, "X-Middleware-Site: open.test"); resp.StatusCode != 200 {
+		t.Fatalf("the operator's token: %d %v", resp.StatusCode, out)
+	}
+	_, secret, err := f.store.CreateScopedToken("ci", []string{"deploy:other.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.token = secret
+	resp, out := f.call("POST", "/api/v1/site/claude/ask", map[string]any{"prompt": "write a file"}, "X-Middleware-Site: open.test")
+	if resp.StatusCode != 401 {
+		t.Fatalf("a deploy token for another site used the door: %d %v", resp.StatusCode, out)
+	}
+	p.mu.Lock()
+	n := len(p.reqs)
+	p.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("a turn ran for the scoped token: %d", n)
+	}
+}
