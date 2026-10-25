@@ -78,6 +78,13 @@ export function chatTab(domain) {
     let list = [];
     try { list = await api.get(`${chatsBase}/chats?main=1`); } catch { list = []; }
     if (first && list.length) cur = convOf(list[0].id, list[0].origin);
+    // Opened from the bar's list: that conversation, not the last one.
+    const want = store.get("openChat");
+    if (first && want && want.domain === domain) {
+      store.set("openChat", null);
+      const hit = list.find((c) => c.id === want.id);
+      if (hit) cur = convOf(hit.id, hit.origin);
+    }
     clear(picker);
     const curID = idOf(cur);
     if (!list.some((c) => c.id === curID)) picker.append(h("option", { value: curID, "data-origin": cur.origin }, t("chat.newDraft")));

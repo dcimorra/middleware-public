@@ -479,18 +479,25 @@ func (m *Manager) Prune(domain, origin string, max int) {
 type Waiting struct {
 	Asking  []WaitingChat `json:"asking"`
 	Working int           `json:"working"`
+	// Running are the conversations at work now, for the panel's bar: a
+	// turn can last twenty minutes, and the only way to know it was alive
+	// was to remember which site it was left in.
+	Running []WaitingChat `json:"running"`
 }
 
 // WaitingChat is one conversation waiting for an answer.
 type WaitingChat struct {
-	Name   string `json:"name"`
-	Domain string `json:"domain"`
-	ID     string `json:"id,omitempty"`
+	Name    string    `json:"name"`
+	Domain  string    `json:"domain"`
+	ID      string    `json:"id,omitempty"`
+	Title   string    `json:"title,omitempty"`
+	Updated time.Time `json:"updated,omitzero"`
 }
 
 type askState struct {
 	mod    time.Time
 	asking bool
+	title  string
 }
 
 // Waiting reads every conversation's file, again only when it changed: it
@@ -519,9 +526,9 @@ func (m *Manager) Waiting() Waiting {
 		if !ok || !a.mod.Equal(st.ModTime()) {
 			var c Conversation
 			if fsx.ReadJSON(f, &c) == nil && c.Origin != OriginSite {
-				a = askState{mod: st.ModTime(), asking: len(c.Turns) > 0 && len(c.Turns[len(c.Turns)-1].Questions) > 0}
+				a = askState{mod: st.ModTime(), asking: len(c.Turns) > 0 && len(c.Turns[len(c.Turns)-1].Questions) > 0, title: c.Title}
 			} else {
-				a = askState{mod: st.ModTime()}
+				a = askState{mod: st.ModTime(), title: c.Title}
 			}
 			m.asks[f] = a
 		}
@@ -535,16 +542,29 @@ func (m *Manager) Waiting() Waiting {
 		if m.Running(name) {
 			continue
 		}
-		out.Asking = append(out.Asking, WaitingChat{Name: name, Domain: domain, ID: id})
+		out.Asking = append(out.Asking, WaitingChat{Name: name, Domain: domain, ID: id, Title: a.title, Updated: a.mod})
 	}
 	for f := range m.asks {
 		if !seen[f] {
 			delete(m.asks, f)
 		}
 	}
+	titles := map[string]askState{}
+	for f, a := range m.asks {
+		rel, _ := filepath.Rel(root, f)
+		domain, id, _ := strings.Cut(strings.TrimSuffix(rel, ".json"), string(filepath.Separator))
+		titles[Name(domain, id)] = a
+	}
 	m.askMu.Unlock()
 	m.mu.Lock()
 	out.Working = len(m.running)
+	out.Running = []WaitingChat{}
+	for name, r := range m.running {
+		domain, id := split(name)
+		out.Running = append(out.Running, WaitingChat{Name: name, Domain: domain, ID: id, Title: titles[name].title, Updated: r.started})
+	}
 	m.mu.Unlock()
+	sort.Slice(out.Running, func(i, j int) bool { return out.Running[i].Updated.Before(out.Running[j].Updated) })
+	sort.Slice(out.Asking, func(i, j int) bool { return out.Asking[i].Updated.After(out.Asking[j].Updated) })
 	return out
 }

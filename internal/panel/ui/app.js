@@ -32,6 +32,7 @@ import { houseScreen } from "./screens/house.js";
 import { llmUsageScreen } from "./screens/llm-usage.js";
 import { dashboardScreen } from "./screens/dashboard.js";
 import { movesPill } from "./components/moves.js";
+import { liveChats } from "./components/live-chats.js";
 import { currentNode, setCurrentNode, onNodeChange } from "./lib/node.js";
 
 const app = document.getElementById("app");
@@ -252,18 +253,25 @@ document.addEventListener("route", () => {
 // background the title is all that shows, and a conversation that ended
 // asking something waits there for nobody otherwise. Read every half
 // minute and when a turn ends; a small answer, cheap to ask often.
+//
+// Two marks, as in V1: "(2)" is the conversations waiting for an answer,
+// "(3…)" the ones talking on their own; waiting wins, it is what someone
+// has to do. Counted over every node by the bar's button (liveChats).
 let baseTitle = t("app.title");
-let waiting = { asking: [], working: 0 };
+let titleMarks = { asking: 0, talking: 0 };
 function paintTitle() {
-  const n = (waiting.asking || []).length;
-  document.title = (n ? `(${n}) ` : "") + baseTitle;
+  const { asking, talking } = titleMarks;
+  document.title = (asking ? `(${asking}) ` : talking ? `(${talking}…) ` : "") + baseTitle;
 }
+let live = null;
 const readWaiting = debounce(async () => {
   if (!authed) return;
-  try { waiting = await api.get("/agents/waiting"); store.set("waiting", waiting); paintTitle(); } catch { /* the title keeps what it had */ }
+  if (!live) {
+    live = liveChats({ onCount: (asking, talking) => { titleMarks = { asking, talking }; paintTitle(); } });
+    document.getElementById("live-slot").replaceWith(live.el);
+  }
+  live.load();
 }, 500);
-setInterval(readWaiting, 30000);
-onEvent("agent.", (ev) => { if (/^agent\.(done|error|question|started)$/.test(ev.type)) readWaiting(); });
 installShortcuts();
 
 (async () => {

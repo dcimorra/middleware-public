@@ -484,3 +484,26 @@ func TestWaitingCountsTheConversationsThatEndedAskingTheOperator(t *testing.T) {
 		t.Fatalf("answered: %+v", w)
 	}
 }
+
+// The conversations at work are listed too, for the panel's bar, and leave
+// the list when their turn ends.
+func TestWaitingListsTheConversationsAtWork(t *testing.T) {
+	p := &fakeProvider{key: "fake", hold: make(chan struct{}), script: []agent.Event{{Kind: agent.KindText, Text: "done"}, {Kind: agent.KindResult}}}
+	m, _, bus := newManager(t, p)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+	m.Send("a.test", "go", "")
+	deadline := time.Now().Add(5 * time.Second)
+	for len(m.Waiting().Running) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	w := m.Waiting()
+	if len(w.Running) != 1 || w.Running[0].Name != "a.test" || w.Running[0].Updated.IsZero() || w.Working != 1 {
+		t.Fatalf("at work: %+v", w)
+	}
+	close(p.hold)
+	waitFor(t, ch, "agent.done")
+	if w := m.Waiting(); len(w.Running) != 0 {
+		t.Fatalf("after the turn: %+v", w)
+	}
+}

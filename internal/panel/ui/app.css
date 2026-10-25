@@ -157,6 +157,35 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
 .brand .mark { color: var(--accent); }
 .brand:hover { text-decoration: none; }
 .topbar-spacer { flex: 1; }
+/* Who is talking (live-chats.js): a pill left of the node picker, amber
+   when someone waits for an answer, with the list under it. */
+.live-chats { position: relative; flex: none; }
+.live-btn { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px 0 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.live-chats[data-state="asking"] .live-btn { border-color: color-mix(in srgb, var(--warn) 60%, var(--border)); background: color-mix(in srgb, var(--warn) 14%, var(--surface)); color: var(--text); font-weight: 550; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.live-chats[data-state="asking"] .live-dot { background: var(--warn); animation: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 30%, transparent); }
+.live-count .short { display: none; }
+.live-drop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 70; width: min(360px, calc(100vw - 16px)); max-height: 70vh; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); padding: 4px; }
+.live-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; min-width: 0; }
+.live-item:hover, .live-item:focus-visible { background: var(--surface-2); outline: none; }
+.live-mark { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.live-mark.talking { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.live-mark.asking { background: var(--warn); }
+.live-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.live-main b, .live-main small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-main small { color: var(--text-3); font-size: 12px; }
+.live-side { flex: none; font-size: 12px; color: var(--text-3); }
+.live-item.asking .live-side { color: var(--warn); font-weight: 600; }
+@media (max-width: 860px) {
+  /* The bar clips what overflows it on a phone: the list hangs from the
+     screen instead. */
+  .live-drop { position: fixed; top: calc(var(--topbar) + 4px); right: 8px; left: 8px; width: auto; }
+}
+@media (max-width: 640px) {
+  .live-count .long { display: none; }
+  .live-count .short { display: inline; }
+  .live-btn { padding: 0 10px 0 8px; }
+}
 .topbar .menu-btn { display: none; } /* the phone rule below turns it on; same specificity, later wins */
 .stream-state { font-size: 12px; color: var(--text-3); display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px 3px 7px; border-radius: 999px; border: 1px solid var(--border); margin-right: 4px; }
 .stream-state:empty { display: none; }
