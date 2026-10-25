@@ -43,9 +43,12 @@ type SiteEnvFunc func(domain string, m *manifest.Manifest) (env map[string]strin
 
 // Engine supervises every site under SitesDir.
 type Engine struct {
-	opts  Options
-	mu    sync.RWMutex
-	sites map[string]*Site
+	opts Options
+	mu   sync.RWMutex
+	// runCtx is Run's: what work the engine starts on someone's request
+	// lives under, not under the request.
+	runCtx context.Context
+	sites  map[string]*Site
 	// aliases maps every extra name to the site that owns it, rebuilt on
 	// each tick from the manifests.
 	aliases        map[string]string
@@ -124,6 +127,9 @@ func New(opts Options) *Engine {
 // Run adopts what is already running, then reconciles until ctx ends.
 // Sites are left running on exit on purpose: they outlive the supervisor.
 func (e *Engine) Run(ctx context.Context) {
+	e.mu.Lock()
+	e.runCtx = ctx
+	e.mu.Unlock()
 	e.adoptAll(ctx)
 	e.reapContainers(ctx)
 	e.tick(ctx)
@@ -184,9 +190,17 @@ func (e *Engine) Restart(ctx context.Context, domain string) error {
 	}
 	s.handing = true
 	spec := s.Spec
+	// The engine's own context, not the caller's: the restart was asked
+	// by a request, which ends as soon as it answers, and a handover under
+	// it was cancelled halfway ("docker run: context canceled", twice in a
+	// row from `middleware site restart`).
+	run := e.runCtx
 	e.mu.Unlock()
+	if run == nil {
+		run = context.Background()
+	}
 	e.wg.Add(1)
-	go e.handover(ctx, s, spec, "operator")
+	go e.handover(run, s, spec, "operator")
 	return nil
 }
 

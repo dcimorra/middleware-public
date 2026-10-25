@@ -28,6 +28,7 @@ func TestAV1SiteIsImportedWithItsOneSiteToken(t *testing.T) {
 	site := filepath.Join(v1, "sites", "old.test")
 	os.MkdirAll(filepath.Join(site, "public"), 0o755)
 	os.WriteFile(filepath.Join(site, "public", "index.html"), []byte("from v1"), 0o644)
+	os.WriteFile(filepath.Join(site, "package.json"), []byte(`{"name":"old"}`), 0o644)
 	os.MkdirAll(filepath.Join(site, "node_modules", "x"), 0o755)
 	os.WriteFile(filepath.Join(site, "node_modules", "x", "big.js"), []byte("built for the other machine"), 0o644)
 	os.WriteFile(filepath.Join(site, "site.json"), []byte(`{"title":"old","root":"public","aliases":["www2.old.test"]}`), 0o644)

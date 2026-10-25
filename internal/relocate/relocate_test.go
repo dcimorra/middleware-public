@@ -253,6 +253,7 @@ func (t *preparingTarget) Prepare(_ context.Context, d string) (string, error) {
 func TestANodeSitesModulesAreInstalledThereNotCarried(t *testing.T) {
 	src, dst := t.TempDir(), t.TempDir()
 	seed(t, src)
+	os.WriteFile(filepath.Join(src, "sites", "a.test", "package.json"), []byte(`{"name":"a"}`), 0o644)
 	os.MkdirAll(filepath.Join(src, "sites", "a.test", "node_modules", "better-sqlite3"), 0o755)
 	os.WriteFile(filepath.Join(src, "sites", "a.test", "node_modules", "better-sqlite3", "x.node"), []byte("built for node 24"), 0o644)
 	tg := &preparingTarget{localTarget: &localTarget{rc: Receiver{Root: dst}, ready: true}}
@@ -312,5 +313,32 @@ func TestAFailedMoveLeavesTheTargetAsItWas(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dst, "data", "homes", "b.test")); err != nil {
 		t.Fatal("the HOME of a site that is here was removed")
+	}
+}
+
+// Only a package's node_modules is left for the target to install: a
+// build's own (Next's .next/node_modules, links named "@prisma/client-…"
+// that the compiled code resolves by) travels, or the moved site fails
+// every page that touches its database.
+func TestABuildsOwnNodeModulesTravelsWithTheSite(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	seed(t, src)
+	site := filepath.Join(src, "sites", "a.test")
+	os.WriteFile(filepath.Join(site, "package.json"), []byte(`{"name":"a"}`), 0o644)
+	os.MkdirAll(filepath.Join(site, "node_modules", "@prisma", "client"), 0o755)
+	os.WriteFile(filepath.Join(site, "node_modules", "@prisma", "client", "index.js"), []byte("built here"), 0o644)
+	os.MkdirAll(filepath.Join(site, ".next-blue", "node_modules", "@prisma"), 0o755)
+	os.Symlink("../../../node_modules/@prisma/client", filepath.Join(site, ".next-blue", "node_modules", "@prisma", "client-2c3a283f"))
+	tg := &preparingTarget{localTarget: &localTarget{rc: Receiver{Root: dst}, ready: true}}
+	m := &Mover{Root: src, Source: &localSource{root: src}, Parts: MoveParts, Install: true, Poll: 10 * time.Millisecond, ReadyWait: time.Second}
+	if _, err := m.Move(context.Background(), "a.test", tg, nil); err != nil {
+		t.Fatal(err)
+	}
+	if tg.sawModules {
+		t.Fatal("the package's node_modules was carried")
+	}
+	link := filepath.Join(dst, "sites", "a.test", ".next-blue", "node_modules", "@prisma", "client-2c3a283f")
+	if target, err := os.Readlink(link); err != nil || target != "../../../node_modules/@prisma/client" {
+		t.Fatalf("the build's link: %q %v", target, err)
 	}
 }

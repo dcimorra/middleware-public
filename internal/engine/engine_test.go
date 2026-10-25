@@ -524,3 +524,30 @@ func TestRestartingAWorkerOnAWrittenPortGivesANewProcessThatAnswers(t *testing.T
 		t.Fatal("restarting a worker that does not exist")
 	}
 }
+
+// A restart asked by a request outlives the request: the handover runs
+// under the engine, not under a context that ends when the API answers
+// (it was cancelled halfway, "docker run: context canceled").
+func TestARestartOutlivesTheRequestThatAskedForIt(t *testing.T) {
+	e, sites := newTestEngine(t)
+	dir := filepath.Join(sites, "r.test")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "build"), []byte("r1"), 0o644)
+	m := fmt.Sprintf(`{"version":2,"run":{"command":[%q],"env":{"MW_TEST_SERVER":"1"},"env_from_file":{"BUILD":"build"}}}`, os.Args[0])
+	os.WriteFile(filepath.Join(dir, "site.json"), []byte(m), 0o644)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	waitFor(t, e, "r.test", func(s Snapshot) bool { return s.Alive && s.Port != 0 })
+	sn, _ := e.Lookup("r.test")
+	before := sn.Port
+	req, end := context.WithCancel(context.Background())
+	if err := e.Restart(req, "r.test"); err != nil {
+		t.Fatal(err)
+	}
+	end() // the request answered
+	waitFor(t, e, "r.test", func(s Snapshot) bool { return s.Alive && s.Port != before && !s.Handing })
+	if sn, _ := e.Lookup("r.test"); sn.Error != "" {
+		t.Fatalf("the restart failed: %s", sn.Error)
+	}
+}

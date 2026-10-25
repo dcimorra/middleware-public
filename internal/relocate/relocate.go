@@ -41,12 +41,27 @@ import (
 // Parts are what moves with a site: its folder, and what the house keeps
 // of it under data/ by its name. The same list as a rename moves, plus the
 // deploy record; logs stay, they are this machine's.
-// MoveParts are Parts without the site's node_modules, which the target
+// MoveParts are Parts without the site's dependencies, which the target
 // installs again for its own machine (Mover.Install).
 func MoveParts(root, domain string) []archive.Part {
 	parts := Parts(root, domain)
-	parts[0].SkipDir = func(name string) bool { return name == "node_modules" }
+	parts[0].SkipDir = Reinstalled
 	return parts
+}
+
+// Reinstalled says a folder is a package's dependencies, which the target
+// installs again: a node_modules beside a package.json. Not any folder of
+// that name: Next's Turbopack keeps .next/node_modules with links named
+// like "@prisma/client-2c3a283f" that the build resolves by, and nothing
+// reinstalls them. The first moves left every node_modules behind and the
+// moved site answered its front page and failed every page that used the
+// database with "Cannot find module '@prisma/client-…'".
+func Reinstalled(dir string) bool {
+	if filepath.Base(dir) != "node_modules" {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(filepath.Dir(dir), "package.json"))
+	return err == nil && !info.IsDir()
 }
 
 func Parts(root, domain string) []archive.Part {
@@ -173,7 +188,7 @@ func (r Receiver) ReceiveDelta(ctx context.Context, domain string, body io.Reade
 		if rel == "." {
 			return nil
 		}
-		if d.IsDir() && d.Name() == "node_modules" {
+		if d.IsDir() && Reinstalled(p) {
 			// Never named by the index because never sent: the source leaves
 			// it behind and the target installs it (MoveParts, Prepare)
 			// between the first copy and this one. Removing it here, as the

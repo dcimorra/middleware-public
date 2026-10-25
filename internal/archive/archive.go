@@ -90,9 +90,11 @@ type Part struct {
 	Name string
 	// Path is where it is on this machine: a folder (walked) or a file.
 	Path string
-	// SkipDir, when set, leaves out a folder inside the part by its name
-	// (what the other side reinstalls, node_modules); nil is everything.
-	SkipDir func(name string) bool
+	// SkipDir, when set, leaves out a folder inside the part, given its
+	// path (what the other side reinstalls: a package's node_modules); nil
+	// is everything. The path and not the name: a build keeps folders of
+	// that same name that nothing reinstalls (Next's .next/node_modules).
+	SkipDir func(path string) bool
 }
 
 // PackParts writes parts to w as one .tar.gz, each under its name, with
@@ -165,7 +167,7 @@ func addTreeSince(ctx context.Context, tw *tar.Writer, root, prefix string, rep 
 		if prefix != "" {
 			name = strings.TrimSuffix(prefix+"/"+name, "/")
 		}
-		if skipDir != nil && rel != "" && d.IsDir() && skipDir(d.Name()) {
+		if skipDir != nil && rel != "" && d.IsDir() && skipDir(p) {
 			return filepath.SkipDir
 		}
 		info, err := d.Info()
