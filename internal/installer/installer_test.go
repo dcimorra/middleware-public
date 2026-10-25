@@ -556,3 +556,27 @@ func TestAnInstallWithACodeJoinsTheNetworkInsteadOfMakingAnOperator(t *testing.T
 		t.Fatalf("setup --join did not run: %v", rec.Calls)
 	}
 }
+
+// On Debian 12 docker.io is the daemon and the `docker` command is in
+// docker-cli: an install that put only the first said "✓ docker" and every
+// container site failed with "docker is not installed". The command is
+// checked, and its package installed when it is apart.
+func TestDockerIsTheCommandNotOnlyTheDaemonsPackage(t *testing.T) {
+	in, rec, out := testInstaller(t)
+	rec.SplitDockerCLI = true
+	if _, _, err := in.stepDocker(); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	cli := false
+	for _, c := range rec.Calls {
+		if strings.Contains(c, "apt-get") && strings.HasSuffix(c, " docker-cli") {
+			cli = true
+		}
+	}
+	if !cli {
+		t.Fatalf("docker-cli was not installed: %v", rec.Calls)
+	}
+	if _, err := rec.LookPath("docker"); err != nil {
+		t.Fatal("no docker command after the step")
+	}
+}

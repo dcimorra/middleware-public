@@ -103,6 +103,9 @@ type Recorder struct {
 	Path map[string]bool
 	// Fail makes WriteRoot of this path fail, to test the ✗ line.
 	Fail map[string]error
+	// SplitDockerCLI is a distribution whose docker.io has no `docker`
+	// command (Debian 12: it is in docker-cli).
+	SplitDockerCLI bool
 
 	// A thin model of the machine, so a second run against the same
 	// recorder sees what the first one did: groups created, units enabled
@@ -157,8 +160,9 @@ func (r *Recorder) simulate(sudo bool, name string, args []string) (out string, 
 		for _, a := range args {
 			if !strings.HasPrefix(a, "-") && a != "install" && a != "add" {
 				r.Path[a] = true
-				// The docker engine's packages give the docker command.
-				if a == "docker.io" || a == "moby-engine" {
+				// The docker engine's packages give the docker command,
+				// except where the distribution splits it out (Debian 12).
+				if (a == "docker.io" && !r.SplitDockerCLI) || a == "moby-engine" || a == "docker-cli" {
 					r.Path["docker"] = true
 				}
 				if a == "fail2ban" {

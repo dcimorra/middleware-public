@@ -447,6 +447,10 @@ func (in *Installer) stepPackages() (bool, string, error) {
 // dockerPackages is the docker engine's package in each distribution's
 // own repositories: what the distribution supports, not a vendor script
 // piped to a shell.
+// dockerCLIPackages is the package with the `docker` command where the
+// distribution ships it apart from the daemon's.
+var dockerCLIPackages = map[string]string{"apt-get": "docker-cli"}
+
 var dockerPackages = map[string]string{"apt-get": "docker.io", "dnf": "moby-engine", "apk": "docker", "pacman": "docker", "zypper": "docker"}
 
 // stepDocker makes the docker runtime work on every machine: installed
@@ -470,6 +474,24 @@ func (in *Installer) stepDocker() (bool, string, error) {
 		}
 		changed = true
 		did = append(did, "installed "+pkg+" with "+name)
+		// The daemon's package is not always the command's: Debian 12
+		// ships `docker` in docker-cli, apart from docker.io, and an
+		// install that put only the daemon said "✓ docker installed"
+		// while every site in a container failed with "docker is not
+		// installed". The command is what the house runs, so it is what
+		// is checked.
+		if _, err := in.Exec.LookPath("docker"); err != nil {
+			if cli := dockerCLIPackages[name]; cli != "" {
+				args := append(append([]string{}, cmd[1:]...), cli)
+				if _, err := in.Exec.Sudo(cmd[0], args...); err != nil {
+					return changed, "", fmt.Errorf("the docker daemon is installed, but not its command (%s): %w", cli, err)
+				}
+				did = append(did, "installed "+cli)
+			}
+		}
+		if _, err := in.Exec.LookPath("docker"); err != nil {
+			return changed, "", fmt.Errorf("%s was installed but there is no `docker` command on the PATH", pkg)
+		}
 	}
 	if _, err := in.Exec.Run("docker", "version", "--format", "{{.Server.Version}}"); err != nil || changed {
 		if _, err := in.Exec.Sudo("systemctl", "enable", "--now", "docker"); err != nil {
