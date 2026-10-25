@@ -20,10 +20,14 @@
 // directly (clone into the cgroup), so nothing a turn starts is ever
 // briefly outside it.
 //
-// It needs Delegate=cpu memory and DelegateSubgroup=house in the unit
-// (systemd 254 or newer): without delegation the cgroup is root's and the
-// supervisor cannot create a folder in it. Without it everything runs as
-// before and the start says so once.
+// It needs Delegate=cpu memory in the unit: without delegation the cgroup
+// is root's and the supervisor cannot create a folder in it, and everything
+// runs as before, said once at start. DelegateSubgroup=house (systemd 254
+// or newer) has systemd start the supervisor in house/ already; an older
+// systemd ignores that line and starts it in the unit's own cgroup, so the
+// supervisor makes house/ and moves itself and what it started there
+// first, which is all DelegateSubgroup does (Debian 12 has systemd 252,
+// and its first node said "not delegated" with Delegate= in place).
 package cgroups
 
 import (
@@ -42,6 +46,9 @@ import (
 const (
 	HouseName  = "house"
 	AgentsName = "agents"
+	// UnitName is the house's service, whose cgroup an older systemd
+	// starts it in.
+	UnitName = "middleware.service"
 )
 
 // Limits are what the agents' branch gets.
@@ -79,7 +86,7 @@ func DefaultLimits() Limits {
 }
 
 // ErrNotDelegated is a unit without delegation.
-var ErrNotDelegated = errors.New("the supervisor's cgroup is not delegated (the unit needs Delegate=cpu memory and DelegateSubgroup=house, systemd 254 or newer); agent turns share the sites' CPU and memory")
+var ErrNotDelegated = errors.New("the supervisor's cgroup is not delegated (the unit needs Delegate=cpu memory: run middleware install again); agent turns share the sites' CPU and memory")
 
 // Tree is the split, once made.
 type Tree struct {
@@ -92,12 +99,29 @@ var Root = "/sys/fs/cgroup"
 // Setup splits the unit's cgroup. self is this process's cgroup path as
 // /proc/self/cgroup says ("/system.slice/middleware.service/house").
 func Setup(self string, l Limits) (*Tree, error) {
-	if filepath.Base(self) != HouseName {
+	if self == "" || self == "/" {
 		return nil, ErrNotDelegated
 	}
-	unit := filepath.Join(Root, filepath.Dir(self))
+	unitPath := filepath.Dir(self)
+	if filepath.Base(self) != HouseName {
+		// Started in the unit's own cgroup: an older systemd without
+		// DelegateSubgroup, or a unit from before it was written. Only
+		// the house's own unit: a supervisor started by hand inside a
+		// delegated session scope would otherwise move that session's
+		// shell and whatever else lives there.
+		if filepath.Base(self) != UnitName {
+			return nil, ErrNotDelegated
+		}
+		unitPath = self
+	}
+	unit := filepath.Join(Root, unitPath)
 	if syscall.Access(filepath.Join(unit, "cgroup.subtree_control"), 2) != nil {
 		return nil, ErrNotDelegated
+	}
+	if unitPath == self {
+		if err := moveIntoHouse(unit); err != nil {
+			return nil, err
+		}
 	}
 	// Controllers have to be enabled on the parent for the children to
 	// have the files; "+cpu +memory" on a cgroup that already has them is
@@ -125,6 +149,42 @@ func Setup(self string, l Limits) (*Tree, error) {
 		}
 	}
 	return &Tree{agents: agents}, nil
+}
+
+// movePID moves a process (its whole thread group) into a cgroup; tests
+// replace it, as a folder does not move anything by being written.
+var movePID = func(cgroup, pid string) error {
+	return os.WriteFile(filepath.Join(cgroup, "cgroup.procs"), []byte(pid), 0o644)
+}
+
+// moveIntoHouse does what DelegateSubgroup=house does at start: every
+// process in the unit's own cgroup (the supervisor and the sites it
+// re-adopted there) into house/. A cgroup with processes cannot hand
+// controllers to its children ("no internal processes"), which is why the
+// unit has to be emptied before agents/ can have limits. Passes until it
+// is empty: a process may fork while the others move.
+func moveIntoHouse(unit string) error {
+	house := filepath.Join(unit, HouseName)
+	if err := os.MkdirAll(house, 0o755); err != nil {
+		return fmt.Errorf("cgroups: %s: %w", house, err)
+	}
+	for pass := 0; pass < 5; pass++ {
+		raw, err := os.ReadFile(filepath.Join(unit, "cgroup.procs"))
+		if err != nil {
+			return fmt.Errorf("cgroups: %w", err)
+		}
+		pids := strings.Fields(string(raw))
+		if len(pids) == 0 {
+			return nil
+		}
+		for _, pid := range pids {
+			// A process that ended meanwhile is not a failure.
+			if err := movePID(house, pid); err != nil && !errors.Is(err, syscall.ESRCH) {
+				return fmt.Errorf("cgroups: moving %s into %s: %w", pid, house, err)
+			}
+		}
+	}
+	return errors.New("cgroups: the unit's cgroup did not empty into house/ after five passes")
 }
 
 // SelfPath reads this process's cgroup v2 path.
