@@ -119,6 +119,8 @@ type Server struct {
 	publisher *publish.Publisher
 	// moves are the sites moving to another node, by name.
 	moves moves
+	// repairs are the house's AI looking at arrived sites that do not start.
+	repairs repairJobs
 	// prepares are the installs of sites received from another node.
 	prepares prepareJobs
 	// contains are the sites being put in a container, by name.

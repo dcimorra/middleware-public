@@ -46,6 +46,16 @@ type Preparer interface {
 	Prepare(ctx context.Context, domain string, dirs []string) (string, error)
 }
 
+// Repairer is a target whose house's AI can look at a site that arrived
+// and does not start, before the move is undone. ErrNoRepair is a target
+// with none configured: the move is undone as before.
+type Repairer interface {
+	Repair(ctx context.Context, domain, why string) (string, error)
+}
+
+// ErrNoRepair is a target without an AI for automatic work.
+var ErrNoRepair = errors.New("the target has no AI for automatic work")
+
 // Finisher is a target told that the move ended well, so it forgets what
 // it would have taken out had the site not come up.
 type Finisher interface {
@@ -95,6 +105,9 @@ const (
 	StepDone    = "done"
 	// StepRestore is a failure's way back: the site started here again.
 	StepRestore = "restore"
+	// StepRepair is the target's AI looking at a site that does not start
+	// there, before the move is undone.
+	StepRepair = "repair"
 )
 
 // Mover moves a site off this node.
@@ -227,7 +240,29 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	}
 
 	progress(StepStart, "waiting for it to answer on "+t.Name())
-	if err := m.waitReady(ctx, domain, t); err != nil {
+	err = m.waitReady(ctx, domain, t)
+	if r, ok := t.(Repairer); ok && err != nil {
+		// Before undoing it: the target's AI looks at why, with the site
+		// stopped here (the price of it is minutes more down). What fails
+		// at this point is mostly what the move did not carry, and the
+		// operator had to find it by hand, every time a different thing.
+		progress(StepRepair, "the house's AI on "+t.Name()+" looks at why it does not start there")
+		said, rerr := r.Repair(ctx, domain, err.Error())
+		switch {
+		case errors.Is(rerr, ErrNoRepair):
+		case rerr != nil:
+			err = fmt.Errorf("%w; the house's AI there could not repair it: %v", err, rerr)
+		default:
+			progress(StepRepair, said)
+			progress(StepStart, "waiting again for it to answer on "+t.Name()+", after the repair")
+			if again := m.waitReady(ctx, domain, t); again != nil {
+				err = fmt.Errorf("%w; and after the house's AI (%s): %v", err, said, again)
+			} else {
+				err = nil
+			}
+		}
+	}
+	if err != nil {
 		return restore(undone(err, m.undo(t, domain, true)))
 	}
 	rep.Down = time.Since(stopped).Round(time.Second)

@@ -43,3 +43,45 @@ export function autofixCard() {
   load(el, render);
   return el;
 }
+
+// The house's AI for automatic work: who repairs a site that arrived from
+// a move and does not start, and the automatic repairs. Apart from the
+// house's conversation, where the operator picks whom to talk to each
+// time: this one acts with nobody there, so it is chosen once, here.
+export function automationCard() {
+  const el = h("div", { class: "card" });
+  async function render() {
+    const [s, agents] = await Promise.all([api.get("/settings"), api.get("/agents").catch(() => ({ providers: [] }))]);
+    const auto = s.automation || {};
+    const providers = (agents.providers || []).filter((p) => p.available || p.provider === auto.provider);
+    const prov = h("select", null, h("option", { value: "" }, t("automation.none")), ...providers.map((p) => h("option", { value: p.provider }, p.provider)));
+    prov.value = auto.provider || "";
+    const model = h("select");
+    function fillModels() {
+      const p = providers.find((x) => x.provider === prov.value);
+      clear(model).append(h("option", { value: "" }, t("chat.defaultModel")), ...((p && p.models) || []).map((m) => h("option", { value: m }, (p.labels && p.labels[m]) ? `${m} (${p.labels[m]})` : m)));
+      model.value = (p && (p.models || []).includes(auto.model)) ? auto.model : "";
+      model.disabled = !p;
+    }
+    prov.addEventListener("change", fillModels);
+    fillModels();
+    const save = h("button", { type: "button", class: "btn primary" }, t("common.save"));
+    save.addEventListener("click", async () => {
+      save.classList.add("busy");
+      try {
+        const cur = await api.get("/settings");
+        await api.put("/settings", { ...cur, automation: prov.value ? { provider: prov.value, model: model.value || undefined } : {} });
+        toast(t("automation.saved"), "ok");
+      } catch (e) { toastError(e); } finally { save.classList.remove("busy"); }
+    });
+    clear(el).append(
+      h("h2", null, t("automation.title")),
+      h("p", { class: "small muted" }, t("automation.hint")),
+      h("div", { class: "form-row" }, field(t("automation.provider"), prov), field(t("automation.model"), model)),
+      h("div", { class: "form-actions" }, save),
+    );
+    return null;
+  }
+  load(el, render);
+  return el;
+}

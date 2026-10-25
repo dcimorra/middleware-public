@@ -13,7 +13,7 @@ import { getTheme, setTheme, setLang } from "../lib/theme.js";
 import { fmtTime, fmtAgo } from "../lib/dom.js";
 import { passkeysCard, panelAccessCard } from "./settings-access.js";
 import { pushCard } from "./settings-push.js";
-import { autofixCard } from "./settings-autofix.js";
+import { autofixCard, automationCard } from "./settings-autofix.js";
 
 
 export function settingsScreen() {
@@ -25,7 +25,7 @@ export function settingsScreen() {
   const tokensCard = h("div", { class: "card pad0" });
   const depsCard = h("div", { class: "card" });
   const localCard = h("div", { class: "card" });
-  p.body.append(general, pushCard(), autofixCard(), passkeysCard(), panelAccessCard(), pagesCard, cacheCard, agentsCard, depsCard, tokensCard, localCard);
+  p.body.append(general, pushCard(), automationCard(), autofixCard(), passkeysCard(), panelAccessCard(), pagesCard, cacheCard, agentsCard, depsCard, tokensCard, localCard);
 
   // The deps card saves on its own, like the agents one.
   async function renderDeps() {

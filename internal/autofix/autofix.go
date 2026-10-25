@@ -3,7 +3,10 @@
 // so the brakes are the part that matters:
 //
 //   - Off unless the installation turns it on, and a site's manifest can
-//     say `"autofix": false`, which the panel cannot override.
+//     say `"autofix": false`, which the panel cannot override. One
+//     exception, with the house's AI for automatic work configured: a site
+//     that arrived from a move in the last day, whose failures are mostly
+//     what the move did not carry.
 //   - What counts as down: a run site whose starts keep failing, or one
 //     that stopped answering three health checks in a row. A normal
 //     restart never gets there.
@@ -45,7 +48,15 @@ type Target struct {
 	Checks []bool
 	// Command is how the site starts, for the agent.
 	Command string
+	// Arrived is when the site came in from a move or an import, zero
+	// when not lately (relocate.ArrivedAt).
+	Arrived time.Time
 }
+
+// ArrivalWindow is how long after arriving a site is repaired with the
+// automatic repairs off, when the house has an AI for automatic work: what
+// fails then is mostly what the move did not carry.
+const ArrivalWindow = 24 * time.Hour
 
 // Repair is one line of data/repairs.jsonl.
 type Repair struct {
@@ -70,6 +81,9 @@ type Options struct {
 	LogTail func(domain string, n int) string
 	// Send starts a turn in the site's conversation and returns its id.
 	Send func(domain, prompt string) (string, error)
+	// Automatic says the house has an AI for automatic work configured
+	// (settings.Automation); nil is none.
+	Automatic func() bool
 	// Restart restarts the site once the agent is done.
 	Restart func(domain string) error
 	Every   time.Duration
@@ -198,7 +212,8 @@ func (f *Fixer) Pass() {
 		busy := ft.turn != ""
 		due := ft.attempts < cfg.Attempts && (ft.last.IsZero() || now.Sub(ft.last) >= time.Duration(cfg.WaitMinutes)*time.Minute)
 		f.mu.Unlock()
-		if !cfg.Enabled || t.OptOut || busy || !due {
+		arrived := !t.Arrived.IsZero() && now.Sub(t.Arrived) < ArrivalWindow && f.opts.Automatic != nil && f.opts.Automatic()
+		if !(cfg.Enabled || arrived) || t.OptOut || busy || !due {
 			continue
 		}
 		if spent := f.spentToday(); spent >= cfg.DailyUSD {

@@ -124,3 +124,33 @@ func TestTheBrakes(t *testing.T) {
 		t.Fatalf("the cap was not written down: %+v", reps)
 	}
 }
+
+// With the automatic repairs off, a site that arrived from a move in the
+// last day is still repaired, when the house has an AI for automatic work;
+// one that arrived longer ago, or a house without that AI, is left alone.
+func TestARecentlyArrivedSiteIsRepairedWithTheRepairsOff(t *testing.T) {
+	w := newWorld(t)
+	w.cfg = settings.Autofix{Enabled: false}
+	automatic := false
+	w.f.opts.Automatic = func() bool { return automatic }
+	arrived := broken
+	arrived.Arrived = w.now.Add(-time.Hour)
+	w.set(arrived)
+	w.f.Pass()
+	if w.count() != 0 {
+		t.Fatal("repaired without an AI for automatic work")
+	}
+	automatic = true
+	w.f.Pass()
+	if w.count() != 1 {
+		t.Fatalf("an arrived site was not repaired: %d", w.count())
+	}
+	old := broken
+	old.Domain = "old.example"
+	old.Arrived = w.now.Add(-2 * ArrivalWindow)
+	w.set(old)
+	w.f.Pass()
+	if w.count() != 1 {
+		t.Fatal("a site that arrived days ago was repaired with the repairs off")
+	}
+}

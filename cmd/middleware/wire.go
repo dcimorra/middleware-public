@@ -44,6 +44,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/proxy"
 	"github.com/dcimorra/middleware-public/internal/publish"
 	"github.com/dcimorra/middleware-public/internal/push"
+	"github.com/dcimorra/middleware-public/internal/relocate"
 	"github.com/dcimorra/middleware-public/internal/repos"
 	"github.com/dcimorra/middleware-public/internal/settings"
 	"github.com/dcimorra/middleware-public/internal/shots"
@@ -285,6 +286,7 @@ func buildWire(a *app.App) app.Hook {
 		wireSiteDoor(a, srv, set)
 	}
 	srv.RegisterContainerize(api.ContainOptions{Chat: chatManager})
+	srv.RegisterRepair(api.RepairOptions{Chat: chatManager})
 	srv.RegisterRequirements(func(ctx context.Context, browser bool) error {
 		_, err := helper.Dial("").InstallRun(ctx, browser)
 		return err
@@ -365,6 +367,7 @@ func buildWire(a *app.App) app.Hook {
 					if sn.Manifest.Run != nil {
 						t.Command = strings.Join(sn.Manifest.Run.Command, " ")
 					}
+					t.Arrived = relocate.ArrivedAt(a.Root, sn.Domain)
 					out = append(out, t)
 				}
 				return out
@@ -376,8 +379,15 @@ func buildWire(a *app.App) app.Hook {
 				s, _ := sm.Logs(domain, "", n)
 				return s
 			},
+			// The house's AI for automatic work when there is one; the
+			// site's own agent otherwise, as before it existed.
 			Send: func(domain, prompt string) (string, error) {
-				return chatManager.SendWith(domain, prompt, chat.SendOptions{})
+				s, _ := settings.Load(a.Root)
+				return chatManager.SendWith(domain, prompt, chat.SendOptions{Provider: s.Automation.Provider, Model: s.Automation.Model})
+			},
+			Automatic: func() bool {
+				s, _ := settings.Load(a.Root)
+				return s.Automation.On()
 			},
 			Restart: func(domain string) error {
 				if sn, ok := a.Engine.Lookup(domain); ok && sn.Mode != "run" {

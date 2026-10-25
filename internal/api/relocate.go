@@ -123,6 +123,7 @@ func (s *Server) registerRelocateTarget() {
 		if err := rc.Commit(domain, raw); err != nil {
 			return nil, bad(err)
 		}
+		_ = relocate.MarkArrived(s.opts.Root, domain, time.Now())
 		s.emitMove("relocate.arrived", domain, "", "arrived from another node", nil)
 		return OK, nil
 	})
@@ -570,6 +571,30 @@ func (t meshTarget) Prepare(ctx context.Context, domain string, dirs []string) (
 
 func (t meshTarget) Discard(ctx context.Context, domain string) error {
 	return t.m.Call(ctx, t.x, "DELETE", "/relocate/"+domain, nil, nil)
+}
+
+func (t meshTarget) Repair(ctx context.Context, domain, why string) (string, error) {
+	if err := t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/repair", map[string]string{"why": why}, nil); err != nil {
+		var re *nodes.RemoteError
+		if errors.As(err, &re) && (re.Status == http.StatusConflict || re.Status == http.StatusNotFound) {
+			return "", relocate.ErrNoRepair
+		}
+		return "", err
+	}
+	for {
+		var j repairJob
+		if err := t.m.Call(ctx, t.x, "GET", "/relocate/"+domain+"/repair", nil, &j); err == nil && j.Done {
+			if j.Error != "" {
+				return "", errors.New(j.Error)
+			}
+			return j.Output, nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
 }
 
 func (t meshTarget) Finish(ctx context.Context, domain string) error {

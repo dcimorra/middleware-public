@@ -126,7 +126,7 @@ function timeline(j) {
       h("div", { class: "tl-body" },
         h("div", { class: "tl-label" }, t("site.moveStep." + name, { node: j.node }),
           h("span", { class: "tl-time mono" }, s ? fmtDuration(secs(s.started, s.ended)) : "")),
-        s && name === "install" && s.state !== "running" && s.message ? h("div", { class: "tl-note" }, s.message) : null,
+        s && (name === "install" || name === "repair") && s.state !== "running" && s.message ? h("div", { class: "tl-note" }, s.message) : null,
         s && s.error ? h("div", { class: "tl-error" }, s.error) : null));
   });
 }

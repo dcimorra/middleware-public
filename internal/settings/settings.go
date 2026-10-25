@@ -34,6 +34,11 @@ type Settings struct {
 	Deps Deps `json:"deps"`
 	// Autofix hands a site that went down to its agent (internal/autofix).
 	Autofix Autofix `json:"autofix"`
+	// Automation is the house's AI for what nobody asked for at that
+	// moment: repairing a site that arrived from a move and does not start,
+	// the automatic repairs. Apart from the house's conversation, whose own
+	// picker says whom the operator talks to there.
+	Automation Automation `json:"automation"`
 	// Cache is the house's response cache budget.
 	Cache Cache `json:"cache"`
 	// Update is whether this program updates itself (internal/update).
@@ -94,6 +99,17 @@ type Autofix struct {
 	// DailyUSD caps what all repairs together may spend in a day.
 	DailyUSD float64 `json:"daily_usd,omitempty"`
 }
+
+// Automation is the house's AI for automatic work: an agent provider
+// ("claude") and its model ("opus"). Empty is none, and what would use it
+// does without.
+type Automation struct {
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+}
+
+// On says one is configured.
+func (a Automation) On() bool { return a.Provider != "" }
 
 // Limits fills the defaults: 2 attempts, 30 minutes, 2 USD a day.
 func (a Autofix) Limits() Autofix {

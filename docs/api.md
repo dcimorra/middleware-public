@@ -200,6 +200,14 @@ with the reason, its command and the last 60 log lines (fenced as evidence);
 the house restarts it when the turn ends and writes the outcome to
 `data/repairs.jsonl`. A manifest's `"autofix": false` keeps it away.
 
+The turn runs with the house's AI for automatic work, `automation: {provider,
+model}` in the settings (Settings → "The house's AI for automatic work"),
+and with the site's own agent when there is none. That AI also repairs a
+site that arrived from a move or an import and does not start, before the
+move is undone (`/relocate/{domain}/repair`), and for a day after a site
+arrives the repair applies to it even with `autofix.enabled` off. It is not
+the house's conversation, whose picker says whom the operator talks to.
+
 | method | path | result |
 | --- | --- | --- |
 | GET | `/autofix` | → `[{at, domain, reason, attempt, turn_id, outcome, cost_usd, recovered, skipped?}]`, oldest first |
@@ -582,6 +590,8 @@ without a docker that answers, is refused before anything moves.
 | PUT | `/relocate/{domain}/delta` | the last copy: changed files and the index, laid over what was received |
 | POST | `/relocate/{domain}/prepare` | the network, or an import token for that site: `{dirs?}` (the site's folders whose `node_modules` the source left behind, relative to it; none is its root): start installing a received site's dependencies in each, in its staging, for this machine (`npm ci --include=dev`, or pnpm or yarn by the lockfile, dev dependencies included, with the Node the site gets here) → `{started}`. It runs on its own, not inside the request (a connection between nodes, or Cloudflare's 100 seconds, would cut it); a move calls it after the first copy, while the site still serves where it was, for a Node site on the machine, whose `node_modules` is left behind |
 | GET | `/relocate/{domain}/prepare` | → `{done, output?, error?}`: what the install said, or why it failed; a process killed says by what (its 30 minutes, the kernel for lack of memory with the machine's memory, or another SIGKILL) |
+| POST | `/relocate/{domain}/repair` | the network, or the site's import token: `{why}` → `{started}`; a site that arrived and does not start is handed to this node's AI for automatic work (`settings.automation`), one turn in its conversation with why and its log, then restarted; the moving node waits for it (10 minutes at most) before undoing the move. 409 when no AI for automatic work is configured |
+| GET | `/relocate/{domain}/repair` | → `{done, output?, error?}`: the AI's closing line ("Done: …"), or why it failed |
 | POST | `/relocate/{domain}/placed` | the network, or an import token for that site: the move into this node ended well; the record of what to take out if it had not is dropped |
 | GET | `/relocate/leftovers` | → `[{path, kind, domain, bytes, modified}]`: what moves left on this node, the largest first; `kind` is `staging` (a reception still for an hour), `aside` (an earlier copy a commit set aside, `.before-…`), `placed` (a site placed here that did not come up and was not taken out) or `record` (a site that came up whose move never said it ended) |
 | POST | `/relocate/leftovers/clean` | the operator only: `{paths}` → `{results: {path: "removed" or why not}}`; only what `GET` lists now is touched, and a `placed` site is taken out as a failed move would (what arrived removed, what was there before put back) |

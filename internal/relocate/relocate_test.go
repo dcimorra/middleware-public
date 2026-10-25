@@ -360,3 +360,47 @@ func TestTheFoldersWhoseDependenciesAreLeftBehindAreFound(t *testing.T) {
 		t.Fatalf("left behind: %s", got)
 	}
 }
+
+// repairingTarget has an AI that makes the site start, or none.
+type repairingTarget struct {
+	*localTarget
+	none   bool
+	called string
+}
+
+func (t *repairingTarget) Repair(_ context.Context, d, why string) (string, error) {
+	if t.none {
+		return "", ErrNoRepair
+	}
+	t.called = why
+	t.ready = true
+	return "Done: installed what was missing", nil
+}
+
+// A site that does not start on the target is handed to its AI before the
+// move is undone; when it starts after that, the move goes on. A target
+// without an AI is undone as before.
+func TestASiteThatDoesNotStartThereIsRepairedBeforeTheMoveIsUndone(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	seed(t, src)
+	tg := &repairingTarget{localTarget: &localTarget{rc: Receiver{Root: dst}, ready: false}}
+	var steps []string
+	m := &Mover{Root: src, Source: &localSource{root: src}, Poll: 10 * time.Millisecond, ReadyWait: 100 * time.Millisecond}
+	if _, err := m.Move(context.Background(), "a.test", tg, func(step, msg string) { steps = append(steps, step) }); err != nil {
+		t.Fatalf("%v (steps %v)", err, steps)
+	}
+	if tg.called == "" || !strings.Contains(strings.Join(steps, " "), "start repair repair start") {
+		t.Fatalf("repair asked with %q; steps %v", tg.called, steps)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "sites", "a.test")); err != nil {
+		t.Fatal("the repaired site is not on the target")
+	}
+
+	src2, dst2 := t.TempDir(), t.TempDir()
+	seed(t, src2)
+	none := &repairingTarget{localTarget: &localTarget{rc: Receiver{Root: dst2}, ready: false}, none: true}
+	m2 := &Mover{Root: src2, Source: &localSource{root: src2}, Poll: 10 * time.Millisecond, ReadyWait: 50 * time.Millisecond}
+	if _, err := m2.Move(context.Background(), "a.test", none, nil); err == nil || !strings.Contains(err.Error(), "runs here again") {
+		t.Fatalf("without an AI: %v", err)
+	}
+}

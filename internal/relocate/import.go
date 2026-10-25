@@ -161,6 +161,36 @@ func (t HTTPTarget) Discard(ctx context.Context, d string) error {
 	return t.do(ctx, "DELETE", "/relocate/"+d, "", nil, nil)
 }
 
+// Repair implements Repairer: the house's AI there looks at the site
+// before the import is undone. A house with none, or too old to have the
+// route, says so, and the import is undone as before.
+func (t HTTPTarget) Repair(ctx context.Context, d, why string) (string, error) {
+	if err := t.do(ctx, "POST", "/relocate/"+d+"/repair", "application/json", jsonBody(map[string]string{"why": why}), nil); err != nil {
+		if strings.Contains(err.Error(), "answered 409") || strings.Contains(err.Error(), "answered 404") || strings.Contains(err.Error(), "answered 403") {
+			return "", ErrNoRepair
+		}
+		return "", err
+	}
+	for {
+		var j struct {
+			Done   bool   `json:"done"`
+			Output string `json:"output"`
+			Error  string `json:"error"`
+		}
+		if err := t.do(ctx, "GET", "/relocate/"+d+"/repair", "", nil, &j); err == nil && j.Done {
+			if j.Error != "" {
+				return "", errors.New(j.Error)
+			}
+			return j.Output, nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
 // Finish implements Finisher.
 func (t HTTPTarget) Finish(ctx context.Context, d string) error {
 	return t.do(ctx, "POST", "/relocate/"+d+"/placed", "", nil, nil)
