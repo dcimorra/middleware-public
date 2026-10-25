@@ -101,6 +101,41 @@ func jsonBody(v any) io.Reader {
 	return bytes.NewReader(raw)
 }
 
+// Prepare implements Preparer: the house installs the site's dependencies
+// on its own and is asked how it goes, so the install is not inside one
+// long request (which a Cloudflare tunnel cuts at 100 seconds, and the
+// install with it). A house too old to have the route installs at the
+// commit, as before.
+func (t HTTPTarget) Prepare(ctx context.Context, d string) (string, error) {
+	if !t.Install {
+		return "", nil
+	}
+	if err := t.do(ctx, "POST", "/relocate/"+d+"/prepare", "", nil, nil); err != nil {
+		if strings.Contains(err.Error(), "answered 404") || strings.Contains(err.Error(), "answered 403") {
+			return "", nil
+		}
+		return "", err
+	}
+	for {
+		var j struct {
+			Done   bool   `json:"done"`
+			Output string `json:"output"`
+			Error  string `json:"error"`
+		}
+		if err := t.do(ctx, "GET", "/relocate/"+d+"/prepare", "", nil, &j); err == nil && j.Done {
+			if j.Error != "" {
+				return "", errors.New(j.Error)
+			}
+			return j.Output, nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
 // Check implements Target.
 func (t HTTPTarget) Check(ctx context.Context, d string, need Needs) error {
 	return t.do(ctx, "POST", "/relocate/"+d+"/check", "application/json", jsonBody(need), nil)

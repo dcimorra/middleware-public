@@ -119,6 +119,8 @@ type Server struct {
 	publisher *publish.Publisher
 	// moves are the sites moving to another node, by name.
 	moves moves
+	// prepares are the installs of sites received from another node.
+	prepares prepareJobs
 	// contains are the sites being put in a container, by name.
 	contains containJobs
 	// dnsEnabled says whether a DNS provider is on, which decides the

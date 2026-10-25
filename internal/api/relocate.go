@@ -95,19 +95,7 @@ func (s *Server) registerRelocateTarget() {
 		}
 		return rep, nil
 	})
-	s.Handle("POST", Prefix+"/relocate/{domain}/prepare", "Install a received site's dependencies in its staging, for this machine, before it is stopped where it is", func(w http.ResponseWriter, r *http.Request) (any, error) {
-		domain := r.PathValue("domain")
-		if _, err := os.Stat(rc.StagingSite(domain)); err != nil {
-			return nil, bad(relocate.ErrNoStaging)
-		}
-		ictx, icancel := context.WithTimeout(r.Context(), 15*time.Minute)
-		defer icancel()
-		said, err := installDeps(ictx, rc.StagingSite(domain))
-		if err != nil {
-			return nil, Errorf(http.StatusUnprocessableEntity, "%v", err)
-		}
-		return map[string]any{"ok": true, "output": said}, nil
-	})
+	s.registerPrepare(rc)
 	s.Handle("POST", Prefix+"/relocate/{domain}/commit", "Put a received site in place (body: manifest, base64: the one it had before it stopped); the engine starts it", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		var body struct {
 			Manifest string `json:"manifest"`
@@ -252,11 +240,18 @@ func installDeps(ctx context.Context, dir string) (string, error) {
 	cmd := exec.CommandContext(ctx, bin, argv[1:]...)
 	cmd.Dir = dir
 	cmd.Env = append(env, "PATH="+path, "CI=1")
+	oomBefore := oomKills()
 	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if err != nil {
 		if len(text) > 600 {
 			text = text[len(text)-600:]
+		}
+		if text == "" {
+			text = "(it printed nothing)"
+		}
+		if why := whyKilled(ctx, err, oomBefore); why != "" {
+			return "", fmt.Errorf("%s: %v: %s; last output: %s", strings.Join(argv, " "), err, why, text)
 		}
 		return "", fmt.Errorf("%s: %v: %s", strings.Join(argv, " "), err, text)
 	}
@@ -478,11 +473,29 @@ func (t meshTarget) Commit(ctx context.Context, domain string, m []byte) error {
 }
 
 func (t meshTarget) Prepare(ctx context.Context, domain string) (string, error) {
-	var out struct {
-		Output string `json:"output"`
+	if err := t.older(t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/prepare", nil, nil)); err != nil {
+		return "", err
 	}
-	err := t.older(t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/prepare", nil, &out))
-	return out.Output, err
+	// Asked every few seconds, each a short request: the install runs
+	// there on its own, and no connection is held open for its minutes.
+	for {
+		var j prepareJob
+		err := t.m.Call(ctx, t.x, "GET", "/relocate/"+domain+"/prepare", nil, &j)
+		switch {
+		case err != nil:
+			// One unanswered question is not the install failing; the
+			// move's own time (its context) is what gives up.
+		case j.Done && j.Error != "":
+			return "", errors.New(j.Error)
+		case j.Done:
+			return j.Output, nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
 }
 
 func (t meshTarget) Discard(ctx context.Context, domain string) error {

@@ -132,9 +132,15 @@ func TestAnAppFromAnyServerIsImportedWithItsOwnStopAndStart(t *testing.T) {
 	if _, err := src.Detect("shop.test"); err != nil {
 		t.Fatal(err)
 	}
-	m := &relocate.Mover{Root: filepath.Dir(app), Dir: app, Source: src, Parts: src.Parts, Poll: 20 * time.Millisecond, ReadyWait: 5 * time.Second}
-	if _, err := m.Move(context.Background(), "shop.test", relocate.HTTPTarget{Base: v2.http.URL, Token: tok, Install: true}, nil); err != nil {
+	m := &relocate.Mover{Root: filepath.Dir(app), Dir: app, Source: src, Parts: src.Parts, Install: true, Poll: 20 * time.Millisecond, ReadyWait: 5 * time.Second}
+	var steps []string
+	if _, err := m.Move(context.Background(), "shop.test", relocate.HTTPTarget{Base: v2.http.URL, Token: tok, Install: true}, func(step, msg string) { steps = append(steps, step+": "+msg) }); err != nil {
 		t.Fatal(err)
+	}
+	// The install ran on the house's own, through the import token, and
+	// said what it did.
+	if got := strings.Join(steps, "\n"); !strings.Contains(got, "install: no package.json") {
+		t.Fatalf("steps:\n%s", got)
 	}
 	if got, _ := os.ReadFile(filepath.Join(v2.root, "sites", "shop.test", "index.html")); string(got) != "the shop" {
 		t.Fatalf("index: %q", got)

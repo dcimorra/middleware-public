@@ -55,7 +55,7 @@ func importCmd(args []string) error {
 		return fmt.Errorf("%q is not a domain: say it with --domain", domain)
 	}
 	target := relocate.HTTPTarget{Base: *to, Token: *token, Install: true}
-	mover := &relocate.Mover{ReadyWait: 10 * time.Minute}
+	mover := &relocate.Mover{ReadyWait: 10 * time.Minute, Install: true}
 	v1 := filepath.Base(filepath.Dir(dir)) == "sites" && filepath.Base(dir) == domain && *command == "" && *stop == ""
 	if v1 {
 		root := filepath.Dir(filepath.Dir(dir))

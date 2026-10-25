@@ -40,6 +40,8 @@ var scopeRoutes = map[string][]string{
 		"POST /api/v1/relocate/{domain}/check",
 		"PUT /api/v1/relocate/{domain}",
 		"PUT /api/v1/relocate/{domain}/delta",
+		"POST /api/v1/relocate/{domain}/prepare",
+		"GET /api/v1/relocate/{domain}/prepare",
 		"POST /api/v1/relocate/{domain}/commit",
 		"DELETE /api/v1/relocate/{domain}",
 		"GET /api/v1/sites/{domain}",
