@@ -188,6 +188,14 @@ func TestTheGlobalSwitchCoversThePanelButNotItsPrograms(t *testing.T) {
 	if rec := f.do("POST", "http://panel.example/api/v1/auth/login", "203.0.113.5:1", nil); rec.Code != 503 {
 		t.Fatalf("the panel's login was not challenged: %d", rec.Code)
 	}
+	// Not with a header the login ignores either.
+	login := httptest.NewRequest("POST", "http://panel.example/api/v1/auth/login", strings.NewReader(`{"password":"guess"}`))
+	login.Header.Set("Authorization", "Bearer anything")
+	lrec := httptest.NewRecorder()
+	f.h.ServeHTTP(lrec, login)
+	if lrec.Code != 503 {
+		t.Fatalf("the login with an Authorization header was not challenged: %d", lrec.Code)
+	}
 	r := httptest.NewRequest("GET", "http://panel.example/api/v1/sites", nil)
 	r.Header.Set("Authorization", "Bearer x")
 	rec := httptest.NewRecorder()

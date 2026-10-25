@@ -157,10 +157,16 @@ func (g *Guard) counter(name string) *counter {
 // there and a great deal to break. The login, which does cost one, is
 // challenged.
 func panelExempt(r *http.Request) bool {
+	p := r.URL.Path
+	// The login is never exempt, whatever it carries: the API ignores an
+	// Authorization header on it, so "Authorization: x" on a password
+	// guess was a way around the challenge straight to the key derivation.
+	if p == "/api/v1/auth/login" {
+		return false
+	}
 	if r.Header.Get("Authorization") != "" {
 		return true
 	}
-	p := r.URL.Path
 	return p == "/api/v1/site" || strings.HasPrefix(p, "/api/v1/site/")
 }
 
