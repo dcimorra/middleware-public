@@ -50,9 +50,9 @@ func Exec(ctx context.Context, spec *manifest.Spec, home string, o ExecOptions) 
 		d := Docker{}
 		image := spec.Docker.Image
 		if spec.Docker.Build != "" {
-			image = "middleware/" + strings.ReplaceAll(spec.Domain, ".", "-") + ":" + spec.Revision
+			image = "middleware/" + dockerName(spec.Domain) + ":" + spec.Revision
 		}
-		name := fmt.Sprintf("mw-exec-%s-%d", strings.ReplaceAll(spec.Domain, ".", "-"), time.Now().UnixNano())
+		name := fmt.Sprintf("mw-exec-%s-%d", dockerName(spec.Domain), time.Now().UnixNano())
 		args := []string{"run", "--rm", "-i", "--name", name}
 		if o.TTY {
 			args = append(args, "-t")

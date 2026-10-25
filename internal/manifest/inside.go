@@ -69,22 +69,8 @@ func (m *Manifest) CheckInside(siteDir string) error {
 				return err
 			}
 		}
-		if d := r.Docker; d != nil {
-			if err := inside("run.docker.build", d.Build); err != nil {
-				return err
-			}
-			for _, v := range d.Volumes {
-				src, err := VolumeSource(v)
-				if err != nil {
-					return fmt.Errorf("run.docker.volumes: %w", err)
-				}
-				if src.Named {
-					continue
-				}
-				if err := inside("run.docker.volumes", src.Path); err != nil {
-					return err
-				}
-			}
+		if err := insideDocker("run.docker", r.Docker, inside); err != nil {
+			return err
 		}
 	}
 	for name, w := range m.Workers {
@@ -92,6 +78,9 @@ func (m *Manifest) CheckInside(siteDir string) error {
 			continue
 		}
 		if err := inside("workers."+name+".cwd", Expand(w.Cwd, vars)); err != nil {
+			return err
+		}
+		if err := insideDocker("workers."+name+".docker", w.Docker, inside); err != nil {
 			return err
 		}
 		for _, f := range w.EnvFiles {
@@ -103,6 +92,30 @@ func (m *Manifest) CheckInside(siteDir string) error {
 			if err := inside("workers."+name+".env_from_file."+k, Expand(f, vars)); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+// insideDocker keeps a docker section's build and bind volumes inside the
+// site folder, a site's run or a worker's alike.
+func insideDocker(field string, d *Docker, inside func(field, p string) error) error {
+	if d == nil {
+		return nil
+	}
+	if err := inside(field+".build", d.Build); err != nil {
+		return err
+	}
+	for _, v := range d.Volumes {
+		src, err := VolumeSource(v)
+		if err != nil {
+			return fmt.Errorf("%s.volumes: %w", field, err)
+		}
+		if src.Named {
+			continue
+		}
+		if err := inside(field+".volumes", src.Path); err != nil {
+			return err
 		}
 	}
 	return nil

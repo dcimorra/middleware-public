@@ -102,6 +102,7 @@ func (s *Server) registerRelocateTarget() {
 		return rep, nil
 	})
 	s.registerPrepare(rc)
+	s.registerMigrate(rc)
 	s.Handle("POST", Prefix+"/relocate/{domain}/commit", "Put a received site in place (body: manifest, base64: the one it had before it stopped); the engine starts it", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		var body struct {
 			Manifest string `json:"manifest"`

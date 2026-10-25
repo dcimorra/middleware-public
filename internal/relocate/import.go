@@ -29,6 +29,9 @@ import (
 // up. What V1 keeps of the site under its data/ (conversations, cost) is
 // written in V1's own formats and stays there; the folder and its HOME go.
 
+// V2ManifestName is the V2 manifest a V1 site may carry next to its own.
+const V2ManifestName = "site.v2.json"
+
 // HTTPTarget is a V2 house reached at its panel's address with a token.
 type HTTPTarget struct {
 	// Base is the house's address, "https://panel.example.com".
@@ -124,6 +127,38 @@ func (t HTTPTarget) Prepare(ctx context.Context, d string, dirs []string) (strin
 			Error  string `json:"error"`
 		}
 		if err := t.do(ctx, "GET", "/relocate/"+d+"/prepare", "", nil, &j); err == nil && j.Done {
+			if j.Error != "" {
+				return "", errors.New(j.Error)
+			}
+			return j.Output, nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
+// Migrate implements Migrator: the house runs the workers' imports on its
+// own and is asked how it goes, as Prepare. A house too old to have the
+// route is an error, not a skip: the site would start there on an empty
+// database.
+func (t HTTPTarget) Migrate(ctx context.Context, d string, manifestData []byte) (string, error) {
+	body := map[string]any{"manifest": base64.StdEncoding.EncodeToString(manifestData)}
+	if err := t.do(ctx, "POST", "/relocate/"+d+"/migrate", "application/json", jsonBody(body), nil); err != nil {
+		if strings.Contains(err.Error(), "answered 404") {
+			return "", fmt.Errorf("%s cannot import a worker's data (update it to a version that can)", t.Name())
+		}
+		return "", err
+	}
+	for {
+		var j struct {
+			Done   bool   `json:"done"`
+			Output string `json:"output"`
+			Error  string `json:"error"`
+		}
+		if err := t.do(ctx, "GET", "/relocate/"+d+"/migrate", "", nil, &j); err == nil && j.Done {
 			if j.Error != "" {
 				return "", errors.New(j.Error)
 			}
@@ -296,9 +331,35 @@ type V1Source struct {
 // Convert reads and converts the V1 manifest, before anything moves: a
 // site V2 cannot honour yet is refused here.
 func (s *V1Source) Convert(domain string) (notes []string, err error) {
-	raw, err := os.ReadFile(filepath.Join(s.Root, "sites", domain, "site.json"))
+	dir := filepath.Join(s.Root, "sites", domain)
+	raw, err := os.ReadFile(filepath.Join(dir, "site.json"))
 	if err != nil {
 		return nil, err
+	}
+	// site.v2.json, next to the V1 one, is the manifest the site will have
+	// in V2, written by a person: what V1 has no words for (a database in
+	// a container, how its data moves) is said there, and the conversion
+	// is not asked to guess it.
+	if v2, err := os.ReadFile(filepath.Join(dir, V2ManifestName)); err == nil {
+		m, err := manifest.Parse(v2)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", V2ManifestName, err)
+		}
+		if err := m.CheckInside(dir); err != nil {
+			return nil, fmt.Errorf("%s: %w", V2ManifestName, err)
+		}
+		m.Disabled = false
+		out, err := json.MarshalIndent(m, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		s.original, s.converted = raw, append(out, '\n')
+		s.docker = UsesDocker(m)
+		notes := []string{"manifest: " + V2ManifestName + ", not converted from the V1 one"}
+		for _, name := range MovingWorkers(m) {
+			notes = append(notes, "worker "+name+": its data moves by command (export here with the site stopped, import there before it starts)")
+		}
+		return notes, nil
 	}
 	res := migrate.Convert(domain, raw)
 	if res.Skipped != "" {
@@ -313,7 +374,7 @@ func (s *V1Source) Convert(domain string) (notes []string, err error) {
 		return nil, err
 	}
 	s.original, s.converted = raw, append(out, '\n')
-	s.docker = res.Manifest.Run != nil && res.Manifest.Run.Runtime == "docker"
+	s.docker = UsesDocker(res.Manifest)
 	return res.Notes, nil
 }
 

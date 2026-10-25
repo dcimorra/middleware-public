@@ -116,7 +116,12 @@ func (e *Engine) reconcileWorkers(ctx context.Context, s *Site, m *manifest.Mani
 		w.port = port
 		logFile := filepath.Join(e.opts.DataDir, "logs", s.Domain, "worker-"+name+".log")
 		home := filepath.Join(e.opts.DataDir, "homes", s.Domain)
-		inst, err := runtime.Process{}.Start(ctx, spec, port, logFile, home)
+		rt, known := e.opts.Runtimes[spec.Runtime]
+		if !known {
+			w.lastErr = "runtime " + spec.Runtime + " is not available on this node"
+			continue
+		}
+		inst, err := rt.Start(ctx, spec, port, logFile, home)
 		if err != nil {
 			if w.assigned {
 				e.opts.Ports.Release(port)
@@ -192,14 +197,5 @@ func (e *Engine) adoptWorker(st runtime.State, inst runtime.Instance) {
 }
 
 func workerSpec(domain, dir, name string, def *manifest.Worker) *manifest.Spec {
-	m := &manifest.Manifest{Version: manifest.Version, Run: &manifest.Run{
-		Command: def.Command, Cwd: def.Cwd, Env: def.Env, EnvFiles: def.EnvFiles,
-		EnvFromFile: def.EnvFromFile, Port: def.Port,
-	}}
-	spec, err := manifest.Resolve(domain, dir, m)
-	if err != nil {
-		return &manifest.Spec{Domain: workerKey(domain, name), SiteDir: dir, Cwd: dir, Command: def.Command}
-	}
-	spec.Domain = workerKey(domain, name)
-	return spec
+	return manifest.WorkerSpec(domain, dir, name, def)
 }

@@ -689,6 +689,15 @@ func (e *Engine) reapContainers(ctx context.Context) {
 				keep[c] = true
 			}
 		}
+		// A worker's container too: one reaped here is a database the
+		// site needs, taken away by the supervisor that should keep it.
+		for _, w := range s.Workers {
+			if w.inst != nil {
+				if c := w.inst.State().Container; c != "" {
+					keep[c] = true
+				}
+			}
+		}
 	}
 	e.mu.RUnlock()
 	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)

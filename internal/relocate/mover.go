@@ -126,6 +126,11 @@ const (
 	// StepRepair is the target's AI looking at a site that does not start
 	// there, before the move is undone.
 	StepRepair = "repair"
+	// StepExport and StepImport are the workers' move commands: the dump
+	// where it was, with the site stopped, and its import there before
+	// the commit.
+	StepExport = "export"
+	StepImport = "import"
 )
 
 // Mover moves a site off this node.
@@ -194,6 +199,19 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	need := NeedsOf(m.Root, domain, m.Source)
 	if n, ok := m.Source.(Needer); ok {
 		need = n.Needs(domain)
+	}
+	// The manifest it will have there says which workers' data moves by
+	// command; both sides must know how, or the site would arrive on an
+	// empty database, which serves and says nothing.
+	planned := m.plannedManifest(domain, dir)
+	moving := MovingWorkers(planned)
+	exporter, _ := m.Source.(Exporter)
+	migrator, _ := t.(Migrator)
+	if len(moving) > 0 && (exporter == nil || migrator == nil) {
+		return rep, fmt.Errorf("the data of %s moves by command (move in its manifest), which only an import from V1 runs yet: move it by hand", strings.Join(moving, ", "))
+	}
+	if UsesDocker(planned) {
+		need.Docker = true
 	}
 	tasker, _ := m.Source.(Tasker)
 	if tasker != nil {
@@ -275,12 +293,34 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 		return rep, fmt.Errorf("%w; it runs here again, as it was", cause)
 	}
 
+	if len(moving) > 0 {
+		progress(StepExport, "exporting the data of "+strings.Join(moving, ", ")+" here, with the site stopped")
+		said, err := exporter.Export(ctx, domain, original)
+		if err != nil {
+			return restore(undone(fmt.Errorf("export: %w", err), m.undo(t, domain, false)))
+		}
+		if said != "" {
+			progress(StepExport, said)
+		}
+	}
+
 	progress(StepFinal, "sending what changed")
 	n, err = m.stream(ctx, parts, since, func(r io.Reader) error { return t.SendDelta(ctx, domain, r) })
 	if err != nil {
 		return restore(undone(fmt.Errorf("last copy: %w", err), m.undo(t, domain, false)))
 	}
 	rep.Last = n
+
+	if len(moving) > 0 {
+		progress(StepImport, "importing the data of "+strings.Join(moving, ", ")+" on "+t.Name()+", before the site starts there")
+		said, err := migrator.Migrate(ctx, domain, original)
+		if err != nil {
+			return restore(undone(fmt.Errorf("import: %w", err), m.undo(t, domain, false)))
+		}
+		if said != "" {
+			progress(StepImport, said)
+		}
+	}
 
 	progress(StepCommit, "putting it in place on "+t.Name())
 	if err := t.Commit(ctx, domain, original, taskFiles); err != nil {
@@ -345,6 +385,22 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	rep.Archive = path
 	progress(StepDone, fmt.Sprintf("%s runs on %s; it was down %s", domain, t.Name(), rep.Down))
 	return rep, nil
+}
+
+// plannedManifest is the manifest the site will be committed with, read
+// before it stops: the source's word for it, or its site.json.
+func (m *Mover) plannedManifest(domain, dir string) *manifest.Manifest {
+	if p, ok := m.Source.(Planner); ok {
+		if raw := p.Planned(domain); raw != nil {
+			if mf, err := manifest.Parse(raw); err == nil {
+				return mf
+			}
+		}
+	}
+	if mf, err := manifest.Load(dir); err == nil {
+		return mf
+	}
+	return nil
 }
 
 // SortedNames are the keys of a set of task files, in order.
@@ -460,7 +516,7 @@ func NeedsOf(root, domain string, src Source) Needs {
 	if _, ok := src.Published(domain); ok {
 		n.Names = src.Names(domain)
 	}
-	if mf, err := manifest.Load(filepath.Join(root, "sites", domain)); err == nil && mf.Run != nil && mf.Run.Runtime == "docker" {
+	if mf, err := manifest.Load(filepath.Join(root, "sites", domain)); err == nil && UsesDocker(mf) {
 		n.Docker = true
 	}
 	return n

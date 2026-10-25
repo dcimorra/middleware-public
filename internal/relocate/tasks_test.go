@@ -98,3 +98,21 @@ func TestAV1TaskConvertsWithWhatV1GaveItWithoutSaying(t *testing.T) {
 		t.Fatal("a field V2 does not carry was dropped in silence")
 	}
 }
+
+// Between two nodes nothing runs a worker's move yet: the move is refused
+// before the site stops, not finished on an empty database.
+func TestAMoveWhoseDataMovesByCommandIsRefusedWhereNothingRunsIt(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	seed(t, src)
+	os.WriteFile(filepath.Join(src, "sites/a.test/site.json"), []byte(`{"version":2,"static":{"root":"public"},"workers":{"db":{"command":["x"],"move":{"export":["./e"],"import":["./i"]}}}}`), 0o644)
+	s := &localSource{root: src}
+	tg := &localTarget{rc: Receiver{Root: dst}, ready: true}
+	m := &Mover{Root: src, Source: s, Poll: 10 * time.Millisecond, ReadyWait: time.Second}
+	var steps []string
+	if _, err := m.Move(context.Background(), "a.test", tg, func(step, _ string) { steps = append(steps, step) }); err == nil || !strings.Contains(err.Error(), "moves by command") {
+		t.Fatalf("err: %v", err)
+	}
+	if len(steps) != 0 {
+		t.Fatalf("it got as far as %v", steps)
+	}
+}

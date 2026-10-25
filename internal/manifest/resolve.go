@@ -238,3 +238,18 @@ func writeAtomic(path string, data []byte) error {
 	}
 	return os.Rename(tmp.Name(), path)
 }
+
+// WorkerSpec is the spec a site's worker runs with: the engine's, and a
+// move's when it brings the worker up on its own to import its data.
+func WorkerSpec(domain, dir, name string, def *Worker) *Spec {
+	m := &Manifest{Version: Version, Run: &Run{
+		Command: def.Command, Cwd: def.Cwd, Env: def.Env, EnvFiles: def.EnvFiles,
+		EnvFromFile: def.EnvFromFile, Port: def.Port, Runtime: def.Runtime, Docker: def.Docker,
+	}}
+	spec, err := Resolve(domain, dir, m)
+	if err != nil {
+		return &Spec{Domain: domain + "/" + name, SiteDir: dir, Cwd: dir, Command: def.Command, Runtime: "process"}
+	}
+	spec.Domain = domain + "/" + name
+	return spec
+}

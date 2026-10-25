@@ -178,6 +178,33 @@ type Worker struct {
 	EnvFromFile map[string]string `json:"env_from_file,omitempty"`
 	Disabled    bool              `json:"disabled,omitempty"`
 	Note        string            `json:"note,omitempty"`
+	// Runtime and Docker run the worker in a container, behind the same
+	// walls as a site's: the database a site needs, declared where the
+	// site is, so whoever moves the site knows it is there.
+	Runtime string  `json:"runtime,omitempty"` // "process" (default) | "docker"
+	Docker  *Docker `json:"docker,omitempty"`
+	// Move is what a move does with what the worker keeps outside the
+	// folder (a database in a named volume): copying its files while it
+	// runs would carry a torn copy, and not copying them carries nothing.
+	Move *WorkerMove `json:"move,omitempty"`
+}
+
+// WorkerMove are the commands a move runs for a worker's data. Arrays, as
+// every command of a manifest: a script of the site's ("./scripts/x.sh")
+// or the program itself.
+type WorkerMove struct {
+	// Export runs where the site is, with the site stopped and the worker
+	// still up, and leaves what it takes inside the folder, which the last
+	// copy carries.
+	Export []string `json:"export"`
+	// Ready runs on the target, again and again, until it succeeds: the
+	// container up is not the database answering.
+	Ready []string `json:"ready,omitempty"`
+	// Import runs on the target with the worker up and the site not yet
+	// started, so the site never comes up on an empty database.
+	Import []string `json:"import"`
+	// Timeout bounds each of them (30m when empty).
+	Timeout Duration `json:"timeout,omitempty"`
 }
 
 // Hold shows a page instead of the site, with the process stopped.
@@ -459,6 +486,28 @@ var agentName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
 // Validate checks the manifest is coherent. It rejects what the engine could
 // not act on rather than what merely looks odd.
+// validRuntime checks a runtime and its docker section, a site's run or a
+// worker's alike.
+func validRuntime(field, rt string, d *Docker) error {
+	switch rt {
+	case "", "process", "docker":
+	default:
+		return fmt.Errorf("%s.runtime: %q is not process or docker", field, rt)
+	}
+	if rt == "docker" && (d == nil || (d.Image == "" && d.Build == "")) {
+		return fmt.Errorf("%s.docker: needs image or build", field)
+	}
+	if d != nil {
+		if d.Pids < 0 || d.CPUs < 0 || d.CPUWeight < 0 {
+			return fmt.Errorf("%s.docker: pids, cpus and cpu_weight cannot be negative", field)
+		}
+		if d.User != "" && !userRe.MatchString(d.User) {
+			return fmt.Errorf("%s.docker.user: %q is not uid[:gid]", field, d.User)
+		}
+	}
+	return nil
+}
+
 func (m *Manifest) Validate() error {
 	if m.Version != Version {
 		return fmt.Errorf("version: want %d, got %d", Version, m.Version)
@@ -470,21 +519,8 @@ func (m *Manifest) Validate() error {
 		if len(m.Run.Command) == 0 {
 			return errors.New("run.command: empty")
 		}
-		switch m.Run.Runtime {
-		case "", "process", "docker":
-		default:
-			return fmt.Errorf("run.runtime: %q is not process or docker", m.Run.Runtime)
-		}
-		if m.Run.Runtime == "docker" && (m.Run.Docker == nil || (m.Run.Docker.Image == "" && m.Run.Docker.Build == "")) {
-			return errors.New("run.docker: needs image or build")
-		}
-		if d := m.Run.Docker; d != nil {
-			if d.Pids < 0 || d.CPUs < 0 || d.CPUWeight < 0 {
-				return errors.New("run.docker: pids, cpus and cpu_weight cannot be negative")
-			}
-			if d.User != "" && !userRe.MatchString(d.User) {
-				return fmt.Errorf("run.docker.user: %q is not uid[:gid]", d.User)
-			}
+		if err := validRuntime("run", m.Run.Runtime, m.Run.Docker); err != nil {
+			return err
 		}
 		for k := range m.Run.Env {
 			if !validEnvKey(k) {
@@ -573,6 +609,19 @@ func (m *Manifest) Validate() error {
 		}
 		if w.Port < 0 || w.Port > 65535 {
 			return fmt.Errorf("workers.%s.port: %d is not a port", name, w.Port)
+		}
+		if err := validRuntime("workers."+name, w.Runtime, w.Docker); err != nil {
+			return err
+		}
+		if mv := w.Move; mv != nil {
+			// Both or none: an export nobody imports is a move that
+			// carries the data and leaves the site on an empty database.
+			if len(mv.Export) == 0 || len(mv.Import) == 0 {
+				return fmt.Errorf("workers.%s.move: needs export and import", name)
+			}
+			if mv.Timeout < 0 {
+				return fmt.Errorf("workers.%s.move.timeout: negative", name)
+			}
 		}
 		for k := range w.EnvFromFile {
 			if !validEnvKey(k) {

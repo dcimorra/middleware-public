@@ -37,6 +37,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/archive"
 	"github.com/dcimorra/middleware-public/internal/fsx"
 	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/middleware-public/internal/runtime"
 	"github.com/dcimorra/middleware-public/internal/tasks"
 )
 
@@ -117,7 +118,12 @@ var (
 )
 
 // Receiver is the target's side.
-type Receiver struct{ Root string }
+type Receiver struct {
+	Root string
+	// Docker brings up a moving worker's container (Migrate) and removes
+	// the volumes of a move that is undone; nil is the docker in PATH.
+	Docker *runtime.Docker
+}
 
 func (r Receiver) staging(domain string) string {
 	return filepath.Join(r.Root, "data", "relocate", domain)
@@ -312,6 +318,11 @@ func (r Receiver) Commit(domain string, manifestData []byte, taskFiles map[strin
 		}
 		placed.Parts = append(placed.Parts, "tasks/"+name+".json")
 	}
+	// The volumes its migration filled, taken out with it if it does not
+	// come up.
+	if raw, err := os.ReadFile(r.volumesFile(domain)); err == nil {
+		_ = json.Unmarshal(raw, &placed.Volumes)
+	}
 	if err := os.MkdirAll(filepath.Join(r.Root, "sites"), 0o755); err != nil {
 		return err
 	}
@@ -352,6 +363,8 @@ type placedRecord struct {
 	Domain string            `json:"domain"`
 	Parts  []string          `json:"parts"`
 	Aside  map[string]string `json:"aside,omitempty"`
+	// Volumes are the docker volumes a migration filled for it.
+	Volumes []string `json:"volumes,omitempty"`
 }
 
 func (r Receiver) placedPath(domain string) string {
@@ -394,6 +407,9 @@ func (r Receiver) Unplace(domain string) error {
 			}
 		}
 	}
+	if err := r.removeVolumeList(rec.Volumes); err != nil {
+		failed = append(failed, err.Error())
+	}
 	if len(failed) > 0 {
 		return errors.New(strings.Join(failed, "; "))
 	}
@@ -425,6 +441,11 @@ func (r Receiver) Discard(domain string) error {
 	}
 	dir := r.staging(domain)
 	_ = os.RemoveAll(dir + ".delta")
+	// Before the folder that lists them goes: a migration that failed
+	// before the commit leaves its volumes only there.
+	if err := r.removeVolumes(r.volumesFile(domain)); err != nil {
+		return err
+	}
 	if err := os.RemoveAll(dir); err != nil {
 		return err
 	}

@@ -151,8 +151,17 @@ program such as `tsx` pointed at the site's own `node_modules/.bin` when it
 has one, otherwise said in the plan, since V1 found it in its own `PATH`),
 placed in V2 with the site, and turned off in V1 by writing `disabled` in
 each, so the same job never runs on both machines. An import that is
-undone puts each V1 task back word for word. A database outside the folder
-(a server such as PostgreSQL) does not travel: move it first.
+undone puts each V1 task back word for word.
+
+A database outside the folder (PostgreSQL in a container, say) is something
+V1 has no words for. A `site.v2.json` next to the V1 `site.json` is the
+manifest the site will have in V2, written by a person, and the import takes
+it as it is instead of converting: there the database is a worker with
+`runtime: docker` and a `move` that says how its data goes ([the
+manifest](manifest.md#workers)). Its `export` runs on the V1 machine as the
+person running the import, against the database the V1 site used (a
+`docker exec` into its container, for one), with the site stopped; the dump
+travels in the last copy and is imported in V2 before the site starts.
 
 ### From any server
 

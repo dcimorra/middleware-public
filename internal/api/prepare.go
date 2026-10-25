@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -114,6 +115,67 @@ func (s *Server) registerPrepare(rc relocate.Receiver) {
 		j := s.prepares.jobs[r.PathValue("domain")]
 		if j == nil {
 			return nil, Errorf(http.StatusNotFound, "no install of %s here since this node started", r.PathValue("domain"))
+		}
+		return *j, nil
+	})
+}
+
+// migrateTime bounds a received site's data imports.
+const migrateTime = 2 * time.Hour
+
+// registerMigrate runs a received site's workers' imports (move.import)
+// before its commit, on their own as the install does, for the same
+// reason: a request across a tunnel is cut at 100 seconds.
+func (s *Server) registerMigrate(rc relocate.Receiver) {
+	s.Handle("POST", Prefix+"/relocate/{domain}/migrate", "Start bringing a received site's moving workers up in its staging and running their move.import (body: manifest, base64), before its commit; GET says how it goes", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		domain := r.PathValue("domain")
+		var body struct {
+			Manifest string `json:"manifest"`
+		}
+		if err := ReadJSON(r, &body); err != nil {
+			return nil, err
+		}
+		raw, err := base64.StdEncoding.DecodeString(body.Manifest)
+		if err != nil {
+			return nil, Errorf(http.StatusBadRequest, "manifest: not base64")
+		}
+		if _, err := os.Stat(rc.StagingSite(domain)); err != nil {
+			return nil, Errorf(http.StatusBadRequest, "%v", relocate.ErrNoStaging)
+		}
+		s.migrates.mu.Lock()
+		defer s.migrates.mu.Unlock()
+		if s.migrates.jobs == nil {
+			s.migrates.jobs = map[string]*prepareJob{}
+		}
+		if j := s.migrates.jobs[domain]; j != nil && !j.Done {
+			return map[string]any{"started": false, "running": true}, nil
+		}
+		job := &prepareJob{}
+		s.migrates.jobs[domain] = job
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), migrateTime)
+			defer cancel()
+			said, err := rc.Migrate(ctx, domain, raw)
+			s.migrates.mu.Lock()
+			job.Done, job.Output = true, said
+			if err != nil {
+				job.Error = err.Error()
+			}
+			s.migrates.mu.Unlock()
+			level, msg := "", "data imported: "+said
+			if err != nil {
+				level, msg = "error", "data import failed: "+err.Error()
+			}
+			s.emitMove("relocate.migrated", domain, level, msg, nil)
+		}()
+		return map[string]any{"started": true}, nil
+	})
+	s.Handle("GET", Prefix+"/relocate/{domain}/migrate", "How the import of a received site's workers' data goes: done, what it said, or why it failed", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		s.migrates.mu.Lock()
+		defer s.migrates.mu.Unlock()
+		j := s.migrates.jobs[r.PathValue("domain")]
+		if j == nil {
+			return nil, Errorf(http.StatusNotFound, "no data import of %s here since this node started", r.PathValue("domain"))
 		}
 		return *j, nil
 	})

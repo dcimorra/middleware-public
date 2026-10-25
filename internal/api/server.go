@@ -123,6 +123,7 @@ type Server struct {
 	repairs repairJobs
 	// prepares are the installs of sites received from another node.
 	prepares prepareJobs
+	migrates prepareJobs
 	// contains are the sites being put in a container, by name.
 	contains containJobs
 	// dnsEnabled says whether a DNS provider is on, which decides the

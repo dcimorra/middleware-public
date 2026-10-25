@@ -77,7 +77,7 @@ func (d Docker) Start(ctx context.Context, spec *manifest.Spec, port int, logFil
 	}
 	image := spec.Docker.Image
 	if spec.Docker.Build != "" {
-		image = "middleware/" + strings.ReplaceAll(spec.Domain, ".", "-") + ":" + spec.Revision
+		image = "middleware/" + dockerName(spec.Domain) + ":" + spec.Revision
 		build := exec.CommandContext(ctx, d.bin(), "build", "-q", "-t", image, "-f", filepath.Join(spec.SiteDir, spec.Docker.Build), spec.SiteDir)
 		if out, err := build.CombinedOutput(); err != nil {
 			return nil, fmt.Errorf("docker build: %w: %s", err, bytes.TrimSpace(out))
@@ -130,7 +130,14 @@ func (d Docker) Start(ctx context.Context, spec *manifest.Spec, port int, logFil
 // ContainerName is unique per domain and port, so two generations of a
 // handover never collide.
 func ContainerName(domain string, port int) string {
-	return fmt.Sprintf("mw-%s-%d", strings.ReplaceAll(domain, ".", "-"), port)
+	return fmt.Sprintf("mw-%s-%d", dockerName(domain), port)
+}
+
+// dockerName is a site's name, or a worker's ("shop.example/db"), as
+// docker accepts it in a container's or a volume's name: no dots, no
+// slash. A worker's slash made docker refuse the run.
+func dockerName(domain string) string {
+	return strings.NewReplacer(".", "-", "/", "-").Replace(domain)
 }
 
 // walls are the flags every container of a site gets, from Start and from
@@ -310,7 +317,10 @@ func volumeArg(spec *manifest.Spec, v string) (string, error) {
 	case src.Named && src.Name == "":
 		return src.Rest, nil
 	case src.Named:
-		return "mw-" + strings.ReplaceAll(spec.Domain, ".", "-") + "-" + src.Name + src.Rest, nil
+		// The site's, a worker's included: the volume is the site's data,
+		// whichever of its processes mounts it.
+		site, _, _ := strings.Cut(spec.Domain, "/")
+		return NamedVolume(site, src.Name) + src.Rest, nil
 	}
 	host := src.Path
 	if !filepath.IsAbs(host) {
@@ -318,6 +328,9 @@ func volumeArg(spec *manifest.Spec, v string) (string, error) {
 	}
 	return filepath.Clean(host) + src.Rest, nil
 }
+
+// NamedVolume is the docker volume a site's named volume is.
+func NamedVolume(site, name string) string { return "mw-" + dockerName(site) + "-" + name }
 
 // Reap removes the containers of this house that nobody adopted: a
 // generation whose supervisor died between "run" and "saved", a handover
@@ -340,4 +353,41 @@ func (d Docker) Reap(ctx context.Context, keep map[string]bool) (removed []strin
 		}
 	}
 	return removed
+}
+
+// VolumeExists says whether docker has a volume by that name.
+func (d Docker) VolumeExists(ctx context.Context, name string) bool {
+	return exec.CommandContext(ctx, d.bin(), "volume", "inspect", name).Run() == nil
+}
+
+// RemoveVolume removes a volume; one that is not there is not an error.
+func (d Docker) RemoveVolume(ctx context.Context, name string) error {
+	if !d.VolumeExists(ctx, name) {
+		return nil
+	}
+	out, err := exec.CommandContext(ctx, d.bin(), "volume", "rm", "-f", name).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker volume rm %s: %w: %s", name, err, bytes.TrimSpace(out))
+	}
+	return nil
+}
+
+// ExecIn runs a command inside a running container of this house, as the
+// container's user and behind its walls (docker exec keeps the dropped
+// capabilities and no-new-privileges), in cwd, with spec's environment and
+// PORT. It is how a move reaches a worker's database without giving the
+// command the docker socket: a command written in a site's manifest with
+// docker in its hands would own the machine.
+func (d Docker) ExecIn(ctx context.Context, container string, spec *manifest.Spec, port int, home string, out *os.File) error {
+	_, env := spec.WithPort(port)
+	args := []string{"exec", "-i", "-w", spec.Cwd}
+	for _, kv := range containerEnv(env, port, spec.Domain, spec.SiteDir, home) {
+		args = append(args, "-e", kv)
+	}
+	args = append(args, container)
+	args = append(args, spec.Command...)
+	cmd := exec.CommandContext(ctx, d.bin(), args...)
+	cmd.Stdout, cmd.Stderr = out, out
+	cmd.WaitDelay = 5 * time.Second
+	return cmd.Run()
 }

@@ -410,6 +410,45 @@ it. Workers are supervised like instances, saved to `data/state` and
 re-adopted after a supervisor restart, but never handed over: they restart.
 `disabled` stops one without deleting it.
 
+A worker can run in a container (`"runtime": "docker"` and a `docker`
+section, the same as a site's `run`): the database a site needs, declared in
+the site, so whatever moves the site knows it is there. A named volume is the
+site's (`pg:` is `mw-<site>-pg` whichever of its processes mounts it), and
+that is where a database keeps its data, out of the folder.
+
+```json
+"workers": {
+  "db": {
+    "command": ["postgres", "-p", "$PORT"],
+    "port": 5433,
+    "runtime": "docker",
+    "docker": { "image": "postgres:16-alpine", "user": "70:70",
+                "volumes": ["pg:/var/lib/postgresql/data"] },
+    "env": { "PGDATA": "/var/lib/postgresql/data/pgdata" },
+    "move": {
+      "export": ["./scripts/db-export.sh"],
+      "ready":  ["pg_isready", "-U", "app", "-p", "$PORT"],
+      "import": ["./scripts/db-import.sh"]
+    }
+  }
+}
+```
+
+`move` says how its data moves with the site, since copying a database's
+files while it runs carries a torn copy. `export` runs where the site is,
+with the site stopped and the database still up, and leaves a dump inside the
+folder, which the last copy carries. On the target, before the site is put
+in place, the worker is brought up on its own, `ready` runs until it
+succeeds, `import` runs, and the worker is stopped again: the site then
+starts on a database that has its data. A docker worker's `ready` and
+`import` run inside its container (the image has the database's tools, and
+a command from a manifest never holds the docker socket); a process worker's
+run as the site's processes do. All get the site's environment, the
+worker's on top, and `$PORT`. `timeout` bounds each (30m). A move that fails
+removes the volumes it created and starts the site again where it was, whose
+database has only been read. Only an import from V1 runs `move` yet; a move
+between nodes of a site that has it is refused.
+
 ## Tasks: `tasks/<name>.json`
 
 ```json

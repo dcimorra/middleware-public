@@ -252,3 +252,29 @@ func TestTheGatewaysPermissionsAndAgentAreChecked(t *testing.T) {
 		}
 	}
 }
+
+// A worker in a container is checked as a site's run is, and its move is
+// both halves or none: an export nobody imports carries the data and
+// leaves the site on an empty database.
+func TestADockerWorkerAndItsMoveAreChecked(t *testing.T) {
+	ok := `{"version":2,"static":{},"workers":{"db":{"command":["postgres"],"runtime":"docker","docker":{"image":"postgres:16","volumes":["pg:/data"]},"move":{"export":["./x"],"import":["./y"]}}}}`
+	if _, err := Parse([]byte(ok)); err != nil {
+		t.Fatalf("a valid docker worker was refused: %v", err)
+	}
+	for want, body := range map[string]string{
+		"needs image or build":    `{"version":2,"workers":{"db":{"command":["postgres"],"runtime":"docker"}}}`,
+		"not process or docker":   `{"version":2,"workers":{"db":{"command":["x"],"runtime":"vm"}}}`,
+		"needs export and import": `{"version":2,"workers":{"db":{"command":["x"],"move":{"export":["./x"]}}}}`,
+	} {
+		if _, err := Parse([]byte(body)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v", want, err)
+		}
+	}
+	m, err := Parse([]byte(`{"version":2,"workers":{"db":{"command":["x"],"runtime":"docker","docker":{"image":"i","volumes":["../../etc:/etc"]}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.CheckInside(t.TempDir()); err == nil || !strings.Contains(err.Error(), "workers.db.docker.volumes") {
+		t.Fatalf("a worker's volume out of the folder: %v", err)
+	}
+}

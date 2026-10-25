@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -260,5 +261,52 @@ func TestAV1SitesTasksGoWithItAndAreTurnedOffInV1(t *testing.T) {
 	}
 	if raw, _ := os.ReadFile(filepath.Join(v1, "tasks", "other-task.json")); string(raw) != other {
 		t.Fatalf("another site's V1 task was touched: %s", raw)
+	}
+}
+
+// A V1 site with a site.v2.json comes in with that manifest, not a
+// conversion, and its worker's data moves through the import token: the
+// export where it was, and on the house the worker brought up on its own
+// and its import run before the site is put in place.
+func TestAV1SitesWorkerDataMovesThroughTheImportToken(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 stands in for the worker")
+	}
+	v2 := newFixture(t).withToken()
+	_, out := v2.call("POST", "/api/v1/relocate/import-token", map[string]any{"domain": "old.test", "base": v2.http.URL})
+	tok, _ := out["token"].(string)
+
+	v1 := t.TempDir()
+	site := filepath.Join(v1, "sites", "old.test")
+	os.MkdirAll(filepath.Join(site, "public"), 0o755)
+	os.WriteFile(filepath.Join(site, "site.json"), []byte(`{"title":"old","root":"public"}`), 0o644)
+	os.WriteFile(filepath.Join(site, "data.txt"), []byte("rows written in v1"), 0o644)
+	os.WriteFile(filepath.Join(site, relocate.V2ManifestName), []byte(`{"version":2,"static":{"root":"public"},
+ "workers":{"db":{"command":["python3","-m","http.server","$PORT","--bind","127.0.0.1"],
+  "move":{"export":["sh","-c","mkdir -p .move && cp data.txt .move/dump"],"ready":["true"],
+   "import":["sh","-c","test -n \"$PORT\" && cp .move/dump imported.txt"]}}}}`), 0o644)
+
+	src := &relocate.V1Source{Root: v1, Running: func(string) bool { return false }}
+	notes, err := src.Convert("old.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(notes, "\n"), "site.v2.json") {
+		t.Fatalf("notes do not say the manifest was taken as written: %v", notes)
+	}
+	m := &relocate.Mover{Root: v1, Source: src, Parts: relocate.ImportParts, Poll: 20 * time.Millisecond, ReadyWait: 5 * time.Second}
+	var steps []string
+	if _, err := m.Move(context.Background(), "old.test", relocate.HTTPTarget{Base: v2.http.URL, Token: tok}, func(s, _ string) { steps = append(steps, s) }); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(steps, " "); !strings.Contains(got, "stop export") || !strings.Contains(got, "final import") || strings.Index(got, "import") > strings.Index(got, "commit") {
+		t.Fatalf("steps: %s", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(v2.root, "sites", "old.test", "imported.txt")); string(got) != "rows written in v1" {
+		t.Fatalf("the import did not run there with the export's data: %q", got)
+	}
+	raw, _ := os.ReadFile(filepath.Join(v2.root, "sites", "old.test", "site.json"))
+	if !strings.Contains(string(raw), `"workers"`) {
+		t.Fatalf("the manifest arrived converted, not as site.v2.json said: %s", raw)
 	}
 }
