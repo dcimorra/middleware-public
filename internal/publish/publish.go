@@ -85,8 +85,11 @@ type Options struct {
 	// public record would point the world at a door that answers it 404,
 	// and tell it the name exists.
 	VPNOnly func(site string) bool
-	Tick    time.Duration
-	Now     func() time.Time
+	// Settle is how long Publish waits for the engine to see a site that
+	// answers no name yet (10s when zero).
+	Settle time.Duration
+	Tick   time.Duration
+	Now    func() time.Time
 }
 
 // Status of one name.
@@ -163,6 +166,9 @@ type Publisher struct {
 
 // New loads data/publish.json.
 func New(opts Options) (*Publisher, error) {
+	if opts.Settle == 0 {
+		opts.Settle = 10 * time.Second
+	}
 	if opts.Tick == 0 {
 		opts.Tick = time.Minute
 	}
@@ -232,7 +238,7 @@ func (p *Publisher) Publish(ctx context.Context, site string, door inbound.Door)
 	if p.opts.VPNOnly != nil && p.opts.VPNOnly(site) {
 		return nil, fmt.Errorf("%s exists only inside the VPN (its manifest's vpn): it is never published", site)
 	}
-	hosts := p.hostsOf(site)
+	hosts := p.settledHostsOf(ctx, site)
 	if len(hosts) == 0 {
 		return nil, fmt.Errorf("%s answers no name: a project, or not a site of this installation", site)
 	}
@@ -375,6 +381,28 @@ func (p *Publisher) Covers(ctx context.Context, names []string) (yes, no []strin
 
 // HostsOf is every name site answers to now.
 func (p *Publisher) HostsOf(site string) []string { return p.hostsOf(site) }
+
+// settledHostsOf is hostsOf, waiting up to Settle for a site whose folder
+// was just put in place: the engine sees it on its next scan, and the
+// publish that follows a commit or a create arrives before that. An import
+// of a site that serves files is ready the moment its folder is there, so
+// its names were refused with "answers no name" and left pointing at the
+// node it had just been stopped on (ddev.es and dcimorra.es, October
+// 2026). Each caller had its own wait loop before; the import had none.
+func (p *Publisher) settledHostsOf(ctx context.Context, site string) []string {
+	deadline := time.Now().Add(p.opts.Settle)
+	for {
+		hosts := p.hostsOf(site)
+		if len(hosts) > 0 || !time.Now().Before(deadline) {
+			return hosts
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
 
 func (p *Publisher) hostsOf(site string) []string {
 	var out []string

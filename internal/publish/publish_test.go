@@ -393,3 +393,31 @@ func TestANameThatPointsElsewhereWaitsForTheOperatorsYes(t *testing.T) {
 		t.Fatalf("asked %v", ins.asked)
 	}
 }
+
+// An import of a site that serves files is ready the moment its folder is
+// in place, and its publish arrived before the engine had scanned it: the
+// names stayed pointing at the node it had just been stopped on.
+func TestASiteTheEngineHasNotSeenYetIsWaitedForBeforeItsNamesAreRefused(t *testing.T) {
+	f := newFixture(t)
+	f.p.opts.Settle = 5 * time.Second
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		f.setHosts(map[string]string{"c.example.com": "c.example.com", "www.c.example.com": "c.example.com"})
+	}()
+	lines, err := f.p.PublishOver(context.Background(), "c.example.com", "")
+	if err != nil {
+		t.Fatalf("a site that arrives a moment late was refused: %v", err)
+	}
+	if len(lines) != 2 {
+		t.Fatalf("lines %+v", lines)
+	}
+
+	f.p.opts.Settle = 200 * time.Millisecond
+	start := time.Now()
+	if _, err := f.p.Publish(context.Background(), "nobody.example.com", ""); err == nil || !strings.Contains(err.Error(), "answers no name") {
+		t.Fatalf("a site that never appears: %v", err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Fatal("the wait for a site that never appears is not bounded by Settle")
+	}
+}

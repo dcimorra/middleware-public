@@ -190,9 +190,6 @@ func (s *Server) sitesCreate(w http.ResponseWriter, r *http.Request) (any, error
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
-			for i := 0; i < 20 && len(s.publisher.HostsOf(domain)) == 0; i++ {
-				time.Sleep(500 * time.Millisecond)
-			}
 			if _, err := s.publisher.Publish(ctx, domain, body.Door); err != nil {
 				s.opts.Bus.Emit(events.Event{Type: "publish.failed", Subject: domain, Actor: "operator", Level: "error", Message: err.Error()})
 			}
@@ -629,9 +626,6 @@ func (s *Server) sitesRename(w http.ResponseWriter, r *http.Request) (any, error
 		go func() {
 			pctx, pcancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer pcancel()
-			for i := 0; i < 20 && len(s.publisher.HostsOf(to)) == 0; i++ {
-				time.Sleep(500 * time.Millisecond)
-			}
 			_, _ = s.publisher.Publish(pctx, to, door)
 		}()
 	}
