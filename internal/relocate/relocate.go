@@ -172,6 +172,15 @@ func (r Receiver) ReceiveDelta(ctx context.Context, domain string, body io.Reade
 		if rel == "." {
 			return nil
 		}
+		if d.IsDir() && d.Name() == "node_modules" {
+			// Never named by the index because never sent: the source leaves
+			// it behind and the target installs it (MoveParts, Prepare)
+			// between the first copy and this one. Removing it here, as the
+			// first version did, took away what was just installed, and the
+			// moved site failed at its start with "tailwindcss: not found"
+			// on any machine, however big.
+			return filepath.SkipDir
+		}
 		if !keep[filepath.ToSlash(rel)] {
 			gone = append(gone, p)
 			if d.IsDir() {

@@ -237,9 +237,13 @@ type preparingTarget struct {
 }
 
 func (t *preparingTarget) Prepare(_ context.Context, d string) (string, error) {
-	_, err := os.Stat(filepath.Join(t.rc.StagingSite(d), "node_modules"))
+	mods := filepath.Join(t.rc.StagingSite(d), "node_modules")
+	_, err := os.Stat(mods)
 	t.sawModules = err == nil
 	t.prepared = true
+	// What an install leaves: it must still be there when the site starts.
+	os.MkdirAll(filepath.Join(mods, ".bin"), 0o755)
+	os.WriteFile(filepath.Join(mods, ".bin", "tailwindcss"), []byte("built here"), 0o755)
 	return "added 3 packages", nil
 }
 
@@ -265,5 +269,10 @@ func TestANodeSitesModulesAreInstalledThereNotCarried(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dst, "sites", "a.test", "public", "index.html")); err != nil {
 		t.Fatal("the site did not arrive")
+	}
+	// The last copy removes what was deleted at the source, and node_modules
+	// is not that: it was installed here after the first copy.
+	if got, _ := os.ReadFile(filepath.Join(dst, "sites", "a.test", "node_modules", ".bin", "tailwindcss")); string(got) != "built here" {
+		t.Fatal("what the install put in node_modules was gone when the site started")
 	}
 }

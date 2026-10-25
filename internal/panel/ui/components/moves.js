@@ -25,6 +25,11 @@ function stepRow(j, s) {
     h("span", { class: "badge " + (BADGE[s.state] || "") }, t("moves.state." + s.state)),
     h("div", { class: "grow" },
       h("div", null, t("site.moveStep." + s.step, { node: j.node })),
+      // The install says what it did (the tool, its last line, how many
+      // programs in node_modules/.bin): an install that leaves out what the
+      // start needs looks done otherwise. The other steps' lines only
+      // repeat their label.
+      s.step === "install" && s.state !== "running" && s.message ? h("div", { class: "small dim move-error" }, s.message) : null,
       s.error ? h("div", { class: "small level-error move-error" }, s.error) : null),
     h("span", { class: "small muted mono", title: fmtTime(s.started) }, fmtDuration(secs(s.started, s.ended))));
 }
