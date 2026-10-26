@@ -195,7 +195,11 @@ each one is written by hand.
 ## Docker
 
 The folder and the site's HOME are mounted at their own paths, so nothing in
-the command changes between runtimes. Every container has no capabilities,
+the command changes between runtimes. The folder is writable and `site.json`
+inside it is not: it is mounted read-only over it, so the container cannot
+rewrite the manifest the house reads on the machine (a `runtime: "process"`
+of its own would run outside the walls). A `site.json` that is a link is
+refused in a container. Every container has no capabilities,
 `no-new-privileges`, no restart policy (the engine restarts), at most `pids`
 processes (default 1024), the port on loopback only, and `HOST=0.0.0.0`
 inside. `user` empty is right for the daemon: the supervisor's uid on a

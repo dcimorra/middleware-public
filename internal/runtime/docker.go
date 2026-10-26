@@ -203,6 +203,24 @@ func siteMounts(spec *manifest.Spec, home string) ([]string, error) {
 		return nil, err
 	}
 	out := []string{"-v", real + ":" + spec.SiteDir, "-v", home + ":" + home}
+	// The manifest goes in read-only, over the folder's own mount. The
+	// folder is the container's to write, and the manifest is what the
+	// house reads on the machine at its next tick: a container that could
+	// rewrite it would set `runtime: "process"` and a command of its own,
+	// and the house would run that outside the walls, as its own user.
+	// Bound as a file, it is a mount point inside: neither written,
+	// removed nor renamed from there.
+	mf := filepath.Join(real, manifest.FileName)
+	switch info, err := os.Lstat(mf); {
+	case err == nil && info.Mode().IsRegular():
+		out = append(out, "-v", mf+":"+filepath.Join(spec.SiteDir, manifest.FileName)+":ro")
+	case err == nil:
+		// A link would stay the container's to replace, whatever is
+		// mounted where it points.
+		return nil, fmt.Errorf("%s is not a plain file: a site in a container needs its manifest to be one", manifest.FileName)
+	case !errors.Is(err, os.ErrNotExist):
+		return nil, err
+	}
 	for _, m := range spec.Mounts {
 		out = append(out, "-v", m+":"+m)
 	}
