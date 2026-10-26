@@ -82,7 +82,7 @@ func (s *Server) registerPasskeys() {
 		if err != nil {
 			return nil, err
 		}
-		return st.LoginOptions(rpID(r))
+		return st.LoginOptions(rpID(r), auth.ClientIP(r))
 	})
 	s.Public("POST", p+"/login/options")
 	s.Handle("POST", p+"/login", "Sign in with a passkey; sets the session cookie", func(w http.ResponseWriter, r *http.Request) (any, error) {

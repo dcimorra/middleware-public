@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -293,5 +294,40 @@ func TestATokenIDNeverLooksLikeAFlag(t *testing.T) {
 		if strings.HasPrefix(p.ID, "-") || strings.Trim(p.ID, "0123456789abcdef") != "" {
 			t.Fatalf("token id %q", p.ID)
 		}
+	}
+}
+
+// Anyone may begin a passkey login, so anyone asking many times must not
+// keep the operator from beginning one: the table used to refuse every
+// new ceremony once full.
+func TestAFloodOfPasskeyLoginsDoesNotLockTheOperatorOut(t *testing.T) {
+	s := newStore(t)
+	for i := 0; i < 1000; i++ {
+		if _, err := s.LoginOptions("panel.example", "203.0.113.9"); err != nil {
+			t.Fatalf("one address, ceremony %d: %v", i, err)
+		}
+	}
+	for i := 0; i < 300; i++ {
+		if _, err := s.LoginOptions("panel.example", fmt.Sprintf("198.51.100.%d", i%250)); err != nil {
+			t.Fatalf("many addresses, ceremony %d: %v", i, err)
+		}
+	}
+	s.pkMu.Lock()
+	n, mine := len(s.challenges), 0
+	for _, c := range s.challenges {
+		if c.from == "login\x00203.0.113.9" {
+			mine++
+		}
+	}
+	s.pkMu.Unlock()
+	if n > maxChallenges || mine > maxChallengesPerAddr {
+		t.Fatalf("%d ceremonies waiting, %d of one address", n, mine)
+	}
+	out, err := s.LoginOptions("panel.example", "192.0.2.1")
+	if err != nil || out["challenge_id"] == "" {
+		t.Fatalf("the operator could not begin a login: %v", err)
+	}
+	if _, err := s.RegisterOptions("panel.example"); err != nil {
+		t.Fatalf("the operator could not begin a registration: %v", err)
 	}
 }

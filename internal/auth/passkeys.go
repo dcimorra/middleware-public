@@ -51,7 +51,21 @@ type challenge struct {
 	purpose string // "register" or "login"
 	rpID    string
 	expires time.Time
+	// from is the address (brake.KeyOf) a login ceremony was begun from;
+	// empty for a registration, which only a session can begin.
+	from string
 }
+
+// The ceremonies in flight are bounded, and the login's begins without a
+// session. The bound used to refuse every new one once 256 were waiting:
+// 257 anonymous requests every five minutes then kept the operator out of
+// the panel, entirely when the password is closed. Now one address keeps
+// a few and a full table drops the oldest login, so filling it takes a
+// flood that outruns the operator's own ceremony, and the WAF sees that.
+const (
+	maxChallenges        = 256
+	maxChallengesPerAddr = 4
+)
 
 // Errors the API maps.
 var (
@@ -106,7 +120,7 @@ func (s *Store) HasPasskeys(rpID string) bool {
 	return false
 }
 
-func (s *Store) newChallenge(purpose, rpID string) (string, error) {
+func (s *Store) newChallenge(purpose, rpID, from string) (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
@@ -115,18 +129,45 @@ func (s *Store) newChallenge(purpose, rpID string) (string, error) {
 	s.pkMu.Lock()
 	defer s.pkMu.Unlock()
 	now := s.now()
+	mine := 0
 	for k, c := range s.challenges {
 		if now.After(c.expires) {
 			delete(s.challenges, k)
+			continue
+		}
+		if from != "" && c.from == from {
+			mine++
 		}
 	}
-	// A bound on what an anonymous caller can make us remember: the
-	// login ceremony begins without a session.
-	if len(s.challenges) > 256 {
+	if from != "" && mine >= maxChallengesPerAddr {
+		s.dropOldestLogin(from)
+	}
+	if len(s.challenges) >= maxChallenges {
+		s.dropOldestLogin("")
+	}
+	if len(s.challenges) >= maxChallenges {
+		// Only registrations, which need a session, are left.
 		return "", ErrRateLimited
 	}
-	s.challenges[id] = challenge{value: b, purpose: purpose, rpID: rpID, expires: now.Add(challengeLife)}
+	s.challenges[id] = challenge{value: b, purpose: purpose, rpID: rpID, expires: now.Add(challengeLife), from: from}
 	return id, nil
+}
+
+// dropOldestLogin forgets the login ceremony that expires first, begun
+// from the address from, or from any when from is empty. pkMu is held.
+func (s *Store) dropOldestLogin(from string) {
+	oldest, at := "", time.Time{}
+	for k, c := range s.challenges {
+		if c.purpose != "login" || (from != "" && c.from != from) {
+			continue
+		}
+		if oldest == "" || c.expires.Before(at) {
+			oldest, at = k, c.expires
+		}
+	}
+	if oldest != "" {
+		delete(s.challenges, oldest)
+	}
 }
 
 // spend takes a challenge out, so it is used once whatever happens next.
@@ -144,7 +185,7 @@ func (s *Store) spend(id, purpose, rpID string) ([]byte, bool) {
 // RegisterOptions are what navigator.credentials.create() needs, in the
 // JSON the panel turns into its arguments.
 func (s *Store) RegisterOptions(rpID string) (map[string]any, error) {
-	ch, err := s.newChallenge("register", rpID)
+	ch, err := s.newChallenge("register", rpID, "")
 	if err != nil {
 		return nil, err
 	}
@@ -215,9 +256,10 @@ func (s *Store) Register(challengeID, name, origin, rpID string, clientDataJSON,
 	return PasskeyInfo{ID: b64url.EncodeToString(p.ID), Name: p.Name, RPID: rpID, Created: p.Created}, nil
 }
 
-// LoginOptions are what navigator.credentials.get() needs.
-func (s *Store) LoginOptions(rpID string) (map[string]any, error) {
-	ch, err := s.newChallenge("login", rpID)
+// LoginOptions are what navigator.credentials.get() needs; ip is the
+// caller's address, which bounds how many it may have waiting.
+func (s *Store) LoginOptions(rpID, ip string) (map[string]any, error) {
+	ch, err := s.newChallenge("login", rpID, "login\x00"+brake.KeyOf(ip))
 	if err != nil {
 		return nil, err
 	}
