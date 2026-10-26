@@ -25,9 +25,10 @@ import { securityTab } from "./site-security.js";
 import { activityTab } from "./site-activity.js";
 import { cacheTab } from "./site-cache.js";
 import { doorCard } from "./site-door.js";
+import { specsTab } from "./site-specs.js";
 
-const TABS = ["overview", "activity", "manifest", "logs", "files", "chat", "access", "security", "cache", "moves"];
-const TAB_ICON = { overview: "gauge", activity: "activity", manifest: "code", logs: "list", files: "folder", chat: "chat", access: "lock", security: "shield", cache: "box", moves: "upload" };
+const TABS = ["overview", "activity", "manifest", "logs", "files", "chat", "specs", "access", "security", "cache", "moves"];
+const TAB_ICON = { overview: "gauge", activity: "activity", manifest: "code", logs: "list", files: "folder", chat: "chat", specs: "file", access: "lock", security: "shield", cache: "box", moves: "upload" };
 
 export function siteScreen({ domain, tab }) {
   const active = TABS.includes(tab) ? tab : "overview";
@@ -62,6 +63,7 @@ export function siteScreen({ domain, tab }) {
       case "logs": view = logsTab(domain); break;
       case "files": view = filesTab(domain); break;
       case "chat": view = chatTab(domain); break;
+      case "specs": view = specsTab(domain); break;
       case "access": view = accessTab(domain); break;
       case "security": view = securityTab(domain); break;
       case "activity": view = activityTab(domain); break;

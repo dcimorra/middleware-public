@@ -18,6 +18,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/modules"
 	"github.com/dcimorra/middleware-public/internal/modules/cloudflare"
 	"github.com/dcimorra/middleware-public/internal/modules/github"
+	"github.com/dcimorra/middleware-public/internal/modules/openspec"
 	"github.com/dcimorra/middleware-public/internal/settings"
 )
 
@@ -40,6 +41,7 @@ type moduleSet struct {
 	Cloudflare *cloudflare.Module
 	GitHub     *github.Module
 	Deps       *deps.Manager
+	OpenSpec   *openspec.Module
 }
 
 var (
@@ -76,15 +78,17 @@ func buildModules(root string, bus *events.Bus, restart func(context.Context, st
 		return err == nil && mgr.Enabled(cloudflare.Key) && cfg["tunnel_id"] != ""
 	}}
 	gh := github.New(mgr, bus, restart)
+	osp := openspec.New(dm)
 	mgr.Register(cf)
 	mgr.Register(gh)
+	mgr.Register(osp)
 	// The VPN and the agent modules are built in wire.go: they need the
 	// helper, the secrets box and the provider registry, which this file
 	// does not know about.
 	if err := registerExtraModules(mgr, root, bus, dm); err != nil {
 		return nil, err
 	}
-	return &moduleSet{Manager: mgr, Cloudflare: cf, GitHub: gh, Deps: dm}, nil
+	return &moduleSet{Manager: mgr, Cloudflare: cf, GitHub: gh, Deps: dm, OpenSpec: osp}, nil
 }
 
 // modulesHook builds the registry at start so a bad secret key fails the

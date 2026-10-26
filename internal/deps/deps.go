@@ -66,6 +66,9 @@ var Packages = []Package{
 	{Name: "qwen", NPM: "@qwen-code/qwen-code", MinNode: 20},
 	// Kimi Code wants Node 22.19+; the Node this package fetches is 22.22.
 	{Name: "kimi", NPM: "@moonshot-ai/kimi-code", MinNode: 22},
+	// OpenSpec, for spec-driven work in the sites' projects. It wants Node
+	// 20.19+, which a bare major cannot say: 22, as Kimi.
+	{Name: "openspec", NPM: "@fission-ai/openspec", MinNode: 22},
 	{Name: "grok", Binary: &Binary{
 		Latest: "https://x.ai/cli/stable",
 		URL:    "https://x.ai/cli/grok-{version}-linux-{arch}",

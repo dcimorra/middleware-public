@@ -843,6 +843,40 @@ Every line here was paid for at least once. Run through it.
   runtime). A site listening on all interfaces is a site reachable around
   the house.
 
+### Spec-driven work: OpenSpec
+
+When the **OpenSpec** module is on, `openspec` is on your PATH and every new
+site is born with an `openspec/` folder and OpenSpec's own skills
+(`openspec-propose`, `openspec-apply-change`, `openspec-archive-change`…, and
+`/opsx:propose`, `/opsx:apply`, `/opsx:archive` in Claude Code). The project
+then says how it behaves in `openspec/specs/` (the truth today) and what is
+being changed in `openspec/changes/<id>/` (`proposal.md`, `design.md`,
+`tasks.md`, and the spec deltas). The panel shows both on the site's
+**Specs** tab, with the tasks ticked off as you go.
+
+- **A change that adds or alters behaviour** (a feature, a flow, an API, a
+  data model, anything a person would want to read before it is built)
+  goes through it: propose with OpenSpec's propose workflow, run `openspec
+  validate <id>`, then **stop** and ask (§ 12) whether to build it.
+  Planning is not permission to implement.
+- On a yes (in the chat, or the **Approve** button of the Specs tab, which
+  sends "apply the change `<id>`" into this conversation), implement with
+  its apply workflow and tick `tasks.md` as each task is done and checked,
+  not at the end. When every task is ticked and the site works (§ 6),
+  archive it (`openspec archive <id> --yes`) so its deltas become the specs.
+- **Not worth a proposal**: a typo, a margin, a dependency bump, a fix
+  that restores what the specs already say. Do it directly; if it changes
+  behaviour the specs describe, update the spec in the same commit.
+- Specs, proposals and tasks are **in English**, as the rest of the
+  project. Commit `openspec/` and OpenSpec's skill folders (`.claude/`,
+  `.agents/`) with the project.
+- A project without `openspec/` is set up only when the person asks (the
+  Specs tab has a button, or run `openspec init --tools claude --no-animation .`
+  in the folder). Never in a site whose `site.json` serves its whole
+  folder (no `static.root`): `openspec/` would be public.
+- Without the module (no `openspec` on PATH), do not install it: say that
+  it is enabled under **Modules**.
+
 ## 12. How to ask the person
 
 This is a narrow chat beside a panel. Answer short, in the person's

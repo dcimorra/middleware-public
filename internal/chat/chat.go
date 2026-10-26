@@ -796,9 +796,11 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 		Model:     model,
 		SessionID: session,
 		Jail:      s.Jail,
-		Env:       map[string]string{"PATH": m.agentPath(), MarkVar: name},
-		Name:      name,
-		Stream:    m.streamPath(name, turnID),
+		// OpenSpec's CLI reports usage unless told not to; a turn that
+		// runs it on a site's project tells it not to.
+		Env:    map[string]string{"PATH": m.agentPath(), MarkVar: name, "OPENSPEC_TELEMETRY": "0"},
+		Name:   name,
+		Stream: m.streamPath(name, turnID),
 	}
 	if c.Origin == OriginSite {
 		system = SiteSystem(c)

@@ -109,6 +109,32 @@ pointer ([deploy.md](deploy.md)).
   `build` for Create React App), Go (`go run .`) or files (the root, or
   `public`). The site gets `deploy.github`, so every push deploys it.
 
+## openspec
+
+Spec-driven development with [OpenSpec](https://github.com/Fission-AI/OpenSpec):
+before a change that alters behaviour is built, the site's agent writes
+what and why (`openspec/changes/<id>/`: proposal, design, tasks, spec
+deltas) and a person approves it; once built and checked it is archived
+and becomes the project's specs (`openspec/specs/`).
+
+- **Needs**: nothing.
+- **Installs**: the `openspec` CLI (`@fission-ai/openspec`) under
+  `modules/node`, with the Node it needs, kept current like the agents'.
+- **New sites**: every site created while the module is on (panel, CLI,
+  the house's conversation, Mask: all of them end in `site.created`) is set
+  up with `openspec init`, which writes `openspec/` and OpenSpec's own skills
+  for every agent the house can run (`.claude/skills`, `.agents/skills`…).
+  Not a site that serves its whole folder: `openspec/` would be public.
+  An existing site is set up from its tab, on request.
+- **The Specs tab**: each change with its tasks ticked, to read and to
+  approve or archive (a message into the site's conversation: the agent
+  does the work where it can be read and stopped), and the specs in force.
+  It reads the folder without the CLI, so it keeps working with the module
+  off.
+- **Telemetry**: off. `OPENSPEC_TELEMETRY=0` on every turn and on init.
+- **The agents**: the house's guide (§ 11) says when a change goes through
+  a proposal and when it does not, and never to build before a yes.
+
 ## agent-claude
 
 Conversations in the panel run on Anthropic's Claude through Claude Code,

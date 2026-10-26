@@ -42,6 +42,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/modules/agents"
 	"github.com/dcimorra/middleware-public/internal/modules/cloudflare"
 	"github.com/dcimorra/middleware-public/internal/modules/github"
+	"github.com/dcimorra/middleware-public/internal/modules/openspec"
 	"github.com/dcimorra/middleware-public/internal/modules/vpn"
 	"github.com/dcimorra/middleware-public/internal/nodes"
 	"github.com/dcimorra/middleware-public/internal/pages"
@@ -221,6 +222,9 @@ func buildWire(a *app.App) app.Hook {
 			chatManager.SetPath(set.Deps.Path)
 		}
 		go set.Deps.Run(context.Background())
+		initSpecs := specsInit(a, set)
+		srv.RegisterSpecs(api.SpecsOptions{Enabled: func() bool { return set.Manager.Enabled(openspec.Key) }, Init: initSpecs})
+		go specsOnCreate(a, set, initSpecs)
 	}
 	if acmeIssuer != nil {
 		acmeIssuer.SetDNS01(dns01For(cloudflareDNS{set: set}))

@@ -947,3 +947,18 @@ svg.dash-spark .mem { stroke: var(--warn); stroke-dasharray: 3 2; }
 .leftover code { overflow-wrap: anywhere; }
 /* The installer's output, followed live: its own lines, wrapped on a phone. */
 .req-log { margin: 0; max-height: 60vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; background: var(--surface-2); border-radius: var(--radius); padding: 10px; }
+
+/* ---------- specs (OpenSpec) ---------- */
+.specs > * + * { margin-top: 10px; }
+.specs-h { margin-top: 18px !important; display: flex; align-items: center; gap: 6px; }
+.specs-change { display: flex; flex-direction: column; gap: 8px; }
+.specs-change p { margin: 0; }
+.specs-change .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.specs-change .row code { overflow-wrap: anywhere; }
+.specs-change .meter { margin: 2px 0; }
+.specs-spec { padding: 10px 14px; border-top: 1px solid var(--border); }
+.specs-spec:first-child { border-top: 0; }
+.specs-spec .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.specs-files { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.specs-file { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; background: var(--surface); }
+.specs-file > .mono { margin-bottom: 6px; }

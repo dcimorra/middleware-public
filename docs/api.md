@@ -109,6 +109,8 @@ A site object:
 | GET | `/sites/{domain}/files` | `?path=/` → `[{name, dir, size, mtime}]` (inside the folder only) |
 | GET | `/sites/{domain}/file` | `?path=…` → raw content |
 | PUT | `/sites/{domain}/file` | `?path=…`, raw body → `{ok}` |
+| GET | `/sites/{domain}/specs` | the project's OpenSpec folder → `{enabled, initialized, changes: [{id, title, why, done, total, files, updated}], archived: [{id, date, path}], specs: [{path, capability, title, requirements}]}` |
+| POST | `/sites/{domain}/specs/init` | `openspec init` in the folder (409 with the module off; refused for a site that serves its whole folder) → `{ok, output}` |
 | POST | `/sites/{domain}/deploy` | → `{ok, build}` (runs `deploy.github.build`, writes the pointer); `{ok, via: "github"}` when the github module is enabled and the manifest has `deploy.github`: the module's runner fetches the repository first and answers at once, progress on `/events/stream` as `deploy.*` |
 | GET | `/sites/{domain}/env` | → `{resolved: {…}}` what the instance was born with (secrets masked) |
 | POST | `/sites/{domain}/rename` | `{to, publish?}` → site; the folder, its HOME, logs, conversations and cost move with it; published names are taken down and the new ones published on the same door. A project (no dot) is given a domain this way (`publish: true` publishes it on the door for new sites); a site becomes a project only when nothing in it answers a hostname (no `run`, `upstream`, `static` or `aliases`) |
