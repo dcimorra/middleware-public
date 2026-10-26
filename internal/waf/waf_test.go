@@ -482,3 +482,31 @@ func TestTheOperatorsOwnPanelTrafficIsNotRateLimited(t *testing.T) {
 		t.Fatal("the same burst without the session was not limited and blocked")
 	}
 }
+
+// The operator's address, trusted at sign-in, gets the 429s of a site it
+// reloads too fast and never the block, which goes to the firewall and
+// closes every site and the panel at once.
+func TestTheOperatorsAddressIsNeverBlockedForGoingTooFast(t *testing.T) {
+	w, _, _ := newTestWAF(t, t.TempDir(), nil)
+	p := DefaultPolicy()
+	p.Rate = &manifest.Rate{Requests: 60, Window: manifest.Duration(time.Minute), Burst: 5}
+	p.Trips = 3
+	if err := w.SetPolicy(p); err != nil {
+		t.Fatal(err)
+	}
+	w.Trust(net.ParseIP("46.136.139.2"), 7*24*time.Hour)
+	h := w.Wrap(okHandler())
+	limited := false
+	for i := 0; i < 40; i++ {
+		if get(h, "luma.example", "46.136.139.2:5000", nil).Code == http.StatusTooManyRequests {
+			limited = true
+		}
+	}
+	if !limited {
+		t.Fatal("the burst was not limited at all")
+	}
+	if w.IsBlocked(net.ParseIP("46.136.139.2")) {
+		t.Fatal("the operator's address was blocked")
+	}
+}
+

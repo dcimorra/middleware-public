@@ -152,7 +152,13 @@ func (w *WAF) trip(ip net.IP) {
 	w.mu.RLock()
 	trips := w.policy.Trips
 	w.mu.RUnlock()
-	if trips <= 0 {
+	// An address the operator signed in from this week, the allow list
+	// and the private ranges get the 429s and never the block: the block
+	// goes to the machine's firewall and closes every site at once, and a
+	// page of 67 files reloaded three times in a row was enough to put the
+	// operator out of the panel and their own sites for ten minutes, then
+	// twenty, then forty. Strikes already spared them; the trips did not.
+	if trips <= 0 || w.exempt(ip) {
 		return
 	}
 	t := w.counter(ip.String())
