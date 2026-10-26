@@ -53,6 +53,10 @@ type Module struct {
 	// is turned off, for agents that exist only through their module.
 	removeOnDisable bool
 	loginSpec       func(bin string) loginSpec
+	// models are the agent's models as the module knows them now, offered
+	// as the choices of its "model" need; labels say what each runs.
+	models func() []string
+	labels map[string]string
 
 	// Deps installs and finds the CLI; nil means PATH only.
 	Deps *deps.Manager
@@ -83,7 +87,7 @@ func Claude(reg *agent.Registry) *Module {
 		desc: "Conversations run by Claude Code. Sign in with your Claude subscription from here, or give it an API key.",
 		bin:  "claude",
 		needs: []modules.Need{
-			{Key: "model", Label: "Default model", Optional: true, Help: "Alias or model name offered first in the panel (sonnet, opus, haiku…)."},
+			{Key: "model", Label: "Default model", Optional: true, Help: "Offered first in the panel. Empty: the first one listed."},
 			{Key: "api_key", Label: "API key (instead of a subscription)", Secret: true, Optional: true, Help: "Passed to the CLI as ANTHROPIC_API_KEY. Leave empty and sign in below to use your subscription."},
 			{Key: "bin", Label: "Binary", Optional: true, Help: "Path to the claude executable. Empty: the one this installation keeps under modules/node, installed and updated for you."},
 			{Key: "oauth_token", Secret: true, Optional: true, Hidden: true},
@@ -92,6 +96,8 @@ func Claude(reg *agent.Registry) *Module {
 		reg:       reg,
 		secretKey: "oauth_token",
 		loginSpec: claudeLoginSpec,
+		models:    func() []string { return claude.New(claude.Config{}).Models() },
+		labels:    claude.Aliases,
 	}
 	m.build = func(cfg modules.Config) agent.Provider {
 		return claude.New(claude.Config{
@@ -115,7 +121,7 @@ func Agy(reg *agent.Registry, home string) *Module {
 		desc: "Conversations run by Google's Antigravity CLI. Sign in with your Google account from here.",
 		bin:  "agy",
 		needs: []modules.Need{
-			{Key: "model", Label: "Default model", Optional: true, Help: "Model offered first in the panel (gemini-3.8-flash-high, claude-sonnet-4-6…, as `agy models` lists them)."},
+			{Key: "model", Label: "Default model", Optional: true, Help: "Offered first in the panel. Empty: the first one listed."},
 			{Key: "bin", Label: "Binary", Optional: true, Help: "Path to the agy executable. Empty: the one this installation keeps under modules/node, downloaded from Google and updated for you."},
 			{Key: "oauth_token", Secret: true, Optional: true, Hidden: true},
 			{Key: "oauth_since", Optional: true, Hidden: true},
@@ -124,6 +130,7 @@ func Agy(reg *agent.Registry, home string) *Module {
 		secretKey: "oauth_token",
 		loginSpec: agyLoginSpec,
 		home:      home,
+		models:    agy.DefaultModels,
 	}
 	m.build = func(cfg modules.Config) agent.Provider {
 		return agy.New(agy.Config{
@@ -163,6 +170,15 @@ func (m *Module) Description() string { return m.desc }
 
 // Needs implements modules.Module.
 func (m *Module) Needs() []modules.Need { return append([]modules.Need(nil), m.needs...) }
+
+// Choices implements modules.Chooser: the default model is picked from
+// the agent's models, not typed from memory.
+func (m *Module) Choices(key string) ([]string, map[string]string) {
+	if key != "model" || m.models == nil {
+		return nil, nil
+	}
+	return m.models(), m.labels
+}
 
 // binary resolves what would run: the configured path, the managed copy,
 // or the default name through PATH.

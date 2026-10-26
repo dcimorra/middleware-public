@@ -46,6 +46,11 @@ type OpenCode struct {
 	modelsAt time.Time
 	modErr   string
 	busy     bool
+	// offered are the connected providers' models, as of the last build,
+	// under a lock of their own: Needs reads them, and Needs is reached
+	// from inside cmu (Session asks the store, which asks Needs).
+	omu     sync.Mutex
+	offered []string
 }
 
 // CatalogProvider is one provider OpenCode can talk to.
@@ -68,19 +73,32 @@ func NewOpenCode(reg *agent.Registry, home string) *OpenCode {
 		desc: "Conversations run by OpenCode, with whichever providers you connect here (OpenAI, OpenRouter, Anthropic, Groq, DeepSeek…): the chat lists the models of the ones connected.",
 		bin:  "opencode",
 		needs: []modules.Need{
-			{Key: "model", Label: "Default model", Optional: true, Help: "provider/model offered first in the chat (openai/gpt-4.1, openrouter/…). Empty: the first one listed."},
+			{Key: "model", Label: "Default model", Optional: true, Help: "Offered first in the chat, from the providers connected. Empty: the first one listed."},
 			{Key: "bin", Label: "Binary", Optional: true, Help: "Path to the opencode executable. Empty: the one this installation keeps under modules/node, installed and updated for you."},
 			{Key: "providers", Secret: true, Optional: true, Hidden: true},
 		},
 		reg:       reg,
 		secretKey: "providers",
 	}
+	// The models of the providers connected when the agent was last built
+	// (every key added or removed builds it again). Not read from the
+	// store here: Needs is called with the manager's lock held, and asking
+	// it for the config from inside was a deadlock.
+	m.models = func() []string {
+		o.omu.Lock()
+		defer o.omu.Unlock()
+		return append([]string(nil), o.offered...)
+	}
 	m.build = func(cfg modules.Config) agent.Provider {
+		connected := o.connectedModels(o.authOf(cfg))
+		o.omu.Lock()
+		o.offered = connected
+		o.omu.Unlock()
 		return opencode.New(opencode.Config{
 			Key:    o.provider(),
 			Bin:    cfg["bin"],
 			Auth:   o.authOf(cfg),
-			Models: modelsWith(cfg["model"], o.connectedModels(o.authOf(cfg))),
+			Models: modelsWith(cfg["model"], connected),
 		})
 	}
 	o.Module = m

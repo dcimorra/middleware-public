@@ -115,3 +115,25 @@ func TestRestoreReappliesAnEnabledModuleAfterARestart(t *testing.T) {
 		t.Fatalf("restored provider lost its config: %v", p.Models())
 	}
 }
+
+func TestAnAgentsDefaultModelIsAListOfItsModels(t *testing.T) {
+	reg := agent.NewRegistry()
+	mgr, err := modules.New(t.TempDir(), events.New(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr.Register(Claude(reg))
+	mgr.Register(NewVendor(reg, t.TempDir(), Vendors[0]))
+	for _, info := range mgr.List() {
+		for _, n := range info.Needs {
+			switch {
+			case n.Key == "model" && len(n.Options) == 0:
+				t.Fatalf("%s: the model is a box to type into", info.Key)
+			case n.Key != "model" && len(n.Options) > 0:
+				t.Fatalf("%s: %s got options", info.Key, n.Key)
+			case info.Key == ClaudeKey && n.Key == "model" && (strings.Join(n.Options, ",") != "sonnet,opus,haiku" || n.Labels["opus"] == ""):
+				t.Fatalf("claude's models: %v %v", n.Options, n.Labels)
+			}
+		}
+	}
+}

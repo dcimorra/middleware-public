@@ -91,10 +91,25 @@ func (m *Manager) Reload() error {
 // List returns every registered module with its state, in registration
 // order.
 func (m *Manager) List() []Info {
+	out, mods := m.list()
+	for i, mod := range mods {
+		c, ok := mod.(Chooser)
+		if !ok {
+			continue
+		}
+		for j := range out[i].Needs {
+			out[i].Needs[j].Options, out[i].Needs[j].Labels = c.Choices(out[i].Needs[j].Key)
+		}
+	}
+	return out
+}
+
+func (m *Manager) list() ([]Info, []Module) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	_ = m.st.reload()
 	out := make([]Info, 0, len(m.order))
+	mods := make([]Module, 0, len(m.order))
 	for _, key := range m.order {
 		mod := m.mods[key]
 		needs := mod.Needs()
@@ -111,8 +126,9 @@ func (m *Manager) List() []Info {
 			Configured:  configured,
 			Needs:       needs,
 		})
+		mods = append(mods, mod)
 	}
-	return out
+	return out, mods
 }
 
 // Enabled reports whether key is on.
@@ -366,7 +382,7 @@ func (m *Manager) Handler() http.Handler {
 }
 
 // prepare looks the module up, checks cfg only names declared needs, and
-// fills what cfg leaves empty from the store. The panel sends secrets back
+// fills what cfg leaves out from the store. The panel sends secrets back
 // empty rather than echo them, so an empty secret means "keep the one you
 // have", never "clear it"; Forget is how one clears.
 func (m *Manager) prepare(key string, cfg Config) (Module, Config, error) {
@@ -397,9 +413,16 @@ func (m *Manager) prepare(key string, cfg Config) (Module, Config, error) {
 	for k, v := range stored {
 		merged[k] = v
 	}
+	secret := map[string]bool{}
+	for _, n := range needs {
+		secret[n.Key] = n.Secret
+	}
 	for k, v := range cfg {
 		v = strings.TrimSpace(v)
-		if v == "" && merged[k] != "" {
+		// Only a secret sent empty is kept: the panel never echoes one.
+		// Any other field is shown with its value, so sent empty it was
+		// emptied (a model list set back to "the first one listed").
+		if v == "" && merged[k] != "" && secret[k] {
 			continue
 		}
 		merged[k] = v

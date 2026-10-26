@@ -214,6 +214,7 @@ func NewVendor(reg *agent.Registry, homes string, v Vendor) *VendorModule {
 	m := &Module{
 		key: "agent-" + v.Key, name: v.Name, desc: v.Desc, bin: v.Bin, needs: needs,
 		reg: reg, secretKey: "api_key", removeOnDisable: true, home: vm.Home,
+		models: vm.list,
 	}
 	if v.Login != nil {
 		// The sign-in is stored apart from the key; with both, the key wins.

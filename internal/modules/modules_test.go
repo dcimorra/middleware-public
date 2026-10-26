@@ -302,3 +302,21 @@ func TestTheHandlerReachesOnlyEnabledModules(t *testing.T) {
 		t.Fatalf("an unknown route must 404, got %d", rec.Code)
 	}
 }
+
+func TestASecretSentEmptyIsKeptAndAnyOtherFieldIsCleared(t *testing.T) {
+	f := &fake{key: "fake"}
+	m, _, _ := newManager(t, f)
+	ctx := context.Background()
+	if _, err := m.Enable(ctx, "fake", Config{"token": "tok", "account": "acc-1"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	// The panel never echoes a secret, so empty is "keep it"; a plain
+	// field is shown with its value, so empty is the operator's choice.
+	if _, err := m.Enable(ctx, "fake", Config{"token": "", "account": ""}, nil); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := m.Config("fake")
+	if cfg["token"] != "tok" || cfg["account"] != "discovered-123" {
+		t.Fatalf("after saving empty: %v", cfg)
+	}
+}

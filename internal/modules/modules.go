@@ -27,6 +27,24 @@ type Need struct {
 	// itself (a session obtained by signing in) and the panel shows them
 	// in its own way.
 	Hidden bool `json:"hidden,omitempty"`
+	// Options, when the module knows them, are the only sensible values:
+	// the panel offers a list instead of a box (an agent's models, which
+	// nobody should have to type from memory). A value stored before the
+	// list existed is still shown and kept.
+	Options []string `json:"options,omitempty"`
+	// Labels say what an option stands for ("sonnet" runs
+	// claude-sonnet-5-5), shown beside it.
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// Chooser is a module that knows the values some of its needs can take
+// (an agent's models). Asked only when the modules are listed for the
+// panel, with no lock of the manager held: Needs is called from inside
+// those locks (to tell a secret from a field), and a module answering
+// with a list it guards behind its own lock made a lock-order deadlock
+// with any of its handlers that held that lock and read its config.
+type Chooser interface {
+	Choices(key string) (options []string, labels map[string]string)
 }
 
 // Config is what the operator typed, by need key, in clear.

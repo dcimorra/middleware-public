@@ -78,7 +78,7 @@ export function modulesScreen() {
       // A hidden need is filled by the module itself (a session from a
       // sign-in); it has its own place on the card.
       if (n.hidden) continue;
-      const input = h("input", {
+      const input = n.options && n.options.length ? choices(n) : h("input", {
         type: n.secret ? "password" : "text", autocomplete: n.secret ? "new-password" : "off",
         class: "mono", placeholder: n.secret && m.enabled ? t("modules.secretKept") : "", value: n.value || "",
       });
@@ -99,7 +99,12 @@ export function modulesScreen() {
     }
     const config = () => {
       const c = {};
-      for (const [k, input] of Object.entries(inputs)) if (input.value !== "") c[k] = input.value;
+      for (const [k, input] of Object.entries(inputs)) {
+        // A secret is never shown, so empty means "keep it"; any other
+        // field shows its value, and emptied is a choice ("the first one
+        // listed") the server clears.
+        if (input.value !== "" || input.type !== "password") c[k] = input.value;
+      }
       return c;
     };
     const run = async (btn, path, done) => {
@@ -280,6 +285,18 @@ export function modulesScreen() {
       else line.append(" ", h("span", { class: "muted" }, t("modules.binaryElsewhere", { path: d.path })));
     }
     return line;
+  }
+  // A need the module knows the values of (an agent's models) is a list,
+  // not a box to type a model's name from memory into. A value stored
+  // before, or one the list no longer has, stays on it as it is.
+  function choices(n) {
+    const label = (v) => (n.labels && n.labels[v] ? `${v} — ${n.labels[v]}` : v);
+    const sel = h("select", { class: "mono" },
+      h("option", { value: "" }, t("modules.firstListed")),
+      ...n.options.map((v) => h("option", { value: v }, label(v))));
+    if (n.value && !n.options.includes(n.value)) sel.append(h("option", { value: n.value }, n.value));
+    sel.value = n.value || "";
+    return sel;
   }
   function stateBadge(m) {
     return m.enabled ? h("span", { class: "badge ok" }, t("modules.on")) : h("span", { class: "badge" }, t("modules.off"));
