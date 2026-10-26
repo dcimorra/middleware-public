@@ -683,7 +683,7 @@ func (w *WAF) Wrap(next http.Handler) http.Handler {
 		pol := w.effectiveFor(site.WAF)
 		if pol.rate != nil && !(!isSite && panelAsset(r)) && !w.allow(host, addr, pol.rate) {
 			w.refuse(rw, r, ip, "ratelimited", http.StatusTooManyRequests)
-			w.trip(ip)
+			w.trip(ip, host, r.URL.Path)
 			return
 		}
 		if pol.maxBody > 0 && !(!isSite && relocateUpload(r)) {

@@ -95,6 +95,11 @@ func TestARateLimitedClientGetsA429AndThenGetsBlocked(t *testing.T) {
 	if rec := get(h, "a.example", "203.0.113.5:4000", nil); rec.Code != http.StatusForbidden {
 		t.Fatalf("blocked address got %d, want 403", rec.Code)
 	}
+	// The block says where the address kept asking, so whoever reads it
+	// knows what to look at.
+	if e := w.Blocked()[0]; !strings.Contains(e.Reason, "a.example/") {
+		t.Fatalf("reason %q does not say where", e.Reason)
+	}
 	select {
 	case e := <-ch:
 		for e.Type != "waf.blocked" {

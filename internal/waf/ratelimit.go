@@ -148,7 +148,7 @@ func (w *WAF) count(ip net.IP, status int) {
 // in a minute is blocked, and each block lasts twice the previous one (ten
 // minutes, twenty, forty… up to a day), because a client that keeps
 // hammering after a block is not going to stop by itself.
-func (w *WAF) trip(ip net.IP) {
+func (w *WAF) trip(ip net.IP, host, path string) {
 	w.mu.RLock()
 	trips := w.policy.Trips
 	w.mu.RUnlock()
@@ -181,5 +181,11 @@ func (w *WAF) trip(ip net.IP) {
 	if dur > 24*time.Hour {
 		dur = 24 * time.Hour
 	}
-	_ = w.block(ip, dur, "rate limit tripped "+strconv.Itoa(hits)+" times in a minute", "waf", true)
+	// Where the last refusal went, so the block says who to look at: a
+	// tab left in a loop, an app polling a site's API. Without it the
+	// operator blocked from home had no way to know what had been asking.
+	if len(path) > 120 {
+		path = path[:120] + "…"
+	}
+	_ = w.block(ip, dur, "rate limit tripped "+strconv.Itoa(hits)+" times in a minute (last: "+host+path+")", "waf", true)
 }
