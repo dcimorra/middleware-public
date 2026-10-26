@@ -8,13 +8,12 @@ import (
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/auth"
-	"github.com/dcimorra/middleware-public/internal/helper"
 	"github.com/dcimorra/middleware-public/internal/installer"
 )
 
 // The house's requirements, installed from Sistema (the helper's
 // requirements.install). The run is in a unit of its own and writes its output
-// to data/requirements.log; this reads that file, whose last line says how it
+// to requirements.log in the helper's runtime directory; this reads that file, whose last line says how it
 // ended, so the panel can follow it across reloads and across a restart of
 // this process.
 
@@ -32,8 +31,7 @@ type RequirementsStatus struct {
 	Updated time.Time `json:"updated,omitzero"`
 }
 
-func (s *Server) requirementsStatus() RequirementsStatus {
-	path := helper.InstallLog(s.opts.Root)
+func (s *Server) requirementsStatus(path string) RequirementsStatus {
 	info, err := os.Stat(path)
 	if err != nil {
 		return RequirementsStatus{State: "none"}
@@ -65,10 +63,11 @@ func (s *Server) requirementsStatus() RequirementsStatus {
 	return st
 }
 
-// RegisterRequirements mounts /system/requirements; run asks the helper to start it.
-func (s *Server) RegisterRequirements(run func(ctx context.Context, browser bool) error) {
+// RegisterRequirements mounts /system/requirements; run asks the helper to
+// start it, and log is where the run writes (helper.InstallLog).
+func (s *Server) RegisterRequirements(log string, run func(ctx context.Context, browser bool) error) {
 	s.Handle("GET", Prefix+"/system/requirements", "The house's dependencies installed from the panel: state (none, running, finished, restart, failed, interrupted) and the installer's output", func(w http.ResponseWriter, r *http.Request) (any, error) {
-		return s.requirementsStatus(), nil
+		return s.requirementsStatus(log), nil
 	})
 	s.Handle("POST", Prefix+"/system/requirements", "Install the house's dependencies (body: browser?): packages, docker and its group, nvm with the LTS, fail2ban and, with browser, a headless Chromium, through the helper in a unit of its own; nothing else of the machine is touched", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		if c := auth.FromContext(r.Context()); len(c.Scopes) > 0 {
@@ -82,12 +81,14 @@ func (s *Server) RegisterRequirements(run func(ctx context.Context, browser bool
 				return nil, err
 			}
 		}
-		if st := s.requirementsStatus(); st.State == "running" {
+		if st := s.requirementsStatus(log); st.State == "running" {
 			return nil, Errorf(http.StatusConflict, "the dependencies are already being installed")
 		}
 		// The last run's log goes first, so what is read from now on is
-		// this run's and never says the last one's ending.
-		_ = os.Remove(helper.InstallLog(s.opts.Root))
+		// this run's and never says the last one's ending. In production
+		// the file is root's and the helper removes it; this is for a
+		// log the supervisor can.
+		_ = os.Remove(log)
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
 		if err := run(ctx, body.Browser); err != nil {

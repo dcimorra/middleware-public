@@ -20,7 +20,8 @@ func TestTheRequirementsRunIsTheHousesOwnInstallReadFromItsUnit(t *testing.T) {
 		os.WriteFile(filepath.Join(dir, "middleware.service"), []byte("[Service]\nUser="+user+"\nEnvironment=MIDDLEWARE_ROOT="+root+"\nExecStart="+exec+" serve --root "+root+"\n"), 0o644)
 	}
 	rec := &Recorder{Outputs: map[string]string{}, Fail: map[string]error{}}
-	s := &Server{Exec: rec, SystemdDir: dir, Binary: bin}
+	run := t.TempDir()
+	s := &Server{Exec: rec, SystemdDir: dir, Binary: bin, Socket: filepath.Join(run, "helper.sock")}
 	call := func(args string) Response {
 		return s.Handle(context.Background(), Peer{UID: 1000}, Request{Op: OpInstallRun, Args: json.RawMessage(args)})
 	}
@@ -30,7 +31,7 @@ func TestTheRequirementsRunIsTheHousesOwnInstallReadFromItsUnit(t *testing.T) {
 	}
 	last, _ := rec.Last()
 	line := last.Line()
-	for _, want := range []string{"systemd-run", "--unit=middleware-requirements", "--collect", "--no-block", "StandardOutput=truncate:/srv/middleware/data/requirements.log", bin + " install --requirements --yes --panel --root /srv/middleware --user ubuntu --binary " + bin, "--browser yes"} {
+	for _, want := range []string{"systemd-run", "--unit=middleware-requirements", "--collect", "--no-block", "StandardOutput=truncate:" + filepath.Join(run, "requirements.log"), bin + " install --requirements --yes --panel --root /srv/middleware --user ubuntu --binary " + bin, "--browser yes"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("missing %q in %s", want, line)
 		}

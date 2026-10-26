@@ -104,7 +104,7 @@ group `middleware`, mode 0660). It accepts a **closed list of operations**:
 | `vpn.up` / `vpn.down` | bring the interface up or down |
 | `sysctl.reserve_ports` | reserve the site port range from the ephemeral range |
 | `update.install` | replace the binary with a newer release of this repository, sha256 checked, then restart itself |
-| `requirements.install` | install the house's requirements (packages, docker and its group, nvm with the LTS, fail2ban, optionally a headless Chromium): this binary's own `install --requirements`, for the user and root the installed `middleware.service` names, in a transient unit of its own (`systemd-run`), its output in `data/requirements.log`; no unit, binary or restart |
+| `requirements.install` | install the house's requirements (packages, docker and its group, nvm with the LTS, fail2ban, optionally a headless Chromium): this binary's own `install --requirements`, for the user and root the installed `middleware.service` names, in a transient unit of its own (`systemd-run`), its output in `/run/middleware/requirements.log`, root's (in the supervisor's `data/` a link there made root write over any file); no unit, binary or restart |
 
 Each operation validates its input (addresses parse, keys are base64 of the
 right length, names match `^[a-z0-9-]+$`), logs what it did, and never takes a

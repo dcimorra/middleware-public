@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -17,12 +16,11 @@ import (
 func TestTheRequirementsRunIsFollowedByItsLog(t *testing.T) {
 	f := newFixture(t).withToken()
 	var asked []bool
-	f.srv.RegisterRequirements(func(_ context.Context, browser bool) error {
+	log := helper.InstallLog(t.TempDir())
+	f.srv.RegisterRequirements(log, func(_ context.Context, browser bool) error {
 		asked = append(asked, browser)
 		return nil
 	})
-	log := helper.InstallLog(f.root)
-	os.MkdirAll(filepath.Dir(log), 0o755)
 	state := func() map[string]any {
 		_, out := f.call("GET", "/api/v1/system/requirements", nil)
 		return out

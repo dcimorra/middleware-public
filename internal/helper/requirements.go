@@ -32,7 +32,14 @@ import (
 // It runs in a transient unit of its own (systemd-run), not in the helper:
 // the helper is sandboxed (ProtectSystem=strict, a few capabilities), and
 // apt is out of its reach on purpose. Its output goes to a file in the
-// root, which the panel reads; the last line says how it ended.
+// helper's runtime directory, which the panel reads; the last line says
+// how it ended.
+//
+// Not in the root's data/, where it was: that folder is the supervisor's
+// user's, and systemd opens StandardOutput=truncate: as root, following
+// links. A requirements.log made a link to /etc/shadow had root empty it
+// and write the installer's output in its place. The runtime directory is
+// root's and only crossable by the supervisor's group.
 
 // InstallUnit is the transient unit's name: one at a time.
 const InstallUnit = "middleware-requirements"
@@ -49,8 +56,12 @@ type InstallResult struct {
 	Log  string `json:"log"`
 }
 
-// InstallLog is the installer's output under the root.
-func InstallLog(root string) string { return filepath.Join(root, "data", "requirements.log") }
+// InstallLog is the installer's output in the helper's runtime directory
+// (the socket's): DefaultRunDir in production.
+func InstallLog(runDir string) string { return filepath.Join(runDir, "requirements.log") }
+
+// DefaultRunDir is the helper's runtime directory, root's.
+var DefaultRunDir = filepath.Dir(DefaultSocket)
 
 // installed is what the installed service unit says.
 type installed struct {
@@ -121,7 +132,13 @@ func (s *Server) installRun(ctx context.Context, raw json.RawMessage) (any, erro
 	if out, _ := s.Exec.Run(ctx, "systemctl", []string{"is-active", InstallUnit}, ""); strings.TrimSpace(out) == "active" || strings.TrimSpace(out) == "activating" {
 		return nil, errors.New("the requirements are already being installed")
 	}
-	log := InstallLog(in.Root)
+	log := InstallLog(filepath.Dir(s.Socket))
+	// The last run's goes first, so what the panel reads from now on is
+	// this run's and never says the last one's ending; the supervisor
+	// cannot remove it itself.
+	if err := os.Remove(log); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	args := []string{
 		"--unit=" + InstallUnit, "--collect", "--no-block",
 		"--description=middleware requirements, from the panel",

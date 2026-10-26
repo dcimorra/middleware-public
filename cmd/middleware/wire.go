@@ -288,7 +288,7 @@ func buildWire(a *app.App) app.Hook {
 	}
 	srv.RegisterContainerize(api.ContainOptions{Chat: chatManager})
 	srv.RegisterRepair(api.RepairOptions{Chat: chatManager})
-	srv.RegisterRequirements(func(ctx context.Context, browser bool) error {
+	srv.RegisterRequirements(helper.InstallLog(helper.DefaultRunDir), func(ctx context.Context, browser bool) error {
 		_, err := helper.Dial("").InstallRun(ctx, browser)
 		return err
 	})
