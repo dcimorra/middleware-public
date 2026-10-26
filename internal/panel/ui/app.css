@@ -510,11 +510,52 @@ dialog form.dlg { display: flex; flex-direction: column; max-height: calc(100vh 
 
 /* ---------- chat ---------- */
 .chat { display: flex; flex-direction: column; gap: 12px; min-height: 60vh; }
-.chat-head { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 6px; min-height: 1em; }
+/* A screen with a chat is as tall as the window and no taller (V1's
+   layout): the page stops scrolling, every box from .main down to the
+   chat passes the height on, and only .chat-views scrolls. The topbar and
+   the message box are then always on screen, whatever the answer's
+   length. dvh, not vh: on a phone vh counts the space under Safari's bar
+   and the box sat behind it. */
+body.chat-fit { height: 100dvh; overflow: hidden; }
+body.chat-fit .app { height: 100dvh; min-height: 0; grid-template-rows: var(--topbar) minmax(0, 1fr); }
+body.chat-fit .sidebar { height: auto; }
+body.chat-fit .main { display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding-bottom: 12px; }
+body.chat-fit .main > .page,
+body.chat-fit .page-body,
+body.chat-fit .page-body > :last-child { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+body.chat-fit .page-head { margin-bottom: 12px; }
+body.chat-fit .tabs { margin-bottom: 0; flex: none; }
+body.chat-fit .page-body > * { flex: none; }
+body.chat-fit .chat { flex: 1; min-height: 0; gap: 8px; }
+body.chat-fit .chat-views { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
+body.chat-fit .chat-form { position: static; flex: none; }
+/* The house's list of turns at work sits above its chat: kept short so
+   the conversation keeps most of the screen. */
+body.chat-fit .page-body > .card { max-height: 28vh; overflow-y: auto; }
+@media (max-width: 860px) {
+  body.chat-fit .main { padding: 10px 12px 8px; }
+  body.chat-fit .page-head { margin-bottom: 8px; }
+  body.chat-fit .page-head .sub { display: none; }
+}
+.chat-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 1em; }
 /* The conversation's title is what tells them apart: as wide as it can be,
-   and a line of its own on a phone. */
-.chat-head select { flex: 1 1 260px; min-width: 0; max-width: 520px; }
-@media (max-width: 640px) { .chat-head select { flex-basis: 100%; max-width: none; } }
+   and a line of its own on a phone. The agent and model sit beside it, as
+   in V1: they belong to the conversation, not to each message. */
+.chat-head > select { flex: 1 1 260px; min-width: 0; max-width: 520px; }
+.chat-head-tools { display: flex; align-items: center; gap: 6px; margin-left: auto; min-width: 0; }
+.chat-head-tools select, .chat-head-tools .model-input { width: auto; max-width: 180px; min-width: 0; padding-top: 4px; padding-bottom: 4px; font-size: 12.5px; }
+@media (max-width: 640px) {
+  .chat-head > select { flex-basis: 100%; max-width: none; }
+  .chat-head-tools { flex: 1 1 100%; margin-left: 0; }
+  .chat-head-tools select, .chat-head-tools .model-input { flex: 1 1 0; max-width: none; }
+  .chat-head-tools .chat-capacity { display: none; }
+}
+/* The conversation's seldom-used actions, folded under "…". */
+.chat-menu { position: relative; flex: none; }
+.chat-menu > summary { list-style: none; }
+.chat-menu > summary::-webkit-details-marker { display: none; }
+.chat-menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 15; min-width: 210px; display: flex; flex-direction: column; padding: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); }
+.chat-menu-list .btn { justify-content: flex-start; width: 100%; }
 .chat-capacity.full { color: var(--warn); font-weight: 600; }
 /* The gateway's permissions, a box each on one line when they fit. */
 .door-perms { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 4px 0 2px; }
@@ -540,10 +581,28 @@ dialog form.dlg { display: flex; flex-direction: column; max-height: calc(100vh 
 /* minmax(0, 1fr), not 1fr: a track of 1fr never shrinks below its widest
    item, and a model select with a long label made the form wider than the
    phone. */
-.chat-form { display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr); position: sticky; bottom: 0; background: var(--bg); padding-top: 8px; }
-.chat-form textarea { min-height: 64px; }
-.chat-form .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.chat-form select { width: auto; }
+.chat-form { display: grid; gap: 6px; grid-template-columns: minmax(0, 1fr); position: sticky; bottom: 0; background: var(--bg); padding-top: 8px; }
+/* The paperclip, the box and send on one line; the box grows with what is
+   written (site-chat.js fit) up to twelve lines' worth, then scrolls. */
+.chat-compose { display: flex; align-items: flex-end; gap: 6px; }
+.chat-compose textarea { flex: 1; min-width: 0; min-height: 40px; max-height: 192px; resize: none; overflow-y: auto; }
+.chat-compose .btn { flex: none; height: 40px; }
+.chat-compose textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-attach { cursor: pointer; padding-left: 10px; padding-right: 10px; }
+.chat-chips:empty { display: none; }
+.chat-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-height: 0; }
+.chat-meta:empty, .chat-meta > [role="status"]:empty { display: none; }
+.chat-meta .chat-usage { margin-top: 0; flex: 1; }
+@media (max-width: 640px) {
+  /* Send says it with its icon on a phone: the box keeps the width. */
+  .chat-compose .btn.primary { padding-left: 12px; padding-right: 12px; }
+}
+/* A message that did not go: kept in sight, dimmed and outlined, so
+   nobody believes it was sent (its words went back to the box). */
+.turn.user.failed { opacity: .65; outline: 1px dashed var(--bad); outline-offset: -1px; }
+.turn.failed .level-error { margin-top: 6px; }
+/* Files dragged over the conversation: the whole chat takes the drop. */
+.chat.dropping { outline: 2px dashed var(--accent); outline-offset: -4px; border-radius: var(--radius-lg); }
 .typing::after { content: "▍"; animation: blink 1s steps(2) infinite; color: var(--text-3); }
 /* The turn as it happened: words rendered, each tool a row whose dot
    says running, done or failed, with its input and answer folded. */

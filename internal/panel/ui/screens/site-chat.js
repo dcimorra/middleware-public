@@ -24,7 +24,7 @@ import { usageLine } from "../components/usage.js";
 export function chatTab(domain) {
   const house = domain === "middleware";
   const turns = h("div", { class: "chat-turns", "aria-live": "polite" });
-  const text = h("textarea", { placeholder: t("chat.placeholder"), "aria-label": t("chat.message") });
+  const text = h("textarea", { rows: 1, placeholder: t("chat.placeholder"), "aria-label": t("chat.message") });
   const provider = h("select", { "aria-label": t("chat.provider") });
   // The model: a list while it is short, a box that searches as you type
   // once a provider brings hundreds (OpenCode with OpenRouter connected).
@@ -48,12 +48,22 @@ export function chatTab(domain) {
   const capacity = h("span", { class: "small muted chat-capacity", title: t("chat.capacityTitle") });
   // Attachments go with the next message; they are kept in the site's own
   // HOME and lent to the turn read-only.
-  const fileInput = h("input", { type: "file", multiple: true, hidden: true });
-  const attachBtn = h("button", { type: "button", class: "btn ghost sm", title: t("chat.attachHint") }, icon("plus"), t("chat.attach"));
+  // The paperclip is a <label> over an input kept off screen, not a
+  // button calling input.click(): on a phone a script's click on a hidden
+  // file input sometimes opens nothing, and nothing says so (V1).
+  const fileID = "chat-file-" + Math.random().toString(36).slice(2, 8);
+  const fileInput = h("input", { type: "file", multiple: true, id: fileID, class: "sr-only", tabindex: "-1" });
+  const attachBtn = h("label", { for: fileID, class: "btn ghost chat-attach", title: t("chat.attachHint"), "aria-label": t("chat.attach") }, icon("plus"));
   const chips = h("div", { class: "chat-chips row" });
   // The usage windows of the agent picked, under the box.
   let usageEl = usageLine(null);
-  const form = h("form", { class: "chat-form" }, chips, text, h("div", { class: "row" }, provider, modelSel, modelIn, modelList, attachBtn, fileInput, h("span", { class: "grow" }), status, procsBtn, reset, stop, send), usageEl);
+  // One row, as in V1: the paperclip, the box, send (and stop while a
+  // turn runs). Everything else lives in the bar above or its menu: a
+  // row of eight controls wrapped into three on a phone and pushed the
+  // conversation out of the screen.
+  const form = h("form", { class: "chat-form" }, chips,
+    h("div", { class: "chat-compose" }, attachBtn, fileInput, text, stop, send),
+    h("div", { class: "chat-meta" }, status, usageEl));
   // Which conversation is open: the site's first one, another of the
   // panel's, or one the site's code opened through the site door (read
   // and stopped from here, never written into: a program is on the other
@@ -108,11 +118,11 @@ export function chatTab(domain) {
     loadTurns().then(showUploads);
   });
   newConv.addEventListener("click", async () => {
-    if (cur.draft) { text.focus(); return; }
+    if (cur.draft) { focusBox(); return; }
     cur = draftConv();
     await fillPicker();
     loadTurns().then(showUploads);
-    text.focus();
+    focusBox();
   });
   purge.addEventListener("click", async () => {
     if (!(await confirm({ title: t(house ? "chat.purgeQHouse" : "chat.purgeQ", { name: domain }), body: t("chat.purgeBody"), confirmLabel: t("chat.purge"), danger: true }))) return;
@@ -125,19 +135,34 @@ export function chatTab(domain) {
     } catch (e) { toastError(e); }
   });
   // ensure turns a draft into a conversation, when something is sent.
+  // Two quick sends (or a file and a send) on a draft each created a
+  // conversation and split the message between them (V1): they share the
+  // one being created.
+  let creating = null;
   async function ensure() {
     if (!cur.draft) return;
-    const r = await api.post(`${chatsBase}/chats`, {});
-    cur = convOf(r.id, "panel");
+    if (!creating) {
+      creating = api.post(`${chatsBase}/chats`, {}).then((r) => { cur = convOf(r.id, "panel"); }).finally(() => { creating = null; });
+    }
+    await creating;
   }
   // One tab per subagent of the last turn (or opened from an older one),
   // beside the main conversation.
   const tabs = h("div", { class: "chat-tabs", role: "tablist", hidden: true });
   const views = h("div", { class: "chat-views" }, turns);
-  const el = h("div", { class: "chat" }, h("div", { class: "chat-head row" }, picker, newConv, purge, h("span", { class: "grow" }), capacity), readonlyNote, tabs, views, form);
+  // What acts on the open conversation (its processes, starting it over,
+  // deleting them all) goes in a menu, not in the bar: used once in a
+  // while, it was stealing the room of what is used every message.
+  const more = h("details", { class: "chat-menu" },
+    h("summary", { class: "btn ghost sm", "aria-label": t("chat.more"), title: t("chat.more") }, icon("more", { stroke: 3 })),
+    h("div", { class: "chat-menu-list", role: "menu" }, procsBtn, reset, purge));
+  more.addEventListener("click", (e) => { if (e.target.closest(".chat-menu-list button")) more.open = false; });
+  const closeMenu = (e) => { if (more.open && !more.contains(e.target)) more.open = false; };
+  document.addEventListener("click", closeMenu);
+  const el = h("div", { class: "chat" }, h("div", { class: "chat-head" }, picker, h("div", { class: "chat-head-tools" }, provider, modelSel, modelIn, modelList, newConv, more, capacity)), readonlyNote, tabs, views, form);
   let agents = [];
   let running = null; // {turnEl, textEl, textBuf}
-  const subs = [];
+  const subs = [() => document.removeEventListener("click", closeMenu)];
 
   // The "3 of 8 running" indicator is house-wide, not this site's: it is
   // what tells the operator why a send was refused. Events move it at
@@ -296,6 +321,23 @@ export function chatTab(domain) {
     return md;
   }
 
+  // The words of a turn arrive in pieces; each piece drawn as its own
+  // markdown broke a list or a code block cut between two of them until
+  // the turn was read again. The run of text since the last tool is kept
+  // and drawn whole, in the same place, each time a piece comes.
+  const liveText = new WeakMap();
+  function appendText(box, piece) {
+    let cur = liveText.get(box);
+    if (!cur || box.lastElementChild !== cur.el) {
+      cur = { buf: "", el: null };
+    }
+    cur.buf += piece;
+    const md = textStepEl(cur.buf);
+    if (cur.el) cur.el.replaceWith(md); else box.append(md);
+    cur.el = md;
+    liveText.set(box, cur);
+  }
+
   function stepsEl(steps, threads) {
     const box = h("div", { class: "steps" });
     const byId = new Map((threads || []).map((th) => [th.id, th]));
@@ -424,9 +466,10 @@ export function chatTab(domain) {
     manyModels = list.length > 30;
     modelSel.hidden = manyModels;
     modelIn.hidden = !manyModels;
-    // An alias says what it runs beside it: "sonnet — claude-sonnet-5-5".
-    const label = (m) => (a && a.labels && a.labels[m] ? `${m} — ${a.labels[m]}` : m);
-    clear(modelSel).append(h("option", { value: "" }, t("chat.defaultModel")), ...list.map((m) => h("option", { value: m }, label(m))));
+    // The alias alone, so the bar fits a phone; what it runs is its title
+    // ("sonnet" runs claude-sonnet-5-5).
+    const full = (m) => (a && a.labels && a.labels[m]) || null;
+    clear(modelSel).append(h("option", { value: "" }, t("chat.defaultModel")), ...list.map((m) => h("option", { value: m, title: full(m) }, m)));
     clear(modelList).append(...list.map((m) => h("option", { value: m })));
     if (manyModels && !list.includes(modelIn.value.trim())) modelIn.value = "";
   }
@@ -434,6 +477,7 @@ export function chatTab(domain) {
   // quiet re-reads without the spinner: after a turn ends, the turn is
   // already on screen and only its final state changes.
   async function loadTurns(quiet) {
+    const keepAt = views.scrollTop;
     if (!quiet) clear(turns).append(loading());
     held = [];
     try {
@@ -476,7 +520,10 @@ export function chatTab(domain) {
         status.textContent = "";
       }
       loadUsage();
-      scroll();
+      // A conversation opened lands on its end; a quiet re-read (the end
+      // of a turn) keeps the reader where they were.
+      if (quiet && !following) views.scrollTop = keepAt;
+      else scroll(!quiet);
     } catch (e) {
       clear(turns).append(errorBox(e));
     } finally {
@@ -485,22 +532,23 @@ export function chatTab(domain) {
       late.forEach(handle);
     }
   }
-  // Following the conversation is keeping the end of the whole chat (the
-  // box and its controls included) at the bottom of the screen. It used to
-  // bring the last turn's bottom there, which pushed the box below the
-  // screen: whoever was at the end saw the page climb by the box's height
-  // with every step the agent took. It follows while the reader is at the
-  // end (or has just sent something); scrolled up to read, it stays put.
+  // The chat is a box the height of the screen, as in V1: the bar above
+  // and the message box below stay put and only the conversation scrolls
+  // (body.chat-fit in app.css). When the whole page scrolled, a long
+  // answer took the topbar off the top and the box off the bottom, and on
+  // a phone neither came back without scrolling all the way.
+  // Following it is keeping its end in view while the reader is there (or
+  // has just sent something); scrolled up to read, it stays put.
   let following = true;
-  const atEnd = () => el.getBoundingClientRect().bottom - window.innerHeight < 160;
-  const onScroll = () => { following = atEnd(); };
-  window.addEventListener("scroll", onScroll, { passive: true });
-  subs.push(() => window.removeEventListener("scroll", onScroll));
+  const atEnd = () => views.scrollHeight - views.scrollTop - views.clientHeight < 160;
+  views.addEventListener("scroll", () => { following = atEnd(); }, { passive: true });
+  document.body.classList.add("chat-fit");
+  subs.push(() => document.body.classList.remove("chat-fit"));
   function scroll(force) {
     if (force) following = true;
     if (!following || !el.isConnected) return;
     // After the layout of what was just appended.
-    requestAnimationFrame(() => el.scrollIntoView({ block: "end" }));
+    requestAnimationFrame(() => { views.scrollTop = views.scrollHeight; });
   }
 
   function begin() {
@@ -565,7 +613,7 @@ export function chatTab(domain) {
     const into = () => (d.thread ? agentView({ id: d.thread }).body : running.textEl);
     if (ev.type === "agent.text" || ev.type === "agent.delta") {
       const piece = d.delta ?? d.text ?? ev.message ?? "";
-      if (piece) into().append(textStepEl(piece));
+      if (piece) appendText(into(), piece);
       scroll();
     } else if (ev.type === "agent.tool") {
       const tool = { id: d.id, name: d.tool || d.name || "tool", input: d.input, run: d.run };
@@ -599,18 +647,37 @@ export function chatTab(domain) {
     }
   }
 
+  // sending holds a second Enter while the first is still on its way;
+  // uploading holds the message while a file it should carry is not up.
+  let sending = false;
+  let uploading = 0;
+  function holdSend() { send.disabled = uploading > 0; send.title = uploading > 0 ? t("chat.waitUpload") : ""; }
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const msg = text.value.trim();
-    if (!msg) return;
+    if (!msg || sending || uploading > 0) return;
+    sending = true;
     const whileRunning = Boolean(running);
     turns.querySelector(".empty")?.remove();
     turns.querySelector(".chat-notice")?.remove();
     const mine = turnEl("user", msg).el;
+    // What is written goes to the main conversation: shown there, not
+    // under a subagent's tab that does not hear it.
+    if (activeTab) showTab("");
     turns.append(mine);
     scroll(true);
     text.value = "";
+    fit();
     send.classList.add("busy");
+    // Gives the message back when it did not go: the bubble stays, dimmed,
+    // and the words return to the box unless something new was typed
+    // there meanwhile. Losing a paragraph because the network blinked is
+    // what makes people write somewhere else and paste (V1).
+    const giveBack = (why) => {
+      mine.classList.add("failed");
+      mine.append(h("div", { class: "level-error small" }, why));
+      if (!text.value.trim()) { text.value = msg; fit(); }
+    };
     try {
       const s = store.site(domain);
       const agentCfg = (s && s.manifest && s.manifest.agent) || {};
@@ -631,22 +698,41 @@ export function chatTab(domain) {
         // The house is full: the message goes back in the box, whole, and
         // the reason is said where the operator is looking.
         mine.remove();
-        text.value = msg;
+        if (!text.value.trim()) { text.value = msg; fit(); }
         turns.append(h("div", { class: "notice warn chat-notice" }, t("chat.capacityFull", { used: cap.used, max: cap.max })));
         scroll();
         syncCapacity();
         end(null);
         return;
       }
-      toastError(err);
-      end(null);
+      giveBack(err.message || t("chat.failed"));
+      if (!whileRunning) end(null);
     } finally {
+      sending = false;
       send.classList.remove("busy");
     }
   });
+  // Enter sends and Shift+Enter is a new line, at a keyboard. On a touch
+  // screen Enter is a new line: its keyboard has no Shift+Enter, so it is
+  // the only way to write two paragraphs, and a stray Enter would send
+  // half a message (V1). Ctrl/Cmd+Enter sends everywhere.
+  const touch = window.matchMedia("(hover: none) and (pointer: coarse)");
   text.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); form.requestSubmit(); }
+    if (e.key !== "Enter" || e.isComposing) return;
+    if (e.metaKey || e.ctrlKey || (!e.shiftKey && !e.altKey && !touch.matches)) { e.preventDefault(); form.requestSubmit(); }
   });
+  // The box grows with what is written, up to a point, and goes back to
+  // one line once sent.
+  function fit() {
+    text.style.height = "auto";
+    text.style.height = Math.min(text.scrollHeight + 2, 192) + "px";
+    // A taller box leaves less of the conversation: its end stays in view.
+    scroll();
+  }
+  text.addEventListener("input", fit);
+  // Focus on deliberate gestures only, and never on a touch screen: there
+  // it opens the keyboard over half the conversation (V1).
+  function focusBox() { if (!touch.matches) text.focus(); }
   provider.addEventListener("change", () => { fillModels(); loadUsage(); });
   stop.addEventListener("click", async () => {
     try { await api.post(`${cur.path}/stop`); status.textContent = t("chat.stopping"); } catch (err) { toastError(err); }
@@ -693,18 +779,56 @@ export function chatTab(domain) {
       chips.append(h("span", { class: "badge" }, u.name, " ", x));
     }
   }
+  // One at a time, with a chip that says it is on its way: in parallel
+  // every upload crawled at a fraction and none of the bars meant anything
+  // (V1). Send waits until they are all up.
   async function upload(files) {
-    try { await ensure(); } catch (e) { toastError(e); return; }
-    for (const f of files) {
-      try { await api.postRaw(`${cur.path}/files?name=${enc(f.name)}`, f, f.type || "application/octet-stream"); }
-      catch (e) { toastError(e); }
+    if (!files.length) return;
+    uploading++;
+    holdSend();
+    try {
+      await ensure();
+      for (const f of files) {
+        const chip = h("span", { class: "badge chat-uploading" }, f.name, " ", h("span", { class: "typing" }));
+        chips.append(chip);
+        try { await api.postRaw(`${cur.path}/files?name=${enc(f.name)}`, f, f.type || "application/octet-stream"); }
+        catch (e) { toastError(e); }
+        chip.remove();
+      }
+    } catch (e) { toastError(e); } finally {
+      uploading--;
+      holdSend();
+      showUploads();
     }
-    showUploads();
   }
-  attachBtn.addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", () => { upload([...fileInput.files]); fileInput.value = ""; });
-  el.addEventListener("dragover", (e) => { e.preventDefault(); });
-  el.addEventListener("drop", (e) => { e.preventDefault(); if (e.dataTransfer && e.dataTransfer.files.length) upload([...e.dataTransfer.files]); });
+  // A screenshot is sent the natural way: Print Screen, then paste (V1).
+  text.addEventListener("paste", (e) => {
+    const files = [...((e.clipboardData && e.clipboardData.files) || [])];
+    if (!files.length) return;
+    e.preventDefault();
+    upload(files.map((f, i) => (f.name && f.name !== "image.png" ? f : new File([f], `paste-${Date.now()}-${i}.${(f.type.split("/")[1] || "png")}`, { type: f.type }))));
+  });
+  // The whole chat takes a drop, not just the box: whoever drags is aiming
+  // at the conversation. Only a drag that carries files is answered, and
+  // it is outlined while it hovers.
+  const carriesFiles = (e) => e.dataTransfer && [...e.dataTransfer.types].includes("Files");
+  let dragDepth = 0;
+  el.addEventListener("dragenter", (e) => { if (!carriesFiles(e) || cur.origin === "site") return; dragDepth++; el.classList.add("dropping"); });
+  el.addEventListener("dragleave", () => { if (dragDepth && --dragDepth === 0) el.classList.remove("dropping"); });
+  el.addEventListener("dragover", (e) => { if (carriesFiles(e)) e.preventDefault(); });
+  el.addEventListener("drop", (e) => {
+    dragDepth = 0;
+    el.classList.remove("dropping");
+    if (!carriesFiles(e)) return;
+    e.preventDefault();
+    if (cur.origin !== "site") upload([...e.dataTransfer.files]);
+  });
+  // A phone that slept can leave the stream quiet without saying so: back
+  // on screen, the conversation is read again (V1).
+  const onVisible = () => { if (document.visibilityState === "visible" && !held) loadTurns(true); };
+  document.addEventListener("visibilitychange", onVisible);
+  subs.push(() => document.removeEventListener("visibilitychange", onVisible));
   subs.push(onEvent("agent.started", (ev) => { if (ev.subject === cur.name) showUploads(); }));
   // The running mark beside each conversation follows the turns.
   subs.push(onEvent("agent.", (ev) => { if (/^agent\.(started|done|error)$/.test(ev.type) && ev.subject && ev.subject.split("#")[0] === domain) fillPicker(); }));
