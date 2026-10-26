@@ -230,6 +230,8 @@
   "access.denyCountries": "Denegar países",
   "access.denyHint": "Códigos de dos letras, separados por comas.",
   "access.wafTitle": "Límites de peticiones y de cuerpo",
+  "access.wafOff": "WAF desactivado en este sitio",
+  "access.wafOffHint": "Sin límite de peticiones ni de tamaño. La lista de bloqueados y los bloqueos por exploits, escáneres y logins fallidos siguen: protegen la máquina entera.",
   "access.rateRequests": "Peticiones",
   "access.rateWindow": "por ventana",
   "access.rateBurst": "Ráfaga",

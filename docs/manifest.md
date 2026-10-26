@@ -75,6 +75,7 @@ never shell strings. Paths are relative to the site folder.
   },
 
   "waf": {
+    "off": false,
     "rate": { "requests": 600, "window": "1m", "burst": 300 },
     "max_body": "20m"
   },
@@ -344,6 +345,10 @@ process.
   site's `skip`) and to the panel, except requests that carry their own
   credentials (an API token, the site door). The old `waf.under_attack:
   true` is read as `attack.on` with the defaults.
+- `waf.off` takes the site out of the rate limit and the body limit
+  (`rate`, `max_body`, its own and the policy's). The block list and the
+  bans for exploits, scanners and failed logins still apply: they protect
+  the machine, and a block closes every site.
 - `cache.rules` are the house's response cache, kept in memory and served
   without asking the site, behind the door so nothing passes a password.
   `origin` keeps what the site marks (`s-maxage`, else `max-age`) for as

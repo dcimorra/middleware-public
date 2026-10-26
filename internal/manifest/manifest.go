@@ -324,6 +324,10 @@ type RouteAccess struct {
 
 // WAF is the per-site layer-7 policy.
 type WAF struct {
+	// Off takes this site out of the rate limit and the body limit. What
+	// protects the machine stays: the block list, and the bans for
+	// exploits, scanners and failed logins, which close every site.
+	Off     bool   `json:"off,omitempty"`
 	Rate    *Rate  `json:"rate,omitempty"`
 	MaxBody string `json:"max_body,omitempty"`
 	// UnderAttack is the switch from before `attack` existed, read as

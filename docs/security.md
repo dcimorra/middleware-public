@@ -122,7 +122,9 @@ when the helper is present also in nftables (`firewall.block`), so a flood
 stops at layer 3 and never reaches Go. That block closes every site at
 once, which is why volume alone from a person never earns it; exploits,
 scanners and failed logins still do (the bans). Blocks have a TTL and are
-written down, so a restart neither forgets nor keeps them forever.
+written down, so a restart neither forgets nor keeps them forever. A site
+with `waf.off` in its manifest has no rate nor body limit; the block list
+and the bans still apply to it.
 
 The body limit (`max_body`, 20m by default) is for what visitors send. It
 does not apply to a site's bundle coming into this house (`PUT

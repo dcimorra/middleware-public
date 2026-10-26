@@ -230,6 +230,8 @@
   "access.denyCountries": "Deny countries",
   "access.denyHint": "Two-letter codes, comma separated.",
   "access.wafTitle": "Rate and body limits",
+  "access.wafOff": "WAF off for this site",
+  "access.wafOffHint": "No rate limit and no body limit. The block list and the bans for exploits, scanners and failed logins still apply: they protect the whole machine.",
   "access.rateRequests": "Requests",
   "access.rateWindow": "per window",
   "access.rateBurst": "Burst",

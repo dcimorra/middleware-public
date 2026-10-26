@@ -592,6 +592,9 @@ func (w *WAF) effectiveFor(site *manifest.WAF) effective {
 	if site == nil {
 		return e
 	}
+	if site.Off {
+		return effective{}
+	}
 	if site.Rate != nil {
 		e.rate = site.Rate
 	}

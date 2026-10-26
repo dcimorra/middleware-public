@@ -623,3 +623,50 @@ func TestAFloodIsBlockedWhateverItCallsItself(t *testing.T) {
 		t.Fatal("5000 requests in an instant were not blocked")
 	}
 }
+
+// A site with waf.off has no rate nor body limit, and an exploit sent to
+// it is still refused and banned: the ban protects every site.
+func TestASiteWithTheWAFOffKeepsTheBansAndLosesTheLimits(t *testing.T) {
+	w, _, _ := newTestWAF(t, t.TempDir(), func(host string) (Site, bool) {
+		if host == "free.example" {
+			return Site{Domain: host, WAF: &manifest.WAF{Off: true}}, true
+		}
+		return Site{Domain: host}, true
+	})
+	p := DefaultPolicy()
+	p.Rate = &manifest.Rate{Requests: 60, Window: manifest.Duration(time.Minute), Burst: 5}
+	p.MaxBody = "1k"
+	p.Trips = 3
+	if err := w.SetPolicy(p); err != nil {
+		t.Fatal(err)
+	}
+	h := w.Wrap(okHandler())
+	for i := 0; i < 500; i++ {
+		if c := get(h, "free.example", "198.51.100.30:1", nil).Code; c != 200 {
+			t.Fatalf("request %d to a site with the WAF off: %d", i, c)
+		}
+	}
+	r := httptest.NewRequest(http.MethodPost, "http://free.example/upload", strings.NewReader(strings.Repeat("x", 4096)))
+	r.RemoteAddr = "198.51.100.30:1"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	if rec.Code != 200 {
+		t.Fatalf("a body past max_body on a site with the WAF off: %d", rec.Code)
+	}
+	limited := false
+	for i := 0; i < 20; i++ {
+		if get(h, "other.example", "198.51.100.31:1", nil).Code == http.StatusTooManyRequests {
+			limited = true
+		}
+	}
+	if !limited {
+		t.Fatal("a site with the WAF on lost its limit")
+	}
+	r = httptest.NewRequest(http.MethodGet, "http://free.example/?file=../../../../etc/passwd", nil)
+	r.RemoteAddr = "198.51.100.32:1"
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	if rec.Code != http.StatusForbidden || !w.IsBlocked(net.ParseIP("198.51.100.32")) {
+		t.Fatalf("an exploit on a site with the WAF off: %d, blocked %v", rec.Code, w.IsBlocked(net.ParseIP("198.51.100.32")))
+	}
+}
