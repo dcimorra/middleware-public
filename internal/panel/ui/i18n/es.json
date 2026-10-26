@@ -1364,7 +1364,7 @@
   "security.reason.browser": "navegador",
   "security.reason.country": "país",
   "waf.trips": "Bloquear tras",
-  "waf.tripsHint": "Veces que se supera el límite de peticiones en un minuto antes de bloquear una dirección. Cada bloqueo dura más que el anterior.",
+  "waf.tripsHint": "Inundaciones en un minuto que bloquean una dirección: la dirección entera por encima de lo de ocho visitantes. Un visitante que pasa su propio límite solo recibe 429, y lo que carga una página con ella cuenta un cuarto. Cada bloqueo dura más que el anterior.",
   "site.tab.activity": "Actividad",
   "site.exec": "Ejecutar una orden",
   "site.execQ": "Ejecutar una orden en {domain}",

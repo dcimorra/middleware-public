@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -80,17 +81,25 @@ func TestARateLimitedClientGetsA429AndThenGetsBlocked(t *testing.T) {
 			t.Fatalf("request %d: got %d, want 200 within the burst", i, rec.Code)
 		}
 	}
-	codes := []int{}
-	for i := 0; i < 3; i++ {
-		codes = append(codes, get(h, "a.example", "203.0.113.5:4000", nil).Code)
+	// Past its own rate a visitor gets 429s and nothing more, up to what
+	// the address may carry for NATShare visitors.
+	for i := 5; i < 5*NATShare; i++ {
+		if code := get(h, "a.example", "203.0.113.5:4000", nil).Code; code != http.StatusTooManyRequests {
+			t.Fatalf("request %d: got %d, want 429 once the bucket is dry", i, code)
+		}
 	}
-	for _, code := range codes {
-		if code != http.StatusTooManyRequests {
-			t.Fatalf("got %v, want 429s once the bucket is dry", codes)
+	if w.IsBlocked(net.ParseIP("203.0.113.5")) {
+		t.Fatal("one visitor past its own rate was blocked")
+	}
+	// Hammering on through the 429s floods the address: three floods in a
+	// minute block it.
+	for i := 0; i < 3; i++ {
+		if code := get(h, "a.example", "203.0.113.5:4000", nil).Code; code != http.StatusTooManyRequests {
+			t.Fatalf("flood %d: got %d, want 429", i, code)
 		}
 	}
 	if !w.IsBlocked(net.ParseIP("203.0.113.5")) {
-		t.Fatal("three trips in a minute should block the address")
+		t.Fatal("three floods in a minute should block the address")
 	}
 	if rec := get(h, "a.example", "203.0.113.5:4000", nil); rec.Code != http.StatusForbidden {
 		t.Fatalf("blocked address got %d, want 403", rec.Code)
@@ -137,8 +146,9 @@ func TestEachAutomaticBlockLastsLongerThanThePrevious(t *testing.T) {
 	ip := net.ParseIP("203.0.113.7")
 	var durations []time.Duration
 	for round := 0; round < 3; round++ {
-		get(h, "a.example", "203.0.113.7:1", nil)
-		get(h, "a.example", "203.0.113.7:1", nil)
+		for i := 0; i <= NATShare+1; i++ {
+			get(h, "a.example", "203.0.113.7:1", nil)
+		}
 		var until time.Time
 		for _, e := range w.Blocked() {
 			if e.IP == ip.String() {
@@ -539,12 +549,77 @@ func TestThePanelsFilesAreNotRateLimited(t *testing.T) {
 		}
 	}
 	limited := false
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 400; i++ {
 		if send("site.example", "/assets/app.js") == http.StatusTooManyRequests {
 			limited = true
 		}
 	}
 	if !limited {
 		t.Fatal("a site's own /assets/ escaped its rate limit")
+	}
+}
+
+// Two phones on one home connection are two visitors: each has its own
+// burst, and neither is refused for what the other asked.
+func TestTwoPhonesBehindOneAddressAreTwoVisitors(t *testing.T) {
+	w, _, _ := newTestWAF(t, t.TempDir(), nil)
+	p := DefaultPolicy()
+	p.Rate = &manifest.Rate{Requests: 60, Window: manifest.Duration(time.Minute), Burst: 10}
+	if err := w.SetPolicy(p); err != nil {
+		t.Fatal(err)
+	}
+	h := w.Wrap(okHandler())
+	for _, ua := range []string{"Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)", "Mozilla/5.0 (Linux; Android 15; Pixel 9)"} {
+		for i := 0; i < 10; i++ {
+			if c := get(h, "luma.example", "46.136.139.2:1", map[string]string{"User-Agent": ua}).Code; c != 200 {
+				t.Fatalf("%s request %d: %d", ua, i, c)
+			}
+		}
+	}
+}
+
+// A person reloading a heavy page is neither blocked nor refused: the
+// page's files cost a quarter, paid by the address and not the visitor.
+func TestReloadingAHeavyPageIsNeverBlocked(t *testing.T) {
+	w, c, _ := newTestWAF(t, t.TempDir(), nil)
+	if err := w.SetPolicy(DefaultPolicy()); err != nil {
+		t.Fatal(err)
+	}
+	h := w.Wrap(okHandler())
+	browser := "Mozilla/5.0 (X11; Linux x86_64) Chrome/141"
+	refused := 0
+	for reload := 0; reload < 10; reload++ {
+		if get(h, "luma.example", "46.136.139.2:1", map[string]string{"User-Agent": browser, "Sec-Fetch-Dest": "document"}).Code != 200 {
+			refused++
+		}
+		for i := 0; i < 300; i++ {
+			if get(h, "luma.example", "46.136.139.2:1", map[string]string{"User-Agent": browser, "Sec-Fetch-Dest": "image"}).Code != 200 {
+				refused++
+			}
+		}
+		c.advance(2 * time.Second)
+	}
+	if w.IsBlocked(net.ParseIP("46.136.139.2")) {
+		t.Fatal("a person reloading a page was blocked")
+	}
+	t.Logf("%d of %d refused", refused, 10*301)
+	if refused > 0 {
+		t.Fatalf("%d of %d refused", refused, 10*301)
+	}
+}
+
+// A flood is still a flood: thousands of requests a second from one
+// address, whatever User-Agent each one says, are blocked.
+func TestAFloodIsBlockedWhateverItCallsItself(t *testing.T) {
+	w, _, _ := newTestWAF(t, t.TempDir(), nil)
+	if err := w.SetPolicy(DefaultPolicy()); err != nil {
+		t.Fatal(err)
+	}
+	h := w.Wrap(okHandler())
+	for i := 0; i < 5000 && !w.IsBlocked(net.ParseIP("198.51.100.66")); i++ {
+		get(h, "luma.example", "198.51.100.66:1", map[string]string{"User-Agent": "bot-" + strconv.Itoa(i)})
+	}
+	if !w.IsBlocked(net.ParseIP("198.51.100.66")) {
+		t.Fatal("5000 requests in an instant were not blocked")
 	}
 }

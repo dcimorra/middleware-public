@@ -109,9 +109,19 @@ through.
 **WAF, in layers.** Layer 7 in the core, always on: rate limits per route
 with burst, body size limits, country and user-agent policies, a password or
 an allow list per route, and an "under attack" mode that challenges or
-rejects. An address that trips a limit is blocked for a while; when the
-helper is present the block is also pushed to nftables (`firewall.block`)
-so a flood stops at layer 3 and never reaches Go. Blocks have a TTL and are
+rejects. The rate is per visitor, not per address: an address and its
+browser (User-Agent and Accept-Language) are one visitor, so two phones on
+one home connection have a burst each. What a page brings in with it (an
+image, a script, a font, or a request that only asks whether it changed)
+costs a quarter and is paid by the address alone, never the visitor: a
+page of three hundred files reloaded ten times is neither refused nor
+blocked. A visitor past its own rate gets 429s and nothing more. The
+address as a whole carries eight visitors' worth (`NATShare`), and only a
+flood past that, `trips` times in a minute, blocks it: for a while, and
+when the helper is present also in nftables (`firewall.block`), so a flood
+stops at layer 3 and never reaches Go. That block closes every site at
+once, which is why volume alone from a person never earns it; exploits,
+scanners and failed logins still do (the bans). Blocks have a TTL and are
 written down, so a restart neither forgets nor keeps them forever.
 
 The body limit (`max_body`, 20m by default) is for what visitors send. It

@@ -1364,7 +1364,7 @@
   "security.reason.browser": "browser",
   "security.reason.country": "country",
   "waf.trips": "Block after",
-  "waf.tripsHint": "Rate-limit hits in one minute that block an address. Each block lasts longer than the last.",
+  "waf.tripsHint": "Floods in one minute that block an address: the address as a whole past eight visitors' worth. A visitor past its own rate only gets 429s, and what a page loads with it costs a quarter. Each block lasts longer than the last.",
   "site.tab.activity": "Activity",
   "site.exec": "Run a command",
   "site.execQ": "Run a command in {domain}",

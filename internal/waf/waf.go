@@ -681,10 +681,16 @@ func (w *WAF) Wrap(next http.Handler) http.Handler {
 			site, isSite = w.opts.Lookup(host)
 		}
 		pol := w.effectiveFor(site.WAF)
-		if pol.rate != nil && !(!isSite && panelAsset(r)) && !w.allow(host, addr, pol.rate) {
-			w.refuse(rw, r, ip, "ratelimited", http.StatusTooManyRequests)
-			w.trip(ip, host, r.URL.Path)
-			return
+		if pol.rate != nil && !(!isSite && panelAsset(r)) {
+			switch w.allow(host, addr, clientOf(r), pol.rate, costOf(r)) {
+			case limitClient:
+				w.refuse(rw, r, ip, "ratelimited", http.StatusTooManyRequests)
+				return
+			case limitAddress:
+				w.refuse(rw, r, ip, "ratelimited", http.StatusTooManyRequests)
+				w.trip(ip, host, r.URL.Path)
+				return
+			}
 		}
 		if pol.maxBody > 0 && !(!isSite && relocateUpload(r)) {
 			if r.ContentLength > pol.maxBody {
