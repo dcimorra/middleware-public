@@ -320,3 +320,31 @@ func TestASecretSentEmptyIsKeptAndAnyOtherFieldIsCleared(t *testing.T) {
 		t.Fatalf("after saving empty: %v", cfg)
 	}
 }
+
+func TestTheListShowsWhatWasSavedButNeverASecret(t *testing.T) {
+	f := &fake{key: "fake"}
+	m, _, _ := newManager(t, f)
+	if _, err := m.Enable(context.Background(), "fake", Config{"token": "tok-secret", "account": "acc-9"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Saved, read back: what the card is drawn from when the operator
+	// comes back to it.
+	for _, n := range m.List()[0].Needs {
+		switch n.Key {
+		case "account":
+			if n.Value != "acc-9" {
+				t.Fatalf("the saved field came back as %q", n.Value)
+			}
+		case "token":
+			if n.Value != "" {
+				t.Fatal("a secret was listed")
+			}
+		}
+	}
+	// And the module's own copy of its needs was not written into.
+	for _, n := range f.Needs() {
+		if n.Value != "" {
+			t.Fatalf("%s: the module's needs carry a value", n.Key)
+		}
+	}
+}

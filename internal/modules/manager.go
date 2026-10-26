@@ -116,7 +116,13 @@ func (m *Manager) list() ([]Info, []Module) {
 		if needs == nil {
 			needs = []Need{}
 		}
-		_, configured := m.st.data.Config[key]
+		stored, configured := m.st.data.Config[key]
+		needs = append([]Need(nil), needs...)
+		for i, n := range needs {
+			if !n.Secret && !n.Hidden {
+				needs[i].Value = stored[n.Key]
+			}
+		}
 		out = append(out, Info{
 			Key:         key,
 			Name:        mod.Name(),

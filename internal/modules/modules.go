@@ -34,7 +34,11 @@ type Need struct {
 	Options []string `json:"options,omitempty"`
 	// Labels say what an option stands for ("sonnet" runs
 	// claude-sonnet-5-5), shown beside it.
-	Labels map[string]string `json:"labels,omitempty"`
+	Labels map[string]string `json:"labels,omitempty"` // Value is what is stored, filled when the modules are listed, and
+	// never for a secret. Without it the panel drew every field empty and
+	// a saved model looked lost; worse, saving the card again sent the
+	// empty field back and cleared it.
+	Value string `json:"value,omitempty"`
 }
 
 // Chooser is a module that knows the values some of its needs can take
