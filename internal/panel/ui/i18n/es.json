@@ -473,6 +473,8 @@
   "settings.perProviderHint": "0 significa sin tope propio.",
   "settings.defaultProvider": "Proveedor por defecto",
   "settings.defaultProviderHint": "Para un sitio cuyo manifiesto no indica ninguno.",
+  "settings.siteDailyUSD": "Dólares al día por puerta de sitio",
+  "settings.siteDailyUSDHint": "Lo que un sitio puede gastar al día por su puerta de Claude cuando su manifiesto no fija daily_usd. Vacío: 5.",
   "settings.agentsBad": "El tope debe ser de 1 a 64, los huecos reservados menos que el tope y el tope de un proveedor de 0 a 64.",
   "settings.agentsSaved": "Límites de agentes guardados y en vigor.",
   "system.version": "Versión",

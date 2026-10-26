@@ -58,6 +58,9 @@ export function settingsScreen() {
     const max = h("input", { type: "number", min: "1", max: "64", value: a.max_concurrent || 8 });
     const reserved = h("input", { type: "number", min: "0", max: "63", value: a.reserved_for_house ?? 1 });
     const def = h("select", null, ...providers.map((k) => h("option", { value: k, selected: k === a.default_provider }, k)));
+    // What a site may spend a day through its door when its manifest says
+    // nothing (claude_api.daily_usd); empty is the house's default.
+    const siteDaily = h("input", { type: "number", min: "0", step: "0.5", value: a.site_daily_usd || "", placeholder: "5" });
     const per = {};
     const perFields = providers.map((k) => {
       per[k] = h("input", { type: "number", min: "0", max: "64", value: (a.per_provider && a.per_provider[k]) || 0 });
@@ -71,6 +74,7 @@ export function settingsScreen() {
         field(t("settings.reservedForHouse"), reserved, t("settings.reservedForHouseHint")),
         field(t("settings.defaultProvider"), def, t("settings.defaultProviderHint")),
       ),
+      h("div", { class: "form-row" }, field(t("settings.siteDailyUSD"), siteDaily, t("settings.siteDailyUSDHint"))),
       h("div", { class: "form-row" }, ...perFields),
       err,
       h("div", { class: "form-actions" }, save),
@@ -86,11 +90,15 @@ export function settingsScreen() {
         if (!(Number.isInteger(v) && v >= 0 && v <= 64)) bad = true;
         perOut[k] = v;
       }
+      const daily = siteDaily.value.trim() === "" ? 0 : Number(siteDaily.value);
+      if (!(Number.isFinite(daily) && daily >= 0)) bad = true;
       if (bad) { err.textContent = t("settings.agentsBad"); err.hidden = false; return; }
       save.classList.add("busy");
       try {
         const cur = await api.get("/settings");
-        await api.put("/settings", { ...cur, agents: { max_concurrent: m, reserved_for_house: r, per_provider: perOut, default_provider: def.value } });
+        // Spread over what is saved, so a field this card does not show
+        // survives its save instead of being dropped.
+        await api.put("/settings", { ...cur, agents: { ...(cur.agents || {}), max_concurrent: m, reserved_for_house: r, per_provider: perOut, default_provider: def.value, site_daily_usd: daily } });
         toast(t("settings.agentsSaved"), "ok");
       } catch (ex) { err.textContent = ex.message; err.hidden = false; }
       finally { save.classList.remove("busy"); }

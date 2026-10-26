@@ -473,6 +473,8 @@
   "settings.perProviderHint": "0 means no cap of its own.",
   "settings.defaultProvider": "Default provider",
   "settings.defaultProviderHint": "For a site whose manifest names none.",
+  "settings.siteDailyUSD": "Daily dollars per site door",
+  "settings.siteDailyUSDHint": "What a site may spend a day through its Claude door when its manifest sets no daily_usd. Empty: 5.",
   "settings.agentsBad": "The cap must be 1 to 64, the reserved slots fewer than the cap, and a provider's cap 0 to 64.",
   "settings.agentsSaved": "Agent limits saved and in force.",
   "system.version": "Version",
