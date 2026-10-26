@@ -56,7 +56,9 @@ type Installer struct {
 	BrowserPlatform string
 	// Node installs nvm under the root and the current LTS with it; nil
 	// skips the step (tests). New sets it.
-	Node func(root string) (bool, string, error)
+	// user is who runs it: empty for whoever this process is, the
+	// operator's user when this runs as root.
+	Node func(root, user string) (bool, string, error)
 	// AsRoot is a run as root for Params.User (Deps from the panel,
 	// through the helper): what it creates under the root as root is
 	// handed to that user at the end.

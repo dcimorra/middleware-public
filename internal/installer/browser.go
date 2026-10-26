@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -87,7 +88,15 @@ func (in *Installer) stepBrowser() (bool, string, error) {
 			return false, "", fmt.Errorf("the libraries it needs: %w", err)
 		}
 	}
-	if out, err := in.Exec.Run(bin, "--version"); err != nil {
+	// As root, the first run is the operator's: the browser sits in a
+	// folder that user owns, and anything running as it could put another
+	// program there between the unpacking and this line.
+	check := []string{bin, "--version"}
+	if in.AsRoot {
+		check = append([]string{"-u", in.Params.User, "--"}, check...)
+		check = append([]string{"runuser"}, check...)
+	}
+	if out, err := in.Exec.Run(check[0], check[1:]...); err != nil {
 		return false, "", fmt.Errorf("installed, but it does not start: %v %s", err, strings.TrimSpace(out))
 	}
 	return true, fmt.Sprintf("Chrome for Testing %s: %s", version, bin), nil
@@ -242,7 +251,10 @@ func browserDeps(dir, pm string, ex Exec) []string {
 		name, _, _ := strings.Cut(line, "|")
 		name, _, _ = strings.Cut(strings.TrimSpace(name), " (")
 		name = strings.TrimSpace(name)
-		if name == "" || skippedDep(name) {
+		// A package's name, never a path: the list is read from a folder
+		// the operator's user can write, and dnf or zypper given a path
+		// install that file, as root.
+		if name == "" || skippedDep(name) || !pkgName.MatchString(name) {
 			continue
 		}
 		if pm == "apt-get" {
@@ -255,6 +267,8 @@ func browserDeps(dir, pm string, ex Exec) []string {
 	}
 	return out
 }
+
+var pkgName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.+_-]*$`)
 
 func skippedDep(name string) bool {
 	for _, s := range browserDepsSkipped {

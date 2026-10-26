@@ -196,3 +196,32 @@ func TestAnOptionalStepSaysWhatItsOwnFailureCosts(t *testing.T) {
 		t.Fatalf("%q", out.String())
 	}
 }
+
+// The list of libraries comes from a folder the operator's user can write,
+// and is installed as root: a path in it is not a package.
+func TestABrowserDependencyIsAPackageNameNeverAPath(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "rpm.deps"), []byte("libnss3.so\n/tmp/evil.rpm\n../x.rpm\nalsa-lib\n"), 0o644)
+	got := browserDeps(dir, "dnf", NewRecorder())
+	if strings.Join(got, " ") != "libnss3.so alsa-lib" {
+		t.Fatalf("deps: %q", got)
+	}
+}
+
+// As root, the freshly unpacked browser's first run is the operator's.
+func TestAsRootTheBrowsersFirstRunIsTheOperators(t *testing.T) {
+	fakeChromeForTesting(t)
+	in, rec, _ := testInstaller(t)
+	in.AsRoot = true
+	in.Params.Browser = "yes"
+	in.BrowserPlatform = "linux64"
+	os.MkdirAll(in.Params.Root, 0o755)
+	if _, _, err := in.stepBrowser(); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range rec.Calls {
+		if strings.HasSuffix(c, "chrome-headless-shell --version") && !strings.HasPrefix(c, "run runuser -u "+in.Params.User+" -- ") {
+			t.Fatalf("ran %q", c)
+		}
+	}
+}

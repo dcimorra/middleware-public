@@ -580,3 +580,40 @@ func TestDockerIsTheCommandNotOnlyTheDaemonsPackage(t *testing.T) {
 		t.Fatal("no docker command after the step")
 	}
 }
+
+// nvm sources modules/nvm/nvm.sh, which the operator's user (and every
+// site running as it) can rewrite: run as root from the panel, the
+// requirements ran it as root. It runs as the operator, and only after
+// what root made there is the operator's.
+func TestNVMNeverRunsAsRoot(t *testing.T) {
+	in, rec, out := testInstaller(t)
+	in.AsRoot = true
+	var as []string
+	in.Node = func(root, user string) (bool, string, error) {
+		as = append(as, user)
+		for _, c := range rec.Calls {
+			if strings.HasPrefix(c, "sudo find "+in.Params.Root) {
+				return false, "", nil
+			}
+		}
+		t.Error("nvm ran before what root made under the root was handed back")
+		return false, "", nil
+	}
+	if _, _, err := in.Requirements(); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if len(as) != 1 || as[0] != in.Params.User {
+		t.Fatalf("nvm ran as %q, want %q", as, in.Params.User)
+	}
+
+	in.AsRoot, as = false, nil
+	if _, _, err := in.Requirements(); err != nil {
+		t.Fatal(err)
+	}
+	if len(as) != 1 || as[0] != "" {
+		t.Fatalf("not as root, nvm ran as %q", as)
+	}
+	if _, err := runAs("root"); err == nil {
+		t.Fatal("runAs accepted root")
+	}
+}
