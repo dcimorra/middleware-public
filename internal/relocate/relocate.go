@@ -52,13 +52,6 @@ func MoveParts(root, domain string) []archive.Part {
 	return parts
 }
 
-// Reinstalled says a folder is a package's dependencies, which the target
-// installs again: a node_modules beside a package.json. Not any folder of
-// that name: Next's Turbopack keeps .next/node_modules with links named
-// like "@prisma/client-2c3a283f" that the build resolves by, and nothing
-// reinstalls them. The first moves left every node_modules behind and the
-// moved site answered its front page and failed every page that used the
-// database with "Cannot find module '@prisma/client-…'".
 // LeftBehind is every folder of a site whose dependencies are left behind
 // for the target to install (Reinstalled), relative to the site, "." for
 // its root: what the target installs, folder by folder. A site whose
@@ -88,12 +81,44 @@ func LeftBehind(siteDir string) []string {
 	return out
 }
 
+// Reinstalled says a folder is a package's dependencies, which the target
+// installs again: a node_modules beside a package.json that declares some.
+// Not any folder of that name: Next's Turbopack keeps .next/node_modules
+// with links named like "@prisma/client-2c3a283f" that the build resolves
+// by, and nothing reinstalls them. The first moves left every node_modules
+// behind and the moved site answered its front page and failed every page
+// that used the database with "Cannot find module '@prisma/client-…'".
+// A package.json beside it was the fix, until Next started writing one
+// into .next too, {"type": "commonjs"} and nothing else: the links were
+// left behind again, and the install there had nothing to put back. So the
+// package.json must declare dependencies, or have a lockfile beside it.
 func Reinstalled(dir string) bool {
 	if filepath.Base(dir) != "node_modules" {
 		return false
 	}
-	info, err := os.Stat(filepath.Join(filepath.Dir(dir), "package.json"))
-	return err == nil && !info.IsDir()
+	pkgDir := filepath.Dir(dir)
+	for _, lock := range []string{"package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock"} {
+		if fsx.Exists(filepath.Join(pkgDir, lock)) && fsx.Exists(filepath.Join(pkgDir, "package.json")) {
+			return true
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(pkgDir, "package.json"))
+	if err != nil {
+		return false
+	}
+	var pkg map[string]json.RawMessage
+	if json.Unmarshal(raw, &pkg) != nil {
+		// One that does not read is a package all the same: its install
+		// fails there and says why, instead of a folder carried in silence.
+		return true
+	}
+	for _, k := range []string{"dependencies", "devDependencies", "optionalDependencies", "peerDependencies"} {
+		var deps map[string]any
+		if json.Unmarshal(pkg[k], &deps) == nil && len(deps) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func Parts(root, domain string) []archive.Part {

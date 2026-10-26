@@ -257,7 +257,7 @@ func (t *preparingTarget) Prepare(_ context.Context, d string, dirs []string) (s
 func TestANodeSitesModulesAreInstalledThereNotCarried(t *testing.T) {
 	src, dst := t.TempDir(), t.TempDir()
 	seed(t, src)
-	os.WriteFile(filepath.Join(src, "sites", "a.test", "package.json"), []byte(`{"name":"a"}`), 0o644)
+	os.WriteFile(filepath.Join(src, "sites", "a.test", "package.json"), []byte(`{"name":"a","dependencies":{"x":"1"}}`), 0o644)
 	os.MkdirAll(filepath.Join(src, "sites", "a.test", "node_modules", "better-sqlite3"), 0o755)
 	os.WriteFile(filepath.Join(src, "sites", "a.test", "node_modules", "better-sqlite3", "x.node"), []byte("built for node 24"), 0o644)
 	tg := &preparingTarget{localTarget: &localTarget{rc: Receiver{Root: dst}, ready: true}}
@@ -328,7 +328,7 @@ func TestABuildsOwnNodeModulesTravelsWithTheSite(t *testing.T) {
 	src, dst := t.TempDir(), t.TempDir()
 	seed(t, src)
 	site := filepath.Join(src, "sites", "a.test")
-	os.WriteFile(filepath.Join(site, "package.json"), []byte(`{"name":"a"}`), 0o644)
+	os.WriteFile(filepath.Join(site, "package.json"), []byte(`{"name":"a","dependencies":{"x":"1"}}`), 0o644)
 	os.MkdirAll(filepath.Join(site, "node_modules", "@prisma", "client"), 0o755)
 	os.WriteFile(filepath.Join(site, "node_modules", "@prisma", "client", "index.js"), []byte("built here"), 0o644)
 	os.MkdirAll(filepath.Join(site, ".next-blue", "node_modules", "@prisma"), 0o755)
@@ -353,7 +353,7 @@ func TestTheFoldersWhoseDependenciesAreLeftBehindAreFound(t *testing.T) {
 	site := t.TempDir()
 	for _, d := range []string{".", "frontend", "packages/api"} {
 		os.MkdirAll(filepath.Join(site, d, "node_modules", "x"), 0o755)
-		os.WriteFile(filepath.Join(site, d, "package.json"), []byte("{}"), 0o644)
+		os.WriteFile(filepath.Join(site, d, "package.json"), []byte(`{"dependencies":{"x":"1"}}`), 0o644)
 	}
 	os.MkdirAll(filepath.Join(site, ".next", "node_modules", "@prisma"), 0o755) // a build's own
 	os.MkdirAll(filepath.Join(site, "docs"), 0o755)
@@ -404,5 +404,27 @@ func TestASiteThatDoesNotStartThereIsRepairedBeforeTheMoveIsUndone(t *testing.T)
 	m2 := &Mover{Root: src2, Source: &localSource{root: src2}, Poll: 10 * time.Millisecond, ReadyWait: 50 * time.Millisecond}
 	if _, err := m2.Move(context.Background(), "a.test", none, nil); err == nil || !strings.Contains(err.Error(), "runs here again") {
 		t.Fatalf("without an AI: %v", err)
+	}
+}
+
+// Next writes a package.json into its build folder ({"type":"commonjs"})
+// next to the links Turbopack resolves its externals by: that node_modules
+// is the build's and travels; a package's, with dependencies, is installed
+// again there.
+func TestABuildsNodeModulesTravelsEvenWithAPackageJSONBesideIt(t *testing.T) {
+	dir := t.TempDir()
+	build := filepath.Join(dir, ".next-1")
+	os.MkdirAll(filepath.Join(build, "node_modules"), 0o755)
+	os.WriteFile(filepath.Join(build, "package.json"), []byte(`{"type": "commonjs"}`), 0o644)
+	os.MkdirAll(filepath.Join(dir, "node_modules"), 0o755)
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"a","dependencies":{"pg":"8"}}`), 0o644)
+	if Reinstalled(filepath.Join(build, "node_modules")) {
+		t.Fatal("a build's node_modules was taken for a package's")
+	}
+	if !Reinstalled(filepath.Join(dir, "node_modules")) {
+		t.Fatal("a package's node_modules was carried")
+	}
+	if got := strings.Join(LeftBehind(dir), ","); got != "." {
+		t.Fatalf("left behind: %s", got)
 	}
 }

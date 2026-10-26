@@ -20,10 +20,10 @@ func TestThePlanSaysWhatAMoveWillDoWhateverTheFoldersAreCalled(t *testing.T) {
 		os.WriteFile(p, []byte(body), 0o644)
 	}
 	write("site.json", `{"version":2,"node":"22","run":{"command":["node","web/server.js"]}}`)
-	write("web/package.json", `{}`)
+	write("web/package.json", `{"dependencies":{"x":"1"}}`)
 	write("web/package-lock.json", `{}`)
 	write("web/node_modules/big/index.js", strings.Repeat("x", 100000))
-	write("cliente/app/package.json", `{}`)
+	write("cliente/app/package.json", `{"dependencies":{"x":"1"}}`)
 	write("cliente/app/node_modules/x/index.js", "x")
 	write("api/.venv/pyvenv.cfg", "home = /usr/bin")
 	os.Symlink("/usr/bin/python3", filepath.Join(site, "api", ".venv", "python"))
