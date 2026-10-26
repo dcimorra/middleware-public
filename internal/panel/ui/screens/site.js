@@ -198,22 +198,42 @@ function overviewTab(domain) {
     try {
       await api.post(`/sites/${enc(domain)}/containerize`, sel.value ? { provider: sel.value } : {});
     } catch (e) { toastError(e); return; }
-    const box = h("div", { class: "notice info" }, t("site.containStep.planning"));
-    el.prepend(box);
-    const off = onEvent("containerize.", (ev) => {
+    followContain("planning", "");
+  }
+
+  // The job's line lives outside what render() rebuilds: the site's state
+  // changes while it is tried, and every change used to wipe the line
+  // that said how it went. Opening the site again finds a job still at
+  // work (GET containerize) and follows it from where it is.
+  let containBox = null;
+  let containOff = null;
+  function followContain(step, message) {
+    if (!containBox) { containBox = h("div"); el.prepend(containBox); }
+    const say = (st, msg) => {
+      containBox.textContent = t("site.containStep." + st) + (msg ? " — " + msg : "");
+      containBox.className = "notice " + ({ planning: "info", trying: "info", done: "ok", asked: "warn" }[st] || "bad");
+    };
+    say(step, message);
+    if (containOff) containOff();
+    containOff = onEvent("containerize.", (ev) => {
       if (ev.subject !== domain) return;
-      const step = ev.type.slice("containerize.".length);
-      box.textContent = t("site.containStep." + step) + (ev.message ? " — " + ev.message : "");
-      if (step === "trying") return;
-      off();
-      box.className = "notice " + ({ done: "ok", asked: "warn" }[step] || "bad");
-      if (step === "done") toast(t("site.contained"), "ok");
-      if (step === "asked") {
-        box.append(" ", h("a", { href: `#/sites/${enc(domain)}/chat` }, t("site.containOpenChat")));
+      const st = ev.type.slice("containerize.".length);
+      say(st, ev.message);
+      if (st === "trying") return;
+      containOff(); containOff = null;
+      if (st === "done") toast(t("site.contained"), "ok");
+      if (st === "asked") {
+        containBox.append(" ", h("a", { href: `#/sites/${enc(domain)}/chat` }, t("site.containOpenChat")));
       }
     });
-    subs.push(off);
+    subs.push(() => { if (containOff) containOff(); });
   }
+  (async () => {
+    try {
+      const job = await api.get(`/sites/${enc(domain)}/containerize`);
+      if (job && !job.done) followContain(job.step === "trying" ? "trying" : "planning", job.how || "");
+    } catch { /* none since this node started */ }
+  })();
 
   // Moving the site to another node: chosen, said (a short stop), and then
   // followed step by step from the events until it runs there.
@@ -325,6 +345,7 @@ function overviewTab(domain) {
   function render() {
     const s = store.site(domain);
     clear(el);
+    if (containBox) el.append(containBox);
     if (!s) { el.append(empty(t("site.gone"), t("site.goneHint"))); return; }
     const mode = siteMode(s);
     const m = s.manifest || {};
