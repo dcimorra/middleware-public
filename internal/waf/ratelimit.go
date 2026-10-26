@@ -157,17 +157,24 @@ func clientOf(r *http.Request) uint64 {
 // not changed costs a quarter, and only the address pays it (allow): a
 // page of sixty files then weighs like fifteen requests, and a client
 // asking for pages, an API or a login still pays one each.
+//
+// A file is known by its extension whatever Sec-Fetch-Dest says: a page's
+// service worker, or its own fetch(), asks with "empty", and a game console
+// that brings in its 973 files that way was refused at every reload while
+// a browser loading the same files as scripts was not.
 func costOf(r *http.Request) float64 {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return 1
+	}
 	if r.Header.Get("If-None-Match") != "" || r.Header.Get("If-Modified-Since") != "" {
 		return 0.25
 	}
 	switch r.Header.Get("Sec-Fetch-Dest") {
 	case "image", "script", "style", "font", "audio", "video", "track", "manifest":
 		return 0.25
-	case "":
-		if staticExt[strings.ToLower(path.Ext(r.URL.Path))] {
-			return 0.25
-		}
+	}
+	if staticExt[strings.ToLower(path.Ext(r.URL.Path))] {
+		return 0.25
 	}
 	return 1
 }
@@ -176,7 +183,9 @@ var staticExt = map[string]bool{
 	".js": true, ".mjs": true, ".css": true, ".map": true,
 	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true, ".avif": true, ".svg": true, ".ico": true,
 	".woff": true, ".woff2": true, ".ttf": true, ".otf": true,
-	".mp3": true, ".mp4": true, ".webm": true, ".ogg": true,
+	".mp3": true, ".mp4": true, ".webm": true, ".ogg": true, ".wav": true, ".m4a": true, ".flac": true,
+	".json": true, ".wasm": true, ".webmanifest": true, ".txt": true, ".xml": true,
+	".glb": true, ".gltf": true, ".bin": true, ".bmp": true,
 }
 
 // evict drops buckets nobody touched for ten minutes, trip counters older

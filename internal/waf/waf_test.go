@@ -670,3 +670,41 @@ func TestASiteWithTheWAFOffKeepsTheBansAndLosesTheLimits(t *testing.T) {
 		t.Fatalf("an exploit on a site with the WAF off: %d, blocked %v", rec.Code, w.IsBlocked(net.ParseIP("198.51.100.32")))
 	}
 }
+
+// A console that brings in every game's files through its service worker
+// asks with Sec-Fetch-Dest "empty": 973 files at once, scripts and JSON,
+// and two people behind one address, are neither refused nor blocked on
+// the policy every installation was made with.
+func TestAServiceWorkerBringingInAThousandFilesIsNotRefused(t *testing.T) {
+	w, c, _ := newTestWAF(t, t.TempDir(), nil)
+	p := DefaultPolicy()
+	p.Rate = &manifest.Rate{Requests: 600, Window: manifest.Duration(time.Minute), Burst: 100}
+	if err := w.SetPolicy(p); err != nil {
+		t.Fatal(err)
+	}
+	h := w.Wrap(okHandler())
+	refused := 0
+	for reload := 0; reload < 2; reload++ {
+		for _, ua := range []string{"Chrome/154 (X11; Linux)", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)"} {
+			for i := 0; i < 973; i++ {
+				file := "/games/g" + strconv.Itoa(i%40) + "/story/ch" + strconv.Itoa(i) + ".js"
+				if i%3 == 0 {
+					file = "/games/g" + strconv.Itoa(i%40) + "/locales/es/common" + strconv.Itoa(i) + ".json"
+				}
+				r := httptest.NewRequest(http.MethodGet, "http://play.example"+file, nil)
+				r.RemoteAddr = "46.136.139.2:1"
+				r.Header.Set("User-Agent", ua)
+				r.Header.Set("Sec-Fetch-Dest", "empty")
+				rec := httptest.NewRecorder()
+				h.ServeHTTP(rec, r)
+				if rec.Code != 200 {
+					refused++
+				}
+			}
+		}
+		c.advance(10 * time.Second)
+	}
+	if refused > 0 || w.IsBlocked(net.ParseIP("46.136.139.2")) {
+		t.Fatalf("%d refused, blocked %v", refused, w.IsBlocked(net.ParseIP("46.136.139.2")))
+	}
+}
