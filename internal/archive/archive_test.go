@@ -71,6 +71,12 @@ func TestNoNameInTheArchiveWritesOutsideTheFolder(t *testing.T) {
 			tw.WriteHeader(&tar.Header{Name: "evil", Typeflag: tar.TypeSymlink, Linkname: outside})
 			file(tw, "evil/escaped")
 		},
+		// The parent does not exist yet, so it does not resolve: the check
+		// must look at what does, or MkdirAll makes it out there.
+		"through a link, into a new folder": func(tw *tar.Writer) {
+			tw.WriteHeader(&tar.Header{Name: "evil", Typeflag: tar.TypeSymlink, Linkname: outside})
+			file(tw, "evil/new/escaped")
+		},
 	}
 	for name, entries := range cases {
 		dest := filepath.Join(t.TempDir(), "site")
@@ -79,6 +85,9 @@ func TestNoNameInTheArchiveWritesOutsideTheFolder(t *testing.T) {
 		}
 		if _, err := os.Stat(filepath.Join(outside, "escaped")); err == nil {
 			t.Fatalf("%s: a file was written outside", name)
+		}
+		if _, err := os.Stat(filepath.Join(outside, "new")); err == nil {
+			t.Fatalf("%s: a folder was made outside", name)
 		}
 		if _, err := os.Stat(dest); err == nil {
 			t.Errorf("%s: a half-restored folder was left", name)

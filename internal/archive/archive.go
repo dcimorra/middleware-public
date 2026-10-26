@@ -275,11 +275,13 @@ func UnpackFrom(ctx context.Context, r io.Reader, dir string) (Report, error) {
 		}
 		// Through a link the archive made, a later entry would land
 		// wherever that link points: the parent must resolve inside too.
-		if parent, err := filepath.EvalSymlinks(filepath.Dir(target)); err == nil {
-			realTmp, _ := filepath.EvalSymlinks(tmp)
-			if !within(parent, realTmp) {
-				return fail(fmt.Errorf("%s would be written through a link out of the folder", hdr.Name))
-			}
+		// A parent that does not exist yet is judged by its nearest
+		// ancestor that does: "evil/new/file" under a link "evil" to /x
+		// does not resolve, and skipping the check let MkdirAll make /x/new
+		// and the file in it.
+		realTmp, _ := filepath.EvalSymlinks(tmp)
+		if parent := existingAncestor(filepath.Dir(target), tmp); !within(parent, realTmp) {
+			return fail(fmt.Errorf("%s would be written through a link out of the folder", hdr.Name))
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
@@ -323,6 +325,21 @@ func inside(dir, name string) (string, error) {
 		return "", fmt.Errorf("%q is not a path inside the archive", name)
 	}
 	return filepath.Join(dir, clean), nil
+}
+
+// existingAncestor is p resolved, or the nearest ancestor of p up to stop
+// that resolves; stop itself when none does.
+func existingAncestor(p, stop string) string {
+	for {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return r
+		}
+		if p == stop || p == filepath.Dir(p) {
+			r, _ := filepath.EvalSymlinks(stop)
+			return r
+		}
+		p = filepath.Dir(p)
+	}
 }
 
 func within(p, dir string) bool {
