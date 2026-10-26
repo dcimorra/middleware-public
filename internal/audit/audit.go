@@ -236,7 +236,13 @@ func parse(data []byte, r *Report) error {
 				Source any    `json:"source"`
 			}
 			if json.Unmarshal(raw, &via) == nil && via.Title != "" {
-				adv.Title, adv.URL = via.Title, via.URL
+				adv.Title = via.Title
+				// The report comes from whichever registry the site's own
+				// .npmrc names, and the panel turns this into a link: only
+				// a web address gets through, never a javascript: one.
+				if strings.HasPrefix(via.URL, "https://") || strings.HasPrefix(via.URL, "http://") {
+					adv.URL = via.URL
+				}
 				break
 			}
 		}

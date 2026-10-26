@@ -128,3 +128,19 @@ func TestNPMDoesNotGetTheSupervisorsSecrets(t *testing.T) {
 		t.Fatalf("npm lost its PATH:\n%s", env)
 	}
 }
+
+func TestAnAdvisoryLinkIsAlwaysAWebAddress(t *testing.T) {
+	doc := `{"vulnerabilities":{` +
+		`"a":{"severity":"critical","via":[{"title":"x","url":"javascript:alert(1)"}],"range":"*"},` +
+		`"b":{"severity":"high","via":[{"title":"y","url":"https://github.com/advisories/GHSA-1"}],"range":"*"}}}`
+	var r Report
+	if err := parse([]byte(doc), &r); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Critical) != 1 || r.Critical[0].URL != "" || r.Critical[0].Title != "x" {
+		t.Fatalf("a javascript: link reached the report: %+v", r.Critical)
+	}
+	if len(r.High) != 1 || r.High[0].URL != "https://github.com/advisories/GHSA-1" {
+		t.Fatalf("a web link was lost: %+v", r.High)
+	}
+}
