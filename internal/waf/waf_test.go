@@ -510,3 +510,36 @@ func TestTheOperatorsAddressIsNeverBlockedForGoingTooFast(t *testing.T) {
 	}
 }
 
+// The panel's own files are not counted: one load of the sign-in page asks
+// for some sixty-five, and a 429 on one of them leaves the page blank.
+func TestThePanelsFilesAreNotRateLimited(t *testing.T) {
+	w, _, _ := newTestWAF(t, t.TempDir(), func(host string) (Site, bool) { return Site{}, host == "site.example" })
+	p := DefaultPolicy()
+	p.Rate = &manifest.Rate{Requests: 60, Window: manifest.Duration(time.Minute), Burst: 5}
+	p.Trips = 3
+	if err := w.SetPolicy(p); err != nil {
+		t.Fatal(err)
+	}
+	h := w.Wrap(okHandler())
+	send := func(host, path string) int {
+		r := httptest.NewRequest(http.MethodGet, "http://"+host+path, nil)
+		r.RemoteAddr = "198.51.100.20:1"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	for i := 0; i < 200; i++ {
+		if c := send("panel.example", "/assets/screens/site.js"); c != 200 {
+			t.Fatalf("panel file %d: %d", i, c)
+		}
+	}
+	limited := false
+	for i := 0; i < 20; i++ {
+		if send("site.example", "/assets/app.js") == http.StatusTooManyRequests {
+			limited = true
+		}
+	}
+	if !limited {
+		t.Fatal("a site's own /assets/ escaped its rate limit")
+	}
+}

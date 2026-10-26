@@ -679,7 +679,7 @@ func (w *WAF) Wrap(next http.Handler) http.Handler {
 			site, isSite = w.opts.Lookup(host)
 		}
 		pol := w.effectiveFor(site.WAF)
-		if pol.rate != nil && !w.allow(host, addr, pol.rate) {
+		if pol.rate != nil && !(!isSite && panelAsset(r)) && !w.allow(host, addr, pol.rate) {
 			w.refuse(rw, r, ip, "ratelimited", http.StatusTooManyRequests)
 			w.trip(ip)
 			return
@@ -706,6 +706,16 @@ func (w *WAF) Wrap(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(rw, r)
 	})
+}
+
+// panelAsset is one of the panel's own files, read before anyone signs
+// in: the panel has no build step and one load asks for some sixty-five
+// of them, embedded in the binary and answered from memory. Counted, two
+// reloads of the sign-in page emptied the bucket, a 429 on a module left
+// the page blank, and the reloads that followed blocked the address.
+// Only on a host that is not a site's, like relocateUpload.
+func panelAsset(r *http.Request) bool {
+	return (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.HasPrefix(r.URL.Path, "/assets/")
 }
 
 // relocateUpload is a site's bundle coming into this house from another
