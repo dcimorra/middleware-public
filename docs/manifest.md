@@ -75,7 +75,7 @@ never shell strings. Paths are relative to the site folder.
   },
 
   "waf": {
-    "rate": { "requests": 600, "window": "1m", "burst": 100 },
+    "rate": { "requests": 600, "window": "1m", "burst": 300 },
     "max_body": "20m"
   },
 

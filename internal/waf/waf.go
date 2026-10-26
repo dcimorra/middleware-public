@@ -70,9 +70,11 @@ type Policy struct {
 
 // DefaultPolicy is what a fresh installation runs with: generous enough for
 // a busy site behind one NAT, tight enough that a naive flood is blocked.
+// The burst is a few page loads: a page of today asks for sixty or seventy
+// files, and with 100 a visitor reloading it twice was refused.
 func DefaultPolicy() Policy {
 	return Policy{
-		Rate:    &manifest.Rate{Requests: 600, Window: manifest.Duration(time.Minute), Burst: 100},
+		Rate:    &manifest.Rate{Requests: 600, Window: manifest.Duration(time.Minute), Burst: 300},
 		MaxBody: "20m",
 		Trips:   20,
 	}
