@@ -68,6 +68,11 @@ export function doorCard(domain) {
     const boxes = {};
     const permsEl = h("div", { class: "door-perms" });
     const permsHint = h("div", { class: "hint" });
+    // The models the site's code may pick from, call by call: several at
+    // once (haiku to classify, sonnet to write, opus for the hard one), and
+    // the app decides which each time. None ticked is any of the agent's.
+    const allowed = new Set(lim.provider === agent.value || !lim.provider ? lim.models || [] : []);
+    const modelsEl = h("div", { class: "door-perms" });
     function fillAgent(keepModel) {
       const a = agentOf(agent.value);
       const was = keepModel ? model.value : "";
@@ -75,6 +80,13 @@ export function doorCard(domain) {
       const label = (m) => (a.labels && a.labels[m] ? `${m} — ${a.labels[m]}` : m);
       clear(model).append(h("option", { value: "" }, t(agent.value === "claude" ? "door.houseModel" : "door.agentModel")), ...(a.models || []).map((m) => h("option", { value: m }, label(m))));
       model.value = (a.models || []).includes(was) ? was : "";
+      if (!keepModel) allowed.clear();
+      clear(modelsEl);
+      for (const m of a.models || []) {
+        const cb = checkbox(label(m), { checked: allowed.has(m) });
+        cb.input.addEventListener("change", () => { if (cb.input.checked) allowed.add(m); else allowed.delete(m); });
+        modelsEl.append(cb.el);
+      }
       clear(permsEl);
       const fixed = [];
       for (const p of PERMS) {
@@ -106,7 +118,8 @@ export function doorCard(domain) {
     const hide = checkbox(t("door.hide"), { checked: Boolean(lim.hide_chats) });
     const save = h("button", { type: "submit", class: "btn primary" }, t("common.save"));
     const form = h("form", { novalidate: true },
-      h("div", { class: "form-row" }, field(t("door.agent"), agent, t("door.agentHint")), field(t("door.model"), model)),
+      h("div", { class: "form-row" }, field(t("door.agent"), agent, t("door.agentHint")), field(t("door.model"), model, t("door.modelHint"))),
+      h("div", { class: "field" }, h("label", null, t("door.models")), modelsEl, h("div", { class: "hint" }, t("door.modelsHint"))),
       h("div", { class: "field" }, h("label", null, t("door.tools")), permsEl, permsHint),
       h("div", { class: "form-row" }, field(t("door.daily"), daily, t("door.dailyHint")), field(t("door.turns"), turns, t("door.turnsHint"))),
       h("div", { class: "form-row" }, field(t("door.maxChats"), maxChats, t("door.maxChatsHint")), h("div", { class: "field" }, hide.el)),
@@ -122,7 +135,7 @@ export function doorCard(domain) {
       }
       save.classList.add("busy");
       try {
-        await api.post(path, { enabled: true, provider: agent.value, permissions: perms, daily_usd: Number(daily.value), daily_turns: Number(turns.value), max_chats: Number(maxChats.value), model: model.value, hide_chats: hide.input.checked });
+        await api.post(path, { enabled: true, provider: agent.value, permissions: perms, daily_usd: Number(daily.value), daily_turns: Number(turns.value), max_chats: Number(maxChats.value), model: model.value, models: (agentOf(agent.value).models || []).filter((m) => allowed.has(m)), hide_chats: hide.input.checked });
         toast(t("door.saved"), "ok");
         load();
       } catch (err) { toastError(err); } finally { save.classList.remove("busy"); }
@@ -131,6 +144,7 @@ export function doorCard(domain) {
     const copy = h("button", { type: "button", class: "btn sm ghost", title: t("door.copy") }, icon("copy"));
     copy.addEventListener("click", async () => { try { await navigator.clipboard.writeText(d.token); toast(t("door.copied"), "ok"); } catch { /* the token stays visible */ } });
     const use = d.use || {};
+    const pick = (lim.models && lim.models[0]) || lim.model || "";
     el.append(
       h("div", { class: "stats" },
         stat(t("door.today"), `${usd(d.spent_usd)} / ${usd(lim.daily_usd)}`),
@@ -146,7 +160,7 @@ export function doorCard(domain) {
           ["MIDDLEWARE_TOKEN", h("div", { class: "row" }, h("code", { class: "small grow" }, d.token || ""), copy)],
           ["MIDDLEWARE_API_SOCKET", d.socket ? h("code", null, d.socket) : null],
         ]),
-        h("pre", { class: "snippet" }, `curl -s "$MIDDLEWARE_API/api/site/claude/ask" \\\n  -H "Authorization: Bearer $MIDDLEWARE_TOKEN" -H 'Content-Type: application/json' \\\n  -d '{"prompt": "…", "format": "json"}'`)),
+        h("pre", { class: "snippet" }, `curl -s "$MIDDLEWARE_API/api/site/claude/ask" \\\n  -H "Authorization: Bearer $MIDDLEWARE_TOKEN" -H 'Content-Type: application/json' \\\n  -d '{"prompt": "…", ${pick ? `"model": "${pick}", ` : ""}"format": "json"}'`)),
       form,
     );
   }

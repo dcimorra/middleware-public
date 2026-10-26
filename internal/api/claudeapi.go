@@ -102,7 +102,7 @@ func (s *Server) registerDoorPanel(o SiteDoorOptions) {
 		}
 		return out, nil
 	})
-	s.Handle("POST", Prefix+"/sites/{domain}/claude-api", "Open, close or tune the site's LLM gateway (body: enabled, provider, permissions, daily_usd, daily_turns, max_chats, model, hide_chats; tools for the four old levels); it is written in the manifest and the site restarts", func(w http.ResponseWriter, r *http.Request) (any, error) {
+	s.Handle("POST", Prefix+"/sites/{domain}/claude-api", "Open, close or tune the site's LLM gateway (body: enabled, provider, permissions, daily_usd, daily_turns, max_chats, model, models, hide_chats; tools for the four old levels); it is written in the manifest and the site restarts", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		domain, err := domainOf(r)
 		if err != nil {
 			return nil, err
@@ -116,6 +116,7 @@ func (s *Server) registerDoorPanel(o SiteDoorOptions) {
 			DailyTurns  int       `json:"daily_turns"`
 			MaxChats    int       `json:"max_chats"`
 			Model       string    `json:"model"`
+			Models      []string  `json:"models"`
 			Hide        bool      `json:"hide_chats"`
 		}
 		if err := ReadJSON(r, &b); err != nil {
@@ -141,6 +142,23 @@ func (s *Server) registerDoorPanel(o SiteDoorOptions) {
 			}
 			if err := o.knownModel(provider, b.Model); err != nil {
 				return nil, err
+			}
+			var models []string
+			for _, v := range b.Models {
+				v = strings.TrimSpace(v)
+				if v == "" || contains(models, v) {
+					continue
+				}
+				if err := o.knownModel(provider, v); err != nil {
+					return nil, err
+				}
+				models = append(models, v)
+			}
+			// The default is one of the list; a default left out of it is
+			// put in rather than refused: whoever ticked three models and
+			// kept the default meant it to be usable.
+			if m := strings.TrimSpace(b.Model); m != "" && len(models) > 0 && !contains(models, m) {
+				models = append([]string{m}, models...)
 			}
 			var perms []string
 			if b.Permissions != nil {
@@ -193,6 +211,9 @@ func (s *Server) registerDoorPanel(o SiteDoorOptions) {
 			}
 			if v := strings.TrimSpace(b.Model); v != "" {
 				block["model"] = v
+			}
+			if len(models) > 0 {
+				block["models"] = models
 			}
 			if b.Hide {
 				block["hide_chats"] = true

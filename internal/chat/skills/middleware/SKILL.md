@@ -560,28 +560,90 @@ Each password gives its own pass, valid only for its zone. The client
 address is the real one: edge headers are believed only from the door they
 belong to, so a hand-written `X-Forwarded-For` opens nothing.
 
-**The site's code needs an AI** (draft, classify, answer with JSON) → open
-the site door (the AI gateway) with `"claude_api": {}` and call it from the
-code; never install or call an agent's CLI from the site, and never put an
-API key in the project. Which agent answers (`provider`: claude, openai,
-agy…) and what it may do (`permissions`) are a person's choice in the
-panel:
+**The site's code needs an AI** (draft, classify, answer with JSON) → the
+site door, which the panel calls the **AI gateway**. The site's own code
+asks the house, and the house runs the agent: same engine, same jail, same
+bill, visible in the panel. Never install or call an agent's CLI from the
+site, and never put an API key in the project.
+
+*Configuring it.* When the person asks for it in the conversation ("make
+the site summarise with AI", "set up the gateway"), you open it yourself by
+writing the block in `site.json`; nobody has to go to the panel. The house
+sees the change, gives the process `MIDDLEWARE_TOKEN` and `MIDDLEWARE_API`
+and restarts it (the block is part of the revision). It needs a process
+(`run` or `workers`): a site of static files has nobody to call it.
+
+```json
+{
+  "version": 2,
+  "run": { "command": ["node", "server.js"] },
+  "claude_api": {
+    "models": ["haiku", "sonnet", "opus"],
+    "model": "sonnet",
+    "daily_usd": 3
+  }
+}
+```
+
+(Only the `claude_api` key is new: add it to the `site.json` that is
+there, leaving the rest as it is.)
+
+- `models`: the ones the code may pick from, **several at once**. The code
+  chooses per call with `"model"`; one not on the list is a 400, so an
+  injected prompt cannot move every call to the dearest model. Empty: any
+  of the agent's. `model` is the default when a call names none, and must
+  be on the list.
+- `provider`: which agent answers (`claude` when absent; `openai` for
+  Codex, `agy`, a vendor's…). Only one whose module is enabled answers; if
+  the gateway says `available: false`, tell the person to enable it and
+  sign in under **Modules**.
+- `permissions`: absent is **no tools at all** (the model talks and
+  nothing else), which is what generating text needs. `read` lets it read
+  the site's folder. `edit`, `web` and `shell` reach as far as an injected
+  prompt can, since the site answers the internet: never write them on
+  your own; ask (§ 12) and write them only on a yes.
+- `daily_usd` (and `daily_turns` for agents on a subscription, whose turns
+  report no cost): pick a cap that fits the feature; absent is the house's
+  ($5 by default). `max_chats` (20) is how many conversations it keeps.
+
+Say what you wrote and why each value, and that the site restarts.
+
+*Choosing the model in the code.* Route by task, and keep it in one place
+(a small map in the code, not a model name in every call): the cheapest
+that does the job well, a stronger one only where it shows.
+
+| task (Claude's names; another agent's are in `claude.models`) | model |
+| --- | --- |
+| classify, extract fields, tag, short JSON, moderate | `haiku` |
+| write and rewrite, summarise, answer a visitor, most work | `sonnet` |
+| long reasoning, hard code, plans, what failed on `sonnet` | `opus` |
+
+A failed or poor answer from a cheap model can be retried once on the next
+one up; never loop. `GET $MIDDLEWARE_API/api/site` says what the code has:
+`claude.models` (what it may name), `claude.model` (the default),
+`left_usd`, `available`. Read it at start, not on every call.
+
+*Calling it.*
 
 ```sh
 curl -s "$MIDDLEWARE_API/api/site/claude/ask" -H "Authorization: Bearer $MIDDLEWARE_TOKEN" \
-  -H 'Content-Type: application/json' -d '{"prompt": "Summarise: …", "format": "json"}'
+  -H 'Content-Type: application/json' -d '{"prompt": "Summarise: …", "model": "haiku", "format": "json"}'
 ```
 
 The answer is `{chat, state, text, model, turns, cost_usd, json, question}`;
 `files: ["path/in/the/site"]` sends files of the site's folder with the
 message, `wait: "0"` answers 202 at once and the conversation is followed at
-`/api/site/claude/chats/{chat}` or its `/stream`.
+`/api/site/claude/chats/{chat}` or its `/stream`. A conversation (`POST
+/api/site/claude/chats`, then `/messages`) keeps its context between calls;
+each message may name its own `model`. A 429 says the daily cap was
+reached: the code shows something sensible, it does not retry. In a docker
+site, call it over `$MIDDLEWARE_API_SOCKET` (curl `--unix-socket`).
 
-An empty block has no tools; `permissions` (`read`, `edit`, `web`,
-`shell`) are a person's decision, not yours. Each site has a daily cap
-(`claude_api.daily_usd`, and `daily_turns` for agents on a subscription); a
-429 says it was reached. In a docker site, call it over
-`$MIDDLEWARE_API_SOCKET` (curl `--unix-socket`).
+*Checking it.* After the restart (`middleware site show <domain>`: a new
+revision, `alive`), exercise the feature through the site itself, the way
+a visitor would, and read `middleware site logs` for the gateway's answer.
+A 401 is a process started before the block was written; a 503 is an
+agent without a session.
 
 **Too much automated traffic** → `waf`:
 

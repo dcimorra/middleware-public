@@ -161,8 +161,14 @@ api.md, "The site door"). The name is from when Claude was its only agent:
 - `provider`: the agent that answers, any whose module is enabled
   (`claude`, `openai` for Codex, `agy` for Antigravity, the vendors'…);
   empty is `claude`.
-- `model`: one of that agent's; empty is the Claude module's model for
-  Claude, and the agent's own default for the others.
+- `model`: one of that agent's; empty is the first of `models`, or the
+  Claude module's model for Claude and the agent's own default for the
+  others. The default when a call names none.
+- `models`: the models the site's code may choose among, call by call
+  (`["haiku", "sonnet", "opus"]`: a cheap one to classify, a strong one to
+  write); a call naming one off the list is refused (400) before anything
+  is spent, and an alias counts as the model it runs. Empty is any of the
+  agent's. `model`, when set, must be on it.
 - `permissions`: granted one by one, `read` (the site's folder), `edit`
   (change files in it), `web` (search and read the web) and `shell` (run
   commands in it). All four is the panel conversation's own jail. An agent

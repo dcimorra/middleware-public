@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -460,5 +461,54 @@ func TestAScopedTokenCannotSpeakForAnySiteThroughTheDoor(t *testing.T) {
 	p.mu.Unlock()
 	if n != 0 {
 		t.Fatalf("a turn ran for the scoped token: %d", n)
+	}
+}
+
+func TestTheSitesCodePicksAmongTheModelsItsGatewayWasGiven(t *testing.T) {
+	f, keys, p, _ := doorFixture(t, map[string]string{
+		"m.test": `{"version":2,"claude_api":{"models":["haiku","sonnet"]}}`,
+	})
+	code, me := f.asSite(keys, "m.test", "GET", "/api/v1/site", nil)
+	cl, _ := me["claude"].(map[string]any)
+	if code != 200 || cl["model"] != "haiku" || fmt.Sprint(cl["models"]) != "[haiku sonnet]" {
+		t.Fatalf("what the code is told: %d %v", code, cl)
+	}
+	// No model named: the first of the list, not the house's default.
+	if code, out := f.asSite(keys, "m.test", "POST", "/api/v1/site/claude/ask", map[string]any{"prompt": "x"}); code != 200 || p.last().Model != "haiku" {
+		t.Fatalf("the default: %d %v %q", code, out, p.last().Model)
+	}
+	// Another of the list, call by call, in the same conversation too.
+	code, out := f.asSite(keys, "m.test", "POST", "/api/v1/site/claude/ask", map[string]any{"prompt": "x", "model": "sonnet"})
+	if code != 200 || p.last().Model != "sonnet" {
+		t.Fatalf("sonnet: %d %v %q", code, out, p.last().Model)
+	}
+	id := out["chat"].(string)
+	if code, out := f.asSite(keys, "m.test", "POST", "/api/v1/site/claude/chats/"+id+"/messages", map[string]any{"prompt": "y", "model": "haiku"}); code != 200 || p.last().Model != "haiku" {
+		t.Fatalf("haiku on the next message: %d %v %q", code, out, p.last().Model)
+	}
+	// One the agent has but the gateway was not given: refused before a
+	// turn is spent.
+	n := len(p.reqs)
+	if code, _ := f.asSite(keys, "m.test", "POST", "/api/v1/site/claude/ask", map[string]any{"prompt": "x", "model": "opus"}); code != 400 {
+		t.Fatalf("a model off the list: %d", code)
+	}
+	if code, _ := f.asSite(keys, "m.test", "POST", "/api/v1/site/claude/chats/"+id+"/messages", map[string]any{"prompt": "x", "model": "opus"}); code != 400 || len(p.reqs) != n {
+		t.Fatalf("a model off the list on a message: %d, %d turns ran", code, len(p.reqs)-n)
+	}
+}
+
+func TestTheGatewayScreenSavesSeveralModelsWithTheDefaultAmongThem(t *testing.T) {
+	f, _, _, _ := doorFixture(t, map[string]string{
+		"s.test": `{"version":2,"run":{"command":["true"]}}`,
+	})
+	if resp, out := f.call("POST", "/api/v1/sites/s.test/claude-api", map[string]any{"enabled": true, "permissions": []string{"read"}, "model": "sonnet", "models": []string{"haiku", "haiku"}}); resp.StatusCode != 200 {
+		t.Fatalf("save: %d %v", resp.StatusCode, out)
+	}
+	mf, err := manifest.Load(filepath.Join(f.root, "sites", "s.test"))
+	if err != nil || mf.ClaudeAPI == nil || fmt.Sprint(mf.ClaudeAPI.Models) != "[sonnet haiku]" || mf.ClaudeAPI.Model != "sonnet" {
+		t.Fatalf("written: %v %+v", err, mf.ClaudeAPI)
+	}
+	if resp, _ := f.call("POST", "/api/v1/sites/s.test/claude-api", map[string]any{"enabled": true, "models": []string{"nonsense"}}); resp.StatusCode != 400 {
+		t.Fatalf("a model the agent does not have: %d", resp.StatusCode)
 	}
 }

@@ -646,7 +646,7 @@ site written for V1 moves without a line changed.
 
 | method | path | result |
 | --- | --- | --- |
-| GET | `/site` | → `{domain, claude: {available, provider, model, tools, limits: {provider, tools, permissions, daily_usd, daily_turns, max_chats, model, hide_chats}, spent_usd, left_usd, turns, chats_open, busy}}`; the `claude` key keeps its V1 name whatever agent answers |
+| GET | `/site` | → `{domain, claude: {available, provider, model, models, tools, limits: {provider, tools, permissions, daily_usd, daily_turns, max_chats, model, models, hide_chats}, spent_usd, left_usd, turns, chats_open, busy}}`; the `claude` key keeps its V1 name whatever agent answers |
 | POST | `/site/claude/ask` | `{prompt (or text), system?, model?, title?, format?: "json", schema?, wait?, files?: [paths in the site's folder]}` → `{chat, state: "done", text, model, turns, cost_usd, json?, json_error?, question?, error?}`; one question, one call. Still running when `wait` runs out: 202 `{chat, state: "running", why}` |
 | GET | `/site/claude/chats` | → `{chats: [{id, domain, title, model, created, updated, turns, cost_usd, busy, messages, origin, system, tools, asking}]}` |
 | POST | `/site/claude/chats` | `{title?, system?, model?, format?, schema?, prompt?, files?}` → `{chat: {…}}`, or the answer when a prompt was sent |
@@ -664,7 +664,7 @@ The panel's side:
 | method | path | result |
 | --- | --- | --- |
 | GET | `/sites/{domain}/claude-api` | → `{enabled, agents: [{provider, available, models, permissions}], models, defaults, limits?, token?, chats?, spent_usd, turns, use?, api, socket, process}`; `agents` are the ones that can run now (and the door's own), each with the permissions it can hold apart |
-| POST | `/sites/{domain}/claude-api` | `{enabled, provider, permissions, model, daily_usd, daily_turns, max_chats, hide_chats}` (or `tools`, one of the four old levels, without `permissions`) → `{ok, token?, warn?}`; an agent that cannot run, a model not on its list or a permission it cannot hold apart is 400. Writes `claude_api` in the manifest (`permissions` always, the rest only where it differs from the defaults) and the site restarts |
+| POST | `/sites/{domain}/claude-api` | `{enabled, provider, permissions, model, models, daily_usd, daily_turns, max_chats, hide_chats}` (or `tools`, one of the four old levels, without `permissions`) → `{ok, token?, warn?}`; an agent that cannot run, a model not on its list or a permission it cannot hold apart is 400. Writes `claude_api` in the manifest (`permissions` always, the rest only where it differs from the defaults) and the site restarts |
 | GET | `/claude/sites` | `?days=7…90` (30) → `{days, sites: [{domain, today, d7, d30, month, total, turns30, series, models, since, open, exists, daily_usd, tools}], total}` |
 
 `Authorization: Bearer $MIDDLEWARE_TOKEN`. The operator may call the same
@@ -678,7 +678,9 @@ JSON (`json`), or says why not (`json_error`). An unknown model is refused
 (400) before anything is spent; a model of another agent than the door's
 (a site written for Claude still naming `sonnet` after its door moved to
 Codex) is not: the model chosen in the panel runs, and the answer says
-`model_ignored`. A conversation opened under another agent carries on
+`model_ignored`. With `claude_api.models` the code picks among those, call
+by call, and naming any other is a 400 (`models` in `GET /site` says
+which). A conversation opened under another agent carries on
 with the door's agent and model as they are now. The manifest decides on every request: a site whose door was closed
 is refused even with its token.
 

@@ -242,6 +242,8 @@ func TestTheGatewaysPermissionsAndAgentAreChecked(t *testing.T) {
 		`{"version":2,"claude_api":{"permissions":["read","root"]}}`:                                       false,
 		`{"version":2,"claude_api":{"provider":"Not An Agent"}}`:                                           false,
 		`{"version":2,"claude_api":{"daily_turns":-1}}`:                                                    false,
+		`{"version":2,"claude_api":{"models":["haiku","sonnet"],"model":"sonnet"}}`:                        true,
+		`{"version":2,"claude_api":{"models":["haiku"],"model":"opus"}}`:                                   false,
 	} {
 		var m Manifest
 		if err := json.Unmarshal([]byte(raw), &m); err != nil {

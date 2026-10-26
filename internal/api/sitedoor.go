@@ -92,7 +92,10 @@ type doorRules struct {
 	DailyTurns int    `json:"daily_turns"`
 	MaxChats   int    `json:"max_chats"`
 	Model      string `json:"model,omitempty"`
-	Hide       bool   `json:"hide_chats"`
+	// Models are the ones the site's code may pick from, call by call;
+	// empty is any of its agent's.
+	Models []string `json:"models,omitempty"`
+	Hide   bool     `json:"hide_chats"`
 }
 
 // rulesOf resolves a manifest's block. nil is what a door being opened
@@ -122,6 +125,7 @@ func rulesOf(c *manifest.ClaudeAPI, houseDaily float64) doorRules {
 		}
 		r.DailyTurns = c.DailyTurns
 		r.Model, r.Hide = c.Model, c.HideChats
+		r.Models = append([]string(nil), c.Models...)
 	}
 	if r.DailyTurns == 0 && r.Provider != "claude" {
 		r.DailyTurns = DefaultDailyTurns
@@ -156,6 +160,7 @@ func (s *Server) RegisterSiteDoor(o SiteDoorOptions) {
 			"available":  o.available(c.Rules.Provider),
 			"provider":   c.Rules.Provider,
 			"model":      o.model(c, ""),
+			"models":     o.choices(c),
 			"tools":      c.Rules.Tools,
 			"limits":     c.Rules,
 			"spent_usd":  round4(spent),
@@ -174,6 +179,9 @@ func (s *Server) RegisterSiteDoor(o SiteDoorOptions) {
 			return nil, Errorf(http.StatusBadRequest, "prompt: empty")
 		}
 		o.fitModel(c.Rules.Provider, &b)
+		if err := o.allowedModel(c, b.Model); err != nil {
+			return nil, err
+		}
 		name, err := o.open(c, b)
 		if err != nil {
 			return nil, err
@@ -198,6 +206,9 @@ func (s *Server) RegisterSiteDoor(o SiteDoorOptions) {
 			}
 		}
 		o.fitModel(c.Rules.Provider, &b)
+		if err := o.allowedModel(c, b.Model); err != nil {
+			return nil, err
+		}
 		name, err := o.open(c, b)
 		if err != nil {
 			return nil, err
@@ -253,6 +264,9 @@ func (s *Server) RegisterSiteDoor(o SiteDoorOptions) {
 			}
 		}
 		o.fitModel(c.Rules.Provider, &b)
+		if err := o.allowedModel(c, b.Model); err != nil {
+			return nil, err
+		}
 		return o.sendAndAnswer(w, r, c, name, b)
 	})
 	route("GET", p+"/claude/chats/{id}/stream", "The conversation as it happens, as server-sent events: a message per event, and the conversation's state after each turn", func(w http.ResponseWriter, r *http.Request, c doorCaller) (any, error) {
@@ -399,6 +413,11 @@ func (o SiteDoorOptions) model(c doorCaller, asked string) string {
 	if c.Rules.Model != "" {
 		return c.Rules.Model
 	}
+	// With a list and no default, the first of the list: the house's
+	// default may well be one the site was not given.
+	if len(c.Rules.Models) > 0 {
+		return c.Rules.Models[0]
+	}
 	if o.DefaultModel != nil {
 		return o.DefaultModel(c.Rules.Provider)
 	}
@@ -476,6 +495,41 @@ func (o SiteDoorOptions) fitModel(provider string, b *askBody) {
 			return
 		}
 	}
+}
+
+// choices are the models the site's code may name: the door's list, or
+// every model of its agent when the door has none.
+func (o SiteDoorOptions) choices(c doorCaller) []string {
+	if len(c.Rules.Models) > 0 {
+		return c.Rules.Models
+	}
+	if ms := o.models(c.Rules.Provider); ms != nil {
+		return ms
+	}
+	return []string{}
+}
+
+// allowedModel refuses a model the door was not given. The site's code
+// picks the model call by call (a cheap one to classify, a strong one to
+// write), but among the ones a person allowed: the bill is the house's,
+// and a prompt injected into the site must not be able to move every call
+// to the dearest model. An alias and the model it runs are the same
+// model ("opus" and "claude-opus-5-5").
+func (o SiteDoorOptions) allowedModel(c doorCaller, m string) error {
+	m = strings.TrimSpace(m)
+	if m == "" || len(c.Rules.Models) == 0 {
+		return nil
+	}
+	var labels map[string]string
+	if o.Chat != nil {
+		labels = o.Chat.ProviderLabels(c.Rules.Provider)
+	}
+	for _, k := range c.Rules.Models {
+		if strings.EqualFold(k, m) || (labels[k] != "" && strings.EqualFold(labels[k], m)) || (labels[m] != "" && strings.EqualFold(labels[m], k)) {
+			return nil
+		}
+	}
+	return Errorf(http.StatusBadRequest, "model %q is not one this site's gateway may use (claude_api.models: %s)", m, strings.Join(c.Rules.Models, ", "))
 }
 
 // knownModel refuses a model that is not on the agent's list: a typo

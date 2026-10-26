@@ -14,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -258,6 +259,10 @@ type ClaudeAPI struct {
 	MaxChats int `json:"max_chats,omitempty"`
 	// Model is the default model of the site's conversations.
 	Model string `json:"model,omitempty"`
+	// Models are the models the site's code may choose among, call by
+	// call (a cheap one to classify, a strong one to write); empty is any
+	// of its agent's. Model, when set, is one of them.
+	Models []string `json:"models,omitempty"`
 	// HideChats keeps the site's conversations out of the panel's list;
 	// they are still kept, costed and readable.
 	HideChats bool `json:"hide_chats,omitempty"`
@@ -575,6 +580,14 @@ func (m *Manifest) Validate() error {
 		}
 		if c.Provider != "" && !agentName.MatchString(c.Provider) {
 			return fmt.Errorf("claude_api.provider: %q is not an agent's name", c.Provider)
+		}
+		for _, m := range c.Models {
+			if strings.TrimSpace(m) == "" {
+				return errors.New("claude_api.models: an empty name")
+			}
+		}
+		if c.Model != "" && len(c.Models) > 0 && !slices.Contains(c.Models, c.Model) {
+			return fmt.Errorf("claude_api.model: %q is not one of claude_api.models (%s)", c.Model, strings.Join(c.Models, ", "))
 		}
 	}
 	for i, rd := range m.Redirects {
