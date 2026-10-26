@@ -157,7 +157,7 @@ func (a *Auditor) run(ctx context.Context, npm string, s Site, r *Report) error 
 	cmd := exec.CommandContext(ctx, npm, "audit", "--json", "--package-lock-only")
 	cmd.Dir = s.Dir
 	cache := filepath.Join(a.opts.DataDir, "audit", ".npm")
-	cmd.Env = append(os.Environ(), "npm_config_cache="+cache, "npm_config_update_notifier=false", "npm_config_fund=false")
+	cmd.Env = append(npmEnv(), "npm_config_cache="+cache, "npm_config_update_notifier=false", "npm_config_fund=false")
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	cmd.WaitDelay = 5 * time.Second
@@ -174,6 +174,25 @@ func (a *Auditor) run(ctx context.Context, npm string, s Site, r *Report) error 
 		return errors.New("npm audit printed nothing")
 	}
 	return parse(out.Bytes(), r)
+}
+
+// npmEnv is what npm gets from the supervisor's environment: a short
+// allow-list, never the whole of it. npm runs in the site's folder and
+// reads the site's own .npmrc, which expands ${VAR} from the environment
+// into any setting, the registry's address included; with os.Environ()
+// a site (a docker one, or a conversation allowed to edit its folder)
+// could have the daily audit send the supervisor's MIDDLEWARE_SECRET_KEY,
+// the key to every module's credentials, to an address of its choosing.
+// A site's process never gets these (runtime.buildEnv); the audit run on
+// its folder must not either.
+func npmEnv() []string {
+	var env []string
+	for _, k := range []string{"PATH", "HOME", "LANG", "LC_ALL", "TZ", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS"} {
+		if v, ok := os.LookupEnv(k); ok {
+			env = append(env, k+"="+v)
+		}
+	}
+	return env
 }
 
 // parse reads npm audit's JSON (npm 7 and later).

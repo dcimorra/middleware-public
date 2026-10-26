@@ -102,3 +102,29 @@ func TestTheRealNPM(t *testing.T) {
 		t.Fatal(r.Error)
 	}
 }
+
+// npm runs in the site's folder and expands ${VAR} from its environment
+// into the site's .npmrc, so whatever the supervisor's environment holds
+// must not reach it.
+func TestNPMDoesNotGetTheSupervisorsSecrets(t *testing.T) {
+	t.Setenv("MIDDLEWARE_SECRET_KEY", "the-house-key")
+	dir := t.TempDir()
+	seen := filepath.Join(dir, "env")
+	npm := filepath.Join(dir, "npm")
+	os.WriteFile(npm, []byte("#!/bin/sh\nenv > "+seen+"\necho '{}'\n"), 0o755)
+	site := t.TempDir()
+	os.WriteFile(filepath.Join(site, "package.json"), []byte(`{}`), 0o644)
+	os.WriteFile(filepath.Join(site, "package-lock.json"), []byte(`{}`), 0o644)
+	a := New(Options{DataDir: t.TempDir(), NPM: func() string { return npm }})
+	a.Check(context.Background(), Site{Domain: "a.example", Dir: site})
+	env, err := os.ReadFile(seen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(env), "the-house-key") {
+		t.Fatalf("npm was given the supervisor's secret:\n%s", env)
+	}
+	if !strings.Contains(string(env), "PATH=") {
+		t.Fatalf("npm lost its PATH:\n%s", env)
+	}
+}
