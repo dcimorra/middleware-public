@@ -111,7 +111,7 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		return resp.StatusCode, string(body)
 	}
-	sections := []string{"/sites", "/events", "/system", "/modules", "/inbound", "/inbound/certificates", "/waf", "/waf/traffic", "/security/catalog", "/repos", "/push", "/agents", "/agents/capacity", "/chat/middleware", "/tasks", "/guard", "/openapi.json"}
+	sections := []string{"/sites", "/events", "/system", "/modules", "/inbound", "/inbound/certificates", "/waf", "/waf/traffic", "/security/catalog", "/repos", "/push", "/agents", "/agents/capacity", "/chat/middleware", "/tasks", "/guard", "/system/doctor", "/openapi.json"}
 	for _, path := range sections {
 		code, body := get(path)
 		if code != 200 {

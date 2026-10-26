@@ -5,6 +5,7 @@
 import { icon } from "../lib/icons.js";
 import { vitalsCard } from "./system-vitals.js";
 import { requirementsCard } from "./system-requirements.js";
+import { doctorCard } from "./system-doctor.js";
 import { leftoversCard } from "./system-leftovers.js";
 import { h, clear, append, fmtBytes, fmtDuration } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
@@ -24,8 +25,9 @@ export function systemScreen() {
   const updateCard = h("div", { class: "card" });
   const vitals = vitalsCard();
   const reqs = requirementsCard();
+  const doctor = doctorCard();
   const leftovers = leftoversCard();
-  p.body.append(stats, vitals.el, info, updateCard, reqs.el, leftovers.el, procs, portsCard);
+  p.body.append(stats, vitals.el, info, updateCard, doctor.el, reqs.el, leftovers.el, procs, portsCard);
   const subs = [];
   let timer = null;
 

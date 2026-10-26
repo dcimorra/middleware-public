@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
+	"github.com/dcimorra/middleware-public/internal/installer"
 	"github.com/dcimorra/middleware-public/internal/nodeenv"
 	"github.com/dcimorra/middleware-public/internal/runtime"
+	"io"
 	"net"
 	"net/http"
 	"net/netip"
@@ -288,6 +291,15 @@ func buildWire(a *app.App) app.Hook {
 	}
 	srv.RegisterContainerize(api.ContainOptions{Chat: chatManager})
 	srv.RegisterRepair(api.RepairOptions{Chat: chatManager})
+	srv.RegisterDoctor(func() ([]installer.Check, bool) {
+		p, err := installParams(flag.NewFlagSet("doctor", flag.ContinueOnError), []string{"--root", a.Root})
+		if err != nil {
+			return []installer.Check{{Name: "parameters", Detail: err.Error()}}, false
+		}
+		in := installer.New(p)
+		in.Out = io.Discard
+		return in.Doctor()
+	})
 	srv.RegisterRequirements(helper.InstallLog(helper.DefaultRunDir), func(ctx context.Context, browser bool) error {
 		_, err := helper.Dial("").InstallRun(ctx, browser)
 		return err
