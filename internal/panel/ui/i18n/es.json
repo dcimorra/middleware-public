@@ -751,6 +751,8 @@
   "site.moveStep.install": "Instalando sus dependencias en {node}, para esa máquina, mientras sirve aquí",
   "site.moveStep.stop": "Parando para la copia final",
   "site.moveStep.final": "Enviando lo que cambió",
+  "site.moveStep.export": "Exportando aquí los datos de sus workers, parado",
+  "site.moveStep.import": "Importando los datos de sus workers en {node}",
   "site.moveStep.commit": "Colocándolo en {node}",
   "site.moveStep.start": "Esperando a que responda en {node}",
   "site.moveStep.dns": "Apuntando sus nombres a {node}",

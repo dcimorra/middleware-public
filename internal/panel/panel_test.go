@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/dcimorra/middleware-public/internal/relocate"
 )
 
 func get(t *testing.T, h http.Handler, p string) *httptest.ResponseRecorder {
@@ -295,6 +297,25 @@ func TestEveryCatalogSaysTheSameThings(t *testing.T) {
 		code := strings.TrimSuffix(e.Name(), ".json")
 		if !strings.Contains(string(i18n), `"`+code+`"`) {
 			t.Errorf("lib/i18n.js does not offer %s", code)
+		}
+	}
+}
+
+// A move's timeline names each step with site.moveStep.<step>, and a step
+// without its line showed as that key: the workers' export and import did,
+// from the day they were added to the mover.
+func TestEveryMoveStepHasItsLine(t *testing.T) {
+	data, err := fs.ReadFile(FS, "i18n/en.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var en map[string]string
+	if err := json.Unmarshal(data, &en); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []string{relocate.StepCheck, relocate.StepCopy, relocate.StepInstall, relocate.StepStop, relocate.StepFinal, relocate.StepExport, relocate.StepImport, relocate.StepCommit, relocate.StepStart, relocate.StepRepair, relocate.StepDNS, relocate.StepCleanup, relocate.StepRestore, relocate.StepDone} {
+		if en["site.moveStep."+step] == "" {
+			t.Errorf("site.moveStep.%s is missing", step)
 		}
 	}
 }
