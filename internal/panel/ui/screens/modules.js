@@ -21,7 +21,15 @@ import { confirm, field } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 
 export function modulesScreen() {
-  const p = page({ title: t("nav.modules"), sub: t("modules.sub"), icon: "blocks" });
+  // The programs the modules run are checked against their registries
+  // once a day; this asks now, for whoever just read of a release.
+  const checkBtn = h("button", { type: "button", class: "btn" }, icon("refresh"), t("modules.depsCheck"));
+  const p = page({ title: t("nav.modules"), sub: t("modules.sub"), icon: "blocks", actions: checkBtn });
+  checkBtn.addEventListener("click", async () => {
+    checkBtn.classList.add("busy");
+    try { await api.post("/deps/check"); toast(t("modules.depsChecked"), "ok"); load(body, render); }
+    catch (e) { toastError(e); } finally { checkBtn.classList.remove("busy"); }
+  });
   const body = h("div", { class: "module-groups" });
   p.body.append(body);
   const subs = [];

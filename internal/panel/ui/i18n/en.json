@@ -354,6 +354,8 @@
   "modules.signedIn": "{name} signed in and enabled",
   "modules.binaryInstall": "Install",
   "modules.binaryUpdate": "Update now",
+  "modules.depsCheck": "Check for new versions",
+  "modules.depsChecked": "Versions checked against their registries",
   "modules.binaryDone": "{name} is current",
   "modules.binaryMissing": "{name} is not installed yet; enabling or signing in installs it.",
   "modules.binaryOutdated": "{v} available",

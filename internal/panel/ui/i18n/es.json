@@ -354,6 +354,8 @@
   "modules.signedIn": "{name} con sesión iniciada y activado",
   "modules.binaryInstall": "Instalar",
   "modules.binaryUpdate": "Actualizar ahora",
+  "modules.depsCheck": "Buscar versiones nuevas",
+  "modules.depsChecked": "Versiones comprobadas con sus registros",
   "modules.binaryDone": "{name} está al día",
   "modules.binaryMissing": "{name} aún no está instalado; activarlo o iniciar sesión lo instala.",
   "modules.binaryOutdated": "{v} disponible",
