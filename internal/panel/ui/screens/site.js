@@ -5,6 +5,7 @@
 import { h, clear, append, shortRev, fmtTime, fmtBytes } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, apiURL, enc } from "../lib/api.js";
+import { currentNode } from "../lib/node.js";
 import { onEvent } from "../lib/stream.js";
 import { store } from "../lib/store.js";
 import { navigate } from "../lib/router.js";
@@ -112,7 +113,12 @@ function overviewTab(domain) {
   (async () => {
     try {
       const info = await api.get("/nodes");
-      otherNodes = (info.members || []).filter((x) => x.id !== info.self.id && x.online && !x.removed);
+      // /nodes is always this panel's own, so "self" is the panel's node,
+      // not the site's: with another node chosen, the site lives there, and
+      // the list offered that node and left this one out.
+      const here = currentNode() || info.self.id;
+      // The panel's node is never "online": it is not its own peer.
+      otherNodes = (info.members || []).filter((x) => x.id !== here && (x.online || x.id === info.self.id) && !x.removed);
       if (otherNodes.length) render();
     } catch { /* no network: nothing to move to */ }
   })();
