@@ -87,3 +87,39 @@ func (k *Keys) Domain(token string) string {
 	}
 	return domain
 }
+
+// gitPurpose separates the push token from the door's: both are signed
+// with the same key, and a site's running process (which answers the
+// internet and carries the door token) must not be able to push with it.
+const gitPurpose = "git\x00"
+
+// GitToken is the token a conversation of domain pushes with, through the
+// house's git proxy. It has the door token's shape and is never accepted
+// by the door, nor the door's by the proxy.
+func (k *Keys) GitToken(domain string) (string, error) {
+	key, err := k.load()
+	if err != nil {
+		return "", err
+	}
+	return domain + "." + sign(key, gitPurpose+domain), nil
+}
+
+// GitDomain returns the domain a push token names, or "".
+func (k *Keys) GitDomain(token string) string {
+	i := strings.LastIndexByte(token, '.')
+	if i <= 0 {
+		return ""
+	}
+	domain, mac := token[:i], token[i+1:]
+	if !manifest.ValidName(domain) {
+		return ""
+	}
+	key, err := k.load()
+	if err != nil {
+		return ""
+	}
+	if !hmac.Equal([]byte(sign(key, gitPurpose+domain)), []byte(mac)) {
+		return ""
+	}
+	return domain
+}

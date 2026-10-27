@@ -507,3 +507,33 @@ func TestWaitingListsTheConversationsAtWork(t *testing.T) {
 		t.Fatalf("after the turn: %+v", w)
 	}
 }
+
+func TestASitesConversationGetsItsPushSettingsAndTheHousesDoesNot(t *testing.T) {
+	p := &fakeProvider{key: "fake", script: []agent.Event{{Kind: agent.KindResult, Text: "ok", SessionID: "s1"}}}
+	m, _, bus := newManager(t, p)
+	asked := []string{}
+	m.SetTurnEnv(func(domain string) map[string]string {
+		asked = append(asked, domain)
+		return map[string]string{"GIT_CONFIG_COUNT": "1", "PATH": "/nowhere"}
+	})
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+	if _, err := m.Send("a.test", "push it", ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ch, "agent.done")
+	req := p.last()
+	if req.Env["GIT_CONFIG_COUNT"] != "1" {
+		t.Fatalf("the site's turn has no push settings: %v", req.Env)
+	}
+	if req.Env["PATH"] == "/nowhere" {
+		t.Fatal("the turn's own variables were overwritten")
+	}
+	if _, err := m.Send(Middleware, "hello", ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ch, "agent.done")
+	if _, ok := p.last().Env["GIT_CONFIG_COUNT"]; ok || len(asked) != 1 {
+		t.Fatalf("the house's conversation got a site's push settings (asked for %v)", asked)
+	}
+}

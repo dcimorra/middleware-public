@@ -904,6 +904,7 @@ func wireSiteDoor(a *app.App, srv *api.Server, set *moduleSet) {
 		HouseDaily: func() float64 { return a.Settings.Agents.SiteDaily() },
 		Spent:      chatManager.Ledger().Day,
 	})
+	wireGitProxy(a, srv, set, tokens, "http://"+listen)
 	ln, err := api.ListenSocket(sock)
 	if err != nil {
 		a.Bus.Emit(events.Event{Type: "sitedoor.socket_failed", Actor: "api", Level: "error", Message: err.Error()})
@@ -919,6 +920,42 @@ func wireSiteDoor(a *app.App, srv *api.Server, set *moduleSet) {
 		h.ServeHTTP(w, r)
 	})
 	go func() { _ = (&http.Server{Handler: door, ReadHeaderTimeout: 15 * time.Second}).Serve(ln) }()
+}
+
+// wireGitProxy lets a site's conversation push to the repository its
+// manifest deploys from, with the GitHub module's token, which the turn
+// never sees: the turn gets a push token and the git settings that send
+// that repository through the house (api.GitProxyOptions says why it is
+// not a credential helper). The repository is the one in the manifest the
+// engine accepted, read per request, so changing deploy.github moves it.
+func wireGitProxy(a *app.App, srv *api.Server, set *moduleSet, tokens *sitetoken.Keys, listen string) {
+	if set == nil || set.GitHub == nil {
+		return
+	}
+	repository := func(domain string) string {
+		sn, ok := a.Engine.Lookup(domain)
+		if !ok || sn.Domain != domain || sn.Manifest == nil || sn.Manifest.Deploy == nil || sn.Manifest.Deploy.GitHub == nil {
+			return ""
+		}
+		return sn.Manifest.Deploy.GitHub.Repository
+	}
+	srv.RegisterGitProxy(api.GitProxyOptions{
+		Tokens:     tokens,
+		Repository: repository,
+		Token:      set.GitHub.PushToken,
+		Bus:        a.Bus,
+	})
+	chatManager.SetTurnEnv(func(domain string) map[string]string {
+		repo := repository(domain)
+		if repo == "" || set.GitHub.PushToken() == "" {
+			return nil
+		}
+		tok, err := tokens.GitToken(domain)
+		if err != nil {
+			return nil
+		}
+		return api.GitEnv(listen, repo, tok)
+	})
 }
 
 func fileExists(p string) bool {

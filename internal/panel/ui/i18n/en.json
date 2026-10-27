@@ -1034,7 +1034,7 @@
   "modules.need.github.webhook_secret": "Webhook secret",
   "modules.needHelp.github.webhook_secret": "Generated when empty. Paste it in the repository's webhook settings, content type application/json, push events only.",
   "modules.need.github.token": "Access token",
-  "modules.needHelp.github.token": "Only for private repositories: a fine-grained token with Contents:Read on them. Never written to disk in clear.",
+  "modules.needHelp.github.token": "For private repositories, a fine-grained token with Contents: Read on them; with Read and write, a site's conversation can also git push to the repository its manifest deploys from. Never written to disk in clear, and never shown to the conversation.",
   "modules.need.vpn.endpoint": "Public endpoint clients connect to (host:port)",
   "modules.needHelp.vpn.endpoint": "Empty: this machine's public address, found by itself, with the port below.",
   "modules.need.vpn.listen_port": "UDP port WireGuard listens on",

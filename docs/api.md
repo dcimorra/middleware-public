@@ -661,6 +661,18 @@ site written for V1 moves without a line changed.
 | POST | `/site/claude/chats/{id}/reap` | stop it and kill what it left running → `{ok, killed}` |
 | DELETE | `/site/claude/chats/{id}` | delete it → `{ok}` |
 
+A site's own conversations push through the house (see the github module in
+[modules.md](modules.md)). git calls these, not a person: `Authorization:
+Bearer <push token>` (the turn's, never the door's), the repository must be
+the manifest's `deploy.github.repository`, and the GitHub module's token is
+added on the way out. Refused: 403 and a `git.refused` event.
+
+| method | path | result |
+| --- | --- | --- |
+| GET | `/site/git/{owner}/{repo}/info/refs` | `?service=git-upload-pack\|git-receive-pack` → GitHub's ref advertisement |
+| POST | `/site/git/{owner}/{repo}/git-upload-pack` | a fetch, passed through |
+| POST | `/site/git/{owner}/{repo}/git-receive-pack` | a push, passed through unless it deletes a ref; a `git.pushed` event with the refs |
+
 The panel's side:
 
 | method | path | result |

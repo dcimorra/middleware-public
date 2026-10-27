@@ -202,6 +202,10 @@ type Options struct {
 	// Usage keeps what a turn's stream says of the subscription's limits;
 	// defaults to one under Root/data.
 	Usage *agent.UsageBook
+	// TurnEnv, when set, adds variables to the turns of a site's own
+	// conversations (the panel's, not the ones its code opens through the
+	// door): what lets `git push` reach the site's repository.
+	TurnEnv func(domain string) map[string]string
 }
 
 // Usage is the book of subscription limits the turns fill.
@@ -828,6 +832,18 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 		}
 	}
 	req.System = system
+	m.mu.Lock()
+	turnEnv := m.opts.TurnEnv
+	m.mu.Unlock()
+	// The house's own conversation pushes with whatever the machine has;
+	// a site's code, which answers the internet, gets nothing here.
+	if turnEnv != nil && domain != Middleware && c.Origin != OriginSite {
+		for k, v := range turnEnv(domain) {
+			if _, set := req.Env[k]; !set {
+				req.Env[k] = v
+			}
+		}
+	}
 	if lend != "" {
 		req.Jail.Lend(lend)
 	}
@@ -1172,6 +1188,14 @@ func (m *Manager) SetPath(f func() string) {
 	m.mu.Unlock()
 }
 
+// SetTurnEnv sets Options.TurnEnv after the manager exists: the wiring
+// has the site tokens and the modules only later.
+func (m *Manager) SetTurnEnv(f func(domain string) map[string]string) {
+	m.mu.Lock()
+	m.opts.TurnEnv = f
+	m.mu.Unlock()
+}
+
 // agentPath is the PATH the agent runs with: the supervisor's, plus the
 // folder this binary lives in when it is not there yet, so `middleware
 // site add` works from a conversation whether the binary was installed
@@ -1228,6 +1252,7 @@ func Preamble(domain, workdir string, j agent.Jail) string {
 		// rule, refused to (Claude Code never asked, it loads it itself).
 		b.WriteString("You must not read, write or run anything outside it: other sites, the middleware's data, its tasks or its root are off limits, and every tool call is audited for that. ")
 		b.WriteString("The one exception is the house's guide, ~/.claude/skills/middleware/SKILL.md, which you may always read.\n")
+		b.WriteString("When the manifest names deploy.github.repository and the GitHub module has a token, `git push` to that repository works as it is: the house lends the credential through its own address, without showing it, and refuses any other repository and any deletion. Do not ask for a token or write one to a file.\n")
 	}
 	b.WriteString("Do not start long-running processes: the middleware supervises the site's process from its manifest, and a change to the manifest or to a pointer file is how a deployment happens.\n")
 	b.WriteString("When this turn ends, its whole process group is killed. Anything that takes longer than a turn (a build, an install, a deployment) must be started detached, exactly like this: `setsid nohup <cmd> >/tmp/<name>.log 2>&1 </dev/null &`, and your reply must state the log's path so the next message can check how it went.\n")

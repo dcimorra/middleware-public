@@ -33,3 +33,21 @@ func TestATokenNamesItsSiteAndNothingElseOpens(t *testing.T) {
 		t.Fatal("deleting the key did not rotate the tokens")
 	}
 }
+
+func TestThePushTokenAndTheDoorTokenDoNotOpenEachOther(t *testing.T) {
+	k := New(t.TempDir())
+	door, _ := k.Token("a.example")
+	git, err := k.GitToken("a.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k.GitDomain(git) != "a.example" {
+		t.Fatal("the push token does not name its site")
+	}
+	if k.GitDomain(door) != "" {
+		t.Fatal("the door token pushes: the site's running process could push")
+	}
+	if k.Domain(git) != "" {
+		t.Fatal("the push token opens the door")
+	}
+}

@@ -96,7 +96,7 @@ func (m *Module) Description() string {
 func (m *Module) Needs() []modules.Need {
 	return []modules.Need{
 		{Key: "webhook_secret", Label: "Webhook secret", Secret: true, Optional: true, Help: "Generated when empty. Paste it in the repository's webhook settings, content type application/json, push events only."},
-		{Key: "token", Label: "Access token", Secret: true, Optional: true, Help: "Only for private repositories: a fine-grained token with Contents:Read on them. Never written to disk in clear."},
+		{Key: "token", Label: "Access token", Secret: true, Optional: true, Help: "For private repositories, a fine-grained token with Contents: Read on them; with Read and write, a site's conversation can also git push to the repository its manifest deploys from. Never written to disk in clear, and never shown to the conversation."},
 	}
 }
 
@@ -108,6 +108,15 @@ func (m *Module) token(string) string {
 		return ""
 	}
 	return cfg["token"]
+}
+
+// PushToken is what the house's git proxy pushes a conversation's work
+// with: the module's token, while the module is enabled.
+func (m *Module) PushToken() string {
+	if !m.mgr.Enabled(Key) {
+		return ""
+	}
+	return m.token("")
 }
 
 // Verify checks what can be checked from here: the token, when given,
