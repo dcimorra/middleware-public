@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/middleware-public/internal/fsx"
 	"github.com/dcimorra/middleware-public/internal/ports"
 	"github.com/dcimorra/middleware-public/internal/runtime"
 )
@@ -56,6 +57,23 @@ func TestADockerWorkerRunsIsAdoptedAndIsNotReaped(t *testing.T) {
 			t.Fatalf("the worker never answered: %+v\n%s", sn.Workers["db"], logs)
 		}
 		time.Sleep(time.Second)
+	}
+	// Its output is in the worker's log, where the panel reads it.
+	deadline = time.Now().Add(10 * time.Second)
+	for {
+		logs, _ := os.ReadFile(filepath.Join(data, "logs", "pg.test", "worker-db.log"))
+		if strings.Contains(string(logs), "ready to accept connections") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the worker's log does not have its output: %q", logs)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	// And its state names the container's id, which the guard measures by.
+	var st runtime.State
+	if err := fsx.ReadJSON(filepath.Join(data, "state", "pg.test@db.json"), &st); err != nil || len(st.ContainerID) < 12 {
+		t.Fatalf("the worker's state has no container id: %+v %v", st, err)
 	}
 	cancel()
 	time.Sleep(300 * time.Millisecond)

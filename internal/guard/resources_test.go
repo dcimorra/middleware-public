@@ -1,8 +1,12 @@
 package guard
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/middleware-public/internal/runtime"
 )
 
 func TestASiteBusyForMinutesIsAnEpisodeWithAStartAndAnEnd(t *testing.T) {
@@ -56,5 +60,50 @@ func TestASiteBusyForMinutesIsAnEpisodeWithAStartAndAnEnd(t *testing.T) {
 	g2, _ := newGuard(t, fp, h, kills, now)
 	if len(g2.Resources("a.example").Episodes) != 1 {
 		t.Fatal("the history was not kept on disk")
+	}
+}
+
+// A worker in a container is measured, and apart: its processes are found
+// by the container's id in their cgroup, since where a database works is
+// its data, not the site's folder, and a rootful daemon's processes do not
+// even let their working directory be read. The site's history is the site
+// and its workers together, with each worker's last sample beside it.
+func TestAContainerWorkerIsMeasuredByItsCgroupAndApart(t *testing.T) {
+	fp := newFakeProc(t)
+	h := newHouse(t)
+	a := h.site("a.example", 100, 33001)
+	const id = "4f1c0e9a7b2d"
+	if err := fsx.WriteJSON(filepath.Join(h.root, "data", "state", "a.example@db.json"),
+		runtime.State{Domain: "a.example/db", Runtime: "docker", Port: 5432, Container: "mw-a-example-db-5432", ContainerID: id}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	web := procSpec{pid: 100, ppid: 1, comm: "server", cmdline: []string{"./server"}, cwd: a.Dir, startSec: 10, listen: []int{33001}}
+	db := procSpec{pid: 200, ppid: 1, comm: "postgres", cmdline: []string{"postgres"}, startSec: 10,
+		cgroup: "0::/system.slice/docker-" + id + "aaaa.scope\n"}
+	other := procSpec{pid: 300, ppid: 1, comm: "postgres", cmdline: []string{"postgres"}, startSec: 10,
+		cgroup: "0::/system.slice/docker-ffffffffffff.scope\n"}
+	fp.add(web)
+	fp.add(db)
+	fp.add(other)
+	now := time.Unix(fp.bootUnix+600, 0)
+	g, _ := newGuard(t, fp, h, &killLog{}, now)
+	g.now = func() time.Time { return now }
+	g.Sweep()
+	fp.setUsage(web, 60*10, 1000) // 10% of a core over the minute
+	fp.setUsage(db, 60*30, 3000)  // 30%
+	fp.setUsage(other, 60*90, 9000)
+	now = now.Add(time.Minute)
+	g.Sweep()
+
+	w := g.Resources("a.example/db")
+	if len(w.Samples) != 1 || w.Samples[0].CPU != 30 {
+		t.Fatalf("the worker: %+v", w.Samples)
+	}
+	all := g.Resources("a.example")
+	if len(all.Samples) != 1 || all.Samples[0].CPU != 40 {
+		t.Fatalf("the site and its worker together: %+v (another container's process counted, or the worker not)", all.Samples)
+	}
+	if all.Workers["db"].CPU != 30 {
+		t.Fatalf("the worker's last sample beside the site's: %+v", all.Workers)
 	}
 }

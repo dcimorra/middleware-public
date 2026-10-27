@@ -26,6 +26,10 @@ type Process struct {
 	// resident memory in bytes. Summed per site for its resource history.
 	CPUTicks int64
 	RSS      int64
+	// Cgroup is /proc/<pid>/cgroup as written: a container's processes
+	// have its id in it. Unlike cwd it is readable for every process, a
+	// rootful daemon's included.
+	Cgroup string
 	// Listening holds the TCP ports this process has open in LISTEN state.
 	// It is filled only for processes the guard attributes to a site,
 	// because mapping sockets to pids means reading every fd they own.
@@ -116,6 +120,9 @@ func (r Reader) read(pid int, boot time.Time) (Process, bool) {
 		for _, a := range bytes.Split(bytes.TrimRight(raw, "\x00"), []byte{0}) {
 			p.Cmdline = append(p.Cmdline, string(a))
 		}
+	}
+	if raw, err := os.ReadFile(filepath.Join(dir, "cgroup")); err == nil {
+		p.Cgroup = string(raw)
 	}
 	p.Cwd, _ = os.Readlink(filepath.Join(dir, "cwd"))
 	p.Exe, _ = os.Readlink(filepath.Join(dir, "exe"))

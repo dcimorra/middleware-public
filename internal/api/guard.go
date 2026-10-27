@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/dcimorra/middleware-public/internal/guard"
 )
@@ -37,13 +38,19 @@ func (s *Server) RegisterGuard(o GuardOptions) {
 		}
 		return map[string]any{"rules": rules, "incidents": incidents}, nil
 	})
-	s.Handle("GET", Prefix+"/sites/{domain}/resources", "A site's CPU and memory, a sample a minute for a day, and its episodes", func(w http.ResponseWriter, r *http.Request) (any, error) {
+	s.Handle("GET", Prefix+"/sites/{domain}/resources", "A site's CPU and memory, its workers' included, a sample a minute for a day, its episodes and each worker's last sample; ?worker=name is that worker's alone", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		if o.Guard == nil {
 			return nil, Errorf(http.StatusServiceUnavailable, "the guard is not running")
 		}
 		domain, err := domainOf(r)
 		if err != nil {
 			return nil, err
+		}
+		if wk := r.URL.Query().Get("worker"); wk != "" {
+			if strings.ContainsAny(wk, "/\\.") {
+				return nil, Errorf(http.StatusBadRequest, "worker: %q is not a name", wk)
+			}
+			return o.Guard.Resources(domain + "/" + wk), nil
 		}
 		return o.Guard.Resources(domain), nil
 	})

@@ -45,6 +45,7 @@ type procSpec struct {
 	cwd, exe        string
 	startSec        int64 // seconds after boot
 	listen          []int
+	cgroup          string
 }
 
 func (fp *fakeProc) add(s procSpec) {
@@ -66,6 +67,11 @@ func (fp *fakeProc) add(s procSpec) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "status"), []byte("Name:\t"+s.comm+"\nUid:\t1000\t1000\t1000\t1000\n"), 0o644); err != nil {
 		fp.t.Fatal(err)
+	}
+	if s.cgroup != "" {
+		if err := os.WriteFile(filepath.Join(dir, "cgroup"), []byte(s.cgroup), 0o644); err != nil {
+			fp.t.Fatal(err)
+		}
 	}
 	if s.cwd != "" {
 		if err := os.Symlink(s.cwd, filepath.Join(dir, "cwd")); err != nil {

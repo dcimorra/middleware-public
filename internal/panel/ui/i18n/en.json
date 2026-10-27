@@ -1581,7 +1581,7 @@
   "autofix.recent": "Recent repairs",
   "autofix.none": "No repairs yet.",
   "activity.resources": "CPU and memory",
-  "activity.resourcesHint": "Every process of this site added up, a sample a minute for the last day. Five minutes over 90% of a core or 2 GB is an episode.",
+  "activity.resourcesHint": "Every process of this site added up, its workers' included (containers too), a sample a minute for the last day; pick a worker to see it alone. Five minutes over 90% of a core or 2 GB is an episode.",
   "activity.cpu": "CPU (% of one core)",
   "activity.memory": "Memory (MB)",
   "activity.resourcesNow": "Last minute: {cpu}% of a core, {mem}.",
@@ -1685,5 +1685,14 @@
   "cache.edgeNeedsModule": "Needs the Cloudflare module, with a token that may read and write cache rules.",
   "cache.scope.site": "this site",
   "cache.scope.zone": "whole zone",
-  "cache.scope.other": "another domain"
+  "cache.scope.other": "another domain",
+  "site.usage": "Usage",
+  "site.usageNow": "{cpu}% of a core, {mem}",
+  "site.usageNone": "no sample yet",
+  "site.workerLogs": "Logs",
+  "site.workerUsage": "Usage",
+  "activity.which": "What to measure",
+  "activity.all": "The site and its workers",
+  "activity.worker": "Worker {name}",
+  "activity.workerNow": "Of which worker {name}: {cpu}% of a core, {mem}."
 }

@@ -232,7 +232,7 @@ func (g *Guard) Sweep() ([]Incident, error) {
 		root := g.rootPID(site.Domain)
 		tree := g.attribute(site, root, procs, byPID, claimed)
 		recorded = append(recorded, g.judgeLogs(site, tree, byPID)...)
-		g.measure(site.Domain, tree)
+		g.measureUnits(site.Domain, tree, procs, byPID)
 		if len(tree) == 0 {
 			continue
 		}

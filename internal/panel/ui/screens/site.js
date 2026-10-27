@@ -31,8 +31,11 @@ import { specsTab } from "./site-specs.js";
 const TABS = ["overview", "activity", "manifest", "logs", "files", "chat", "specs", "access", "security", "cache", "moves"];
 const TAB_ICON = { overview: "gauge", activity: "activity", manifest: "code", logs: "list", files: "folder", chat: "chat", specs: "file", access: "lock", security: "shield", cache: "box", moves: "upload" };
 
-export function siteScreen({ domain, tab }) {
+export function siteScreen({ domain, tab, query }) {
   const active = TABS.includes(tab) ? tab : "overview";
+  // ?worker=name opens the logs or the activity on that worker (the
+  // workers card links there).
+  const pickWorker = (query && query.get("worker")) || "";
   const base = `#/sites/${enc(domain)}`;
   const statusLine = h("div", { class: "actions" });
   const p = page({
@@ -61,13 +64,13 @@ export function siteScreen({ domain, tab }) {
     if (!s) return;
     switch (active) {
       case "manifest": view = manifestTab(domain); break;
-      case "logs": view = logsTab(domain); break;
+      case "logs": view = logsTab(domain, pickWorker); break;
       case "files": view = filesTab(domain); break;
       case "chat": view = chatTab(domain); break;
       case "specs": view = specsTab(domain); break;
       case "access": view = accessTab(domain); break;
       case "security": view = securityTab(domain); break;
-      case "activity": view = activityTab(domain); break;
+      case "activity": view = activityTab(domain, pickWorker); break;
       case "cache": view = cacheTab(domain); break;
       // Its own tab, the last: a move's operations are read when one is
       // under way or went wrong, not every time the site is opened.
@@ -431,6 +434,7 @@ function overviewTab(domain) {
     const m = s.manifest || {};
     const names = Object.keys(m.workers || {});
     if (names.length === 0) return null;
+    const usage = {};
     const rows = names.map((name) => {
       const w = (s.workers && s.workers[name]) || {};
       const def = m.workers[name] || {};
@@ -439,19 +443,30 @@ function overviewTab(domain) {
         cell(w.alive ? h("span", { class: "status" }, h("span", { class: "dot ok" }), t("status.up")) : h("span", { class: "status", title: w.error || "" }, h("span", { class: "dot bad" }), t("status.down")), t("site.status")),
         cell(def.port || w.port ? String(def.port || w.port) : "", t("site.port"), "num mono"),
         cell(def.command ? h("code", null, def.command.join(" ")) : "", t("site.command"), "mono"),
+        cell(usage[name] = h("span", { class: "small muted" }, "…"), t("site.usage"), "nowrap"),
         cell(w.error ? h("span", { class: "level-error small" }, w.error) : "", t("site.error")),
         cell(workerActions(name, def, w), null, "right nowrap"),
       );
     });
+    // What each takes now, from the site's last sample (one request for
+    // all of them, after the card is drawn).
+    api.get(`/sites/${enc(domain)}/resources`).then((r) => {
+      for (const name of names) {
+        const x = (r.workers || {})[name];
+        clear(usage[name]).append(x ? t("site.usageNow", { cpu: x.cpu, mem: fmtBytes(x.rss) }) : t("site.usageNone"));
+      }
+    }).catch(() => { for (const name of names) clear(usage[name]); });
     return h("div", { class: "card pad0" }, h("div", { class: "log-bar card-pad" }, h("h2", null, t("site.workers"))), table([
-      { label: t("site.worker") }, { label: t("site.status") }, { label: t("site.port"), class: "num" }, { label: t("site.command") }, { label: t("site.error") }, { label: "" },
+      { label: t("site.worker") }, { label: t("site.status") }, { label: t("site.port"), class: "num" }, { label: t("site.command") }, { label: t("site.usage") }, { label: t("site.error") }, { label: "" },
     ], rows, { responsive: true }).el);
   }
 
   // Restart is for now; stop and start are written to the manifest
   // (workers.<name>.disabled), so they survive a restart of the house.
   function workerActions(name, def, w) {
-    const box = h("div", { class: "actions" });
+    const box = h("div", { class: "actions" },
+      h("a", { class: "btn sm", href: `${base}/logs?worker=${enc(name)}` }, icon("list"), t("site.workerLogs")),
+      h("a", { class: "btn sm", href: `${base}/activity?worker=${enc(name)}` }, icon("gauge"), t("site.workerUsage")));
     const path = `/sites/${enc(domain)}/workers/${enc(name)}`;
     if (def.disabled) {
       box.append(btn(t("site.workerStart"), "play", () => act("start", path + "/start", t("site.workerStarted", { name })), "sm"));

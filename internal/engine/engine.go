@@ -531,6 +531,12 @@ func (e *Engine) adoptAll(ctx context.Context) {
 			e.emit("instance.gone", st.Domain, "warn", "recorded instance is no longer running", map[string]any{"pid": st.PID, "port": st.Port})
 			continue
 		}
+		// Written again: the adopted state may know more than the file did
+		// (a container's id, recorded since the guard measures containers
+		// by it), and a state left as it was would never learn it.
+		if fresh := inst.State(); fresh.ContainerID != st.ContainerID {
+			e.saveState(fresh)
+		}
 		if strings.Contains(st.Domain, "/") {
 			// A worker need not listen on anything (a queue consumer, a
 			// watcher), so it is not dialled: the runtime has already

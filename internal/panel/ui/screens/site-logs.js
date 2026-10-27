@@ -11,11 +11,11 @@ import { toggle } from "../components/dialog.js";
 
 const MAX_CHARS = 400000;
 
-export function logsTab(domain) {
+export function logsTab(domain, pick = "") {
   const s = store.site(domain);
   const workers = Object.keys((s.manifest && s.manifest.workers) || {});
   const pre = h("pre", { class: "log", tabindex: "0", "aria-live": "off", "aria-label": t("logs.label") });
-  const worker = h("select", { "aria-label": t("logs.worker") }, h("option", { value: "" }, t("logs.main")), ...workers.map((w) => h("option", { value: w }, w)));
+  const worker = h("select", { "aria-label": t("logs.worker") }, h("option", { value: "" }, t("logs.main")), ...workers.map((w) => h("option", { value: w, selected: w === pick }, w)));
   const lines = h("select", { "aria-label": t("logs.lines") }, ...[100, 200, 500, 2000].map((n) => h("option", { value: String(n), selected: n === 200 }, t("logs.lastN", { n }))));
   const follow = toggle(t("logs.follow"), {});
   const reload = h("button", { type: "button", class: "btn sm" }, icon("refresh"), t("common.reload"));

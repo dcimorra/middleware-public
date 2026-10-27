@@ -46,6 +46,7 @@ type dockerInstance struct {
 	logFile  string
 	started  time.Time
 	done     chan error
+	id       string
 }
 
 // HouseLabel marks every container this installation starts, with the
@@ -121,7 +122,7 @@ func (d Docker) Start(ctx context.Context, spec *manifest.Spec, port int, logFil
 	if err := run.Run(); err != nil {
 		return nil, fmt.Errorf("docker run: %w: %s", err, bytes.TrimSpace(append(stderr.Bytes(), stdout.Bytes()...)))
 	}
-	inst := &dockerInstance{d: d, name: name, port: port, revision: spec.Revision, domain: spec.Domain, logFile: logFile, started: time.Now(), done: make(chan error, 1)}
+	inst := &dockerInstance{d: d, name: name, port: port, revision: spec.Revision, domain: spec.Domain, logFile: logFile, started: time.Now(), done: make(chan error, 1), id: lastLine(stdout.String())}
 	go inst.watch()
 	go inst.tailLogs("")
 	return inst, nil
@@ -251,11 +252,12 @@ func (d Docker) Adopt(ctx context.Context, st State) (Instance, error) {
 	if st.Container == "" {
 		return nil, ErrGone
 	}
-	out, err := exec.CommandContext(ctx, d.bin(), "inspect", "-f", "{{.State.Running}}", st.Container).Output()
-	if err != nil || strings.TrimSpace(string(out)) != "true" {
+	out, err := exec.CommandContext(ctx, d.bin(), "inspect", "-f", "{{.State.Running}} {{.Id}}", st.Container).Output()
+	running, id, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
+	if err != nil || running != "true" {
 		return nil, ErrGone
 	}
-	inst := &dockerInstance{d: d, name: st.Container, port: st.Port, revision: st.Revision, domain: st.Domain, logFile: st.LogFile, started: st.StartedAt, done: make(chan error, 1)}
+	inst := &dockerInstance{d: d, name: st.Container, port: st.Port, revision: st.Revision, domain: st.Domain, logFile: st.LogFile, started: st.StartedAt, done: make(chan error, 1), id: id}
 	go inst.watch()
 	// From now on only: the log file already has what came before, and
 	// replaying it would double every line. Without this, an adopted
@@ -274,7 +276,7 @@ func (c *dockerInstance) Alive() bool {
 }
 
 func (c *dockerInstance) State() State {
-	return State{Domain: c.domain, Runtime: "docker", Port: c.port, Revision: c.revision, Container: c.name, LogFile: c.logFile, StartedAt: c.started}
+	return State{Domain: c.domain, Runtime: "docker", Port: c.port, Revision: c.revision, Container: c.name, ContainerID: c.id, LogFile: c.logFile, StartedAt: c.started}
 }
 
 // Stop does `docker stop` with the grace as its timeout, then removes the
@@ -306,6 +308,11 @@ func (c *dockerInstance) tailLogs(since string) {
 	if c.logFile == "" {
 		return
 	}
+	// Its folder made first, as the process runtime does: a site whose only
+	// process is a container worker (a static site and its database) had
+	// no logs folder yet, the open failed in silence, and the worker's log
+	// stayed empty however much the container said.
+	_ = os.MkdirAll(filepath.Dir(c.logFile), 0o755)
 	f, err := os.OpenFile(c.logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
@@ -345,6 +352,16 @@ func volumeArg(spec *manifest.Spec, v string) (string, error) {
 		host = filepath.Join(spec.SiteDir, host)
 	}
 	return filepath.Clean(host) + src.Rest, nil
+}
+
+// lastLine is the last non-empty line of out: the id docker run -d prints
+// after whatever pull progress came first.
+func lastLine(out string) string {
+	lines := strings.Fields(out)
+	if len(lines) == 0 {
+		return ""
+	}
+	return lines[len(lines)-1]
 }
 
 // NamedVolume is the docker volume a site's named volume is.

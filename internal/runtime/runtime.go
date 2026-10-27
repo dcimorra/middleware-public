@@ -33,14 +33,18 @@ type Instance interface {
 
 // State is the on-disk record of a running instance.
 type State struct {
-	Domain    string    `json:"domain"`
-	Runtime   string    `json:"runtime"`
-	Port      int       `json:"port"`
-	Revision  string    `json:"revision"`
-	PID       int       `json:"pid,omitempty"`
-	Container string    `json:"container,omitempty"`
-	LogFile   string    `json:"log_file,omitempty"`
-	StartedAt time.Time `json:"started_at"`
+	Domain    string `json:"domain"`
+	Runtime   string `json:"runtime"`
+	Port      int    `json:"port"`
+	Revision  string `json:"revision"`
+	PID       int    `json:"pid,omitempty"`
+	Container string `json:"container,omitempty"`
+	// ContainerID is the container's full id, which its processes' cgroup
+	// names: how the guard tells which processes are this instance's when
+	// it cannot read where they work (a rootful daemon's are root's).
+	ContainerID string    `json:"container_id,omitempty"`
+	LogFile     string    `json:"log_file,omitempty"`
+	StartedAt   time.Time `json:"started_at"`
 }
 
 // Runtime starts instances and re-adopts the ones it finds.

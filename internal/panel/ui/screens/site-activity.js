@@ -5,7 +5,8 @@
 
 import { h, clear, fmtTime, fmtAgo, fmtBytes } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
-import { api, enc } from "../lib/api.js";
+import { api, enc, qs } from "../lib/api.js";
+import { store } from "../lib/store.js";
 import { onEvent } from "../lib/stream.js";
 import { kv, table, cell, empty, errorBox } from "../components/page.js";
 import { levelBadge } from "../components/badge.js";
@@ -13,7 +14,12 @@ import { sparkline } from "../components/sparkline.js";
 import { toast, toastError } from "../components/toast.js";
 import { icon } from "../lib/icons.js";
 
-export function activityTab(domain) {
+export function activityTab(domain, pick = "") {
+  const s = store.site(domain);
+  const workers = Object.keys((s && s.manifest && s.manifest.workers) || {});
+  // The site and its workers together, or one worker alone.
+  const which = h("select", { "aria-label": t("activity.which") }, h("option", { value: "" }, t("activity.all")),
+    ...workers.map((w) => h("option", { value: w, selected: w === pick }, t("activity.worker", { name: w }))));
   const spark = sparkline({ label: t("activity.sparkLabel") });
   const numbers = h("div");
   const trafficErr = h("div");
@@ -24,6 +30,7 @@ export function activityTab(domain) {
   const el = h("div", { class: "cards" },
     h("div", { class: "card" }, h("h2", null, t("activity.traffic")), h("p", { class: "small muted" }, t("activity.trafficHint")), spark.el, numbers, trafficErr),
     h("div", { class: "card" }, h("h2", null, t("activity.resources")), h("p", { class: "small muted" }, t("activity.resourcesHint")),
+      workers.length ? h("div", { class: "log-bar" }, which) : null,
       h("h3", null, t("activity.cpu")), cpu.el, h("h3", null, t("activity.memory")), mem.el, resBox),
     h("div", { class: "card pad0" }, h("div", { class: "log-bar card-pad" }, h("h2", null, t("activity.incidents"))), incBox),
   );
@@ -55,13 +62,14 @@ export function activityTab(domain) {
   // A minute a sample: loaded once and on the minute, not every poll.
   async function loadResources() {
     try {
-      const r = await api.get(`/sites/${enc(domain)}/resources`);
+      const r = await api.get(`/sites/${enc(domain)}/resources` + qs({ worker: which.value }));
       const samples = r.samples || [];
       cpu.set(samples.map((x) => Math.round(x.cpu)));
       mem.set(samples.map((x) => Math.round(x.rss / 1048576)));
       const last = samples[samples.length - 1];
       clear(resBox).append(
         last ? h("p", { class: "small" }, t("activity.resourcesNow", { cpu: last.cpu, mem: fmtBytes(last.rss) })) : h("p", { class: "small muted" }, t("activity.resourcesNone")),
+        ...Object.entries(r.workers || {}).sort().map(([name, x]) => h("p", { class: "small muted" }, t("activity.workerNow", { name, cpu: x.cpu, mem: fmtBytes(x.rss) }))),
         ...(r.episodes || []).slice(-5).reverse().map((ep) => h("div", { class: "small " + (ep.end ? "" : "level-warn") },
           t(ep.end ? "activity.episode" : "activity.episodeOpen", {
             kind: t("activity.kind." + ep.kind), at: fmtTime(ep.start),
@@ -102,6 +110,7 @@ export function activityTab(domain) {
     return b;
   }
 
+  which.addEventListener("change", loadResources);
   poll();
   loadIncidents();
   loadResources();
