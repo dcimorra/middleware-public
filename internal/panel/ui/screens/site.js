@@ -117,8 +117,10 @@ function overviewTab(domain) {
       // not the site's: with another node chosen, the site lives there, and
       // the list offered that node and left this one out.
       const here = currentNode() || info.self.id;
-      // The panel's node is never "online": it is not its own peer.
-      otherNodes = (info.members || []).filter((x) => x.id !== here && (x.online || x.id === info.self.id) && !x.removed);
+      // members leaves the panel's own node out (it is in self), and that
+      // node is a fine target when the site lives on another one.
+      const panelNode = currentNode() && info.network ? [info.self] : [];
+      otherNodes = [...panelNode, ...(info.members || []).filter((x) => x.id !== here && x.online && !x.removed)];
       if (otherNodes.length) render();
     } catch { /* no network: nothing to move to */ }
   })();
