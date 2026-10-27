@@ -192,39 +192,14 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 		parts = m.Parts(m.Root, domain)
 	}
 
-	// Before anything is touched: the target must be able to take it,
-	// and, when its names are published here, to publish them there. A
-	// target without a DNS provider would leave the names pointing at a
-	// node that no longer serves the site.
-	need := NeedsOf(m.Root, domain, m.Source)
-	if n, ok := m.Source.(Needer); ok {
-		need = n.Needs(domain)
-	}
-	// The manifest it will have there says which workers' data moves by
-	// command; both sides must know how, or the site would arrive on an
-	// empty database, which serves and says nothing.
-	planned := m.plannedManifest(domain, dir)
-	moving := MovingWorkers(planned)
-	exporter, _ := m.Source.(Exporter)
-	migrator, _ := t.(Migrator)
-	if len(moving) > 0 && (exporter == nil || migrator == nil) {
-		return rep, fmt.Errorf("the data of %s moves by command (move in its manifest), which only an import from V1 runs yet: move it by hand", strings.Join(moving, ", "))
-	}
-	if UsesDocker(planned) {
-		need.Docker = true
-	}
-	tasker, _ := m.Source.(Tasker)
-	if tasker != nil {
-		ts, err := tasker.Tasks(domain)
-		if err != nil {
-			return rep, fmt.Errorf("its tasks: %w", err)
-		}
-		need.Tasks = SortedNames(ts)
-	}
 	progress(StepCheck, "asking "+t.Name()+" whether it can take "+domain)
-	if err := t.Check(ctx, domain, need); err != nil {
+	moving, err := m.Check(ctx, domain, t)
+	if err != nil {
 		return rep, err
 	}
+	exporter, _ := m.Source.(Exporter)
+	migrator, _ := t.(Migrator)
+	tasker, _ := m.Source.(Tasker)
 
 	// The first copy, with the site serving. What is written while it
 	// goes is caught by the second, which carries everything changed
@@ -385,6 +360,47 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	rep.Archive = path
 	progress(StepDone, fmt.Sprintf("%s runs on %s; it was down %s", domain, t.Name(), rep.Down))
 	return rep, nil
+}
+
+// Check asks the target, before anything is touched, whether it can take
+// the site: its name, its tasks' names, docker when it needs it, and every
+// name it answers to when they are published here (a target that cannot
+// point them would leave them on a node that no longer serves the site).
+// Nothing changes on either side, so an import's --dry-run asks it too. It
+// returns the workers whose data moves by command.
+func (m *Mover) Check(ctx context.Context, domain string, t Target) ([]string, error) {
+	dir := filepath.Join(m.Root, "sites", domain)
+	if m.Dir != "" {
+		dir = m.Dir
+	}
+	need := NeedsOf(m.Root, domain, m.Source)
+	if n, ok := m.Source.(Needer); ok {
+		need = n.Needs(domain)
+	}
+	// The manifest it will have there says which workers' data moves by
+	// command; both sides must know how, or the site would arrive on an
+	// empty database, which serves and says nothing.
+	planned := m.plannedManifest(domain, dir)
+	moving := MovingWorkers(planned)
+	_, exports := m.Source.(Exporter)
+	_, migrates := t.(Migrator)
+	if len(moving) > 0 && (!exports || !migrates) {
+		return nil, fmt.Errorf("the data of %s moves by command (move in its manifest), which only an import from V1 runs yet: move it by hand", strings.Join(moving, ", "))
+	}
+	if UsesDocker(planned) {
+		need.Docker = true
+	}
+	if tasker, ok := m.Source.(Tasker); ok {
+		ts, err := tasker.Tasks(domain)
+		if err != nil {
+			return nil, fmt.Errorf("its tasks: %w", err)
+		}
+		need.Tasks = SortedNames(ts)
+	}
+	if err := t.Check(ctx, domain, need); err != nil {
+		return nil, err
+	}
+	return moving, nil
 }
 
 // plannedManifest is the manifest the site will be committed with, read

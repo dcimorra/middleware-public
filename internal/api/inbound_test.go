@@ -22,6 +22,8 @@ type fakeDNS struct {
 	enabled     bool
 	published   []string
 	unpublished []string
+	// outside are names in a zone the provider does not have.
+	outside map[string]bool
 }
 
 func (d *fakeDNS) Enabled() bool { return d.enabled }
@@ -44,7 +46,7 @@ func (d *fakeDNS) Unpublish(_ context.Context, domain, ip string) error {
 	d.unpublished = append(d.unpublished, domain)
 	return nil
 }
-func (d *fakeDNS) Covers(context.Context, string) (bool, error) { return true, nil }
+func (d *fakeDNS) Covers(_ context.Context, name string) (bool, error) { return !d.outside[name], nil }
 func (d *fakeDNS) calls() (pub, unpub []string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

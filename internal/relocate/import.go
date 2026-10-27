@@ -379,7 +379,15 @@ func (s *V1Source) Convert(domain string) (notes []string, err error) {
 }
 
 // Needs implements Needer. The mover adds the tasks (Tasker).
-func (s *V1Source) Needs(string) Needs { return Needs{Docker: s.docker} }
+//
+// Its names too, all of them: the converted manifest's, aliases and their
+// www included. V1 said none, so the target was never asked whether it
+// could point them, and a name it could not (homeify.cc, an alias in a
+// zone its DNS provider does not have) was found out at the end, with the
+// site already stopped here and the name left pointing at it.
+func (s *V1Source) Needs(domain string) Needs {
+	return Needs{Docker: s.docker, Names: s.Names(domain)}
+}
 
 // Stop writes disabled into the V1 manifest, which is how V1 stops a site,
 // and waits for its processes to be gone. It returns the converted V2
@@ -438,7 +446,13 @@ func (s *V1Source) Start(domain string, _ []byte) error {
 func (s *V1Source) Published(domain string) (string, bool) { return "", !manifest.IsProject(domain) }
 
 // Names implements Source.
-func (s *V1Source) Names(string) []string { return nil }
+func (s *V1Source) Names(domain string) []string {
+	m, err := manifest.Parse(s.converted)
+	if err != nil {
+		return nil
+	}
+	return m.Hosts(domain)
+}
 
 // Unpublish implements Source.
 func (s *V1Source) Unpublish(context.Context, string) {}

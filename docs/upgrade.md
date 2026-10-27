@@ -132,6 +132,12 @@ machine:
 /tmp/middleware-v2 import --to https://panel.example.com --token mw_… /srv/v1/sites/shop.example.com
 ```
 
+Before anything moves, the V2 house is asked whether it can take the site:
+its name, docker if it needs it, its tasks' names, and every name it answers
+to (aliases and their `www` included), which its DNS provider must be able
+to point; a name in a zone it does not have stops the import there, with
+the V1 site untouched. `--dry-run` asks the same and stops.
+
 It converts the manifest (refusing a site V2 cannot honour yet), copies the
 folder while the site serves (without `node_modules`, which is installed on
 the V2 side for its machine), stops the site in V1 by writing `disabled` in

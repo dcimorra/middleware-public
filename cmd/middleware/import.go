@@ -120,8 +120,18 @@ func importCmd(args []string) error {
 		fmt.Printf("  warning: %s\n", w)
 	}
 	if *dryRun {
+		// The target's answer too: what it would refuse is better known
+		// now than with the site stopped.
+		cctx, ccancel := context.WithTimeout(context.Background(), time.Minute)
+		_, err := mover.Check(cctx, domain, target)
+		ccancel()
+		if err != nil {
+			fmt.Printf("  check: %s would refuse it: %v\n", *to, err)
+		} else {
+			fmt.Printf("  check: %s can take it (its name, its names in DNS, its tasks, docker)\n", *to)
+		}
 		fmt.Println("Nothing was moved (--dry-run).")
-		return nil
+		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	defer cancel()

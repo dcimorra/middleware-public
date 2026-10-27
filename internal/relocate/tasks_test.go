@@ -112,7 +112,7 @@ func TestAMoveWhoseDataMovesByCommandIsRefusedWhereNothingRunsIt(t *testing.T) {
 	if _, err := m.Move(context.Background(), "a.test", tg, func(step, _ string) { steps = append(steps, step) }); err == nil || !strings.Contains(err.Error(), "moves by command") {
 		t.Fatalf("err: %v", err)
 	}
-	if len(steps) != 0 {
+	if strings.Join(steps, " ") != "check" {
 		t.Fatalf("it got as far as %v", steps)
 	}
 }
