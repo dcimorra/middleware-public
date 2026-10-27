@@ -523,6 +523,17 @@ func (src siteSource) Unpublish(ctx context.Context, domain string) {
 	}
 }
 
+// Export implements relocate.Exporter: each worker's move.export where it
+// runs here, inside its container, with the site held and the worker up
+// (StopForMove keeps it).
+func (src siteSource) Export(ctx context.Context, domain string, m []byte, workers []string) (string, error) {
+	mf, err := manifest.Parse(m)
+	if err != nil {
+		return "", err
+	}
+	return relocate.ExportHere(ctx, src.s.opts.Root, src.mgr.Dir(domain), domain, mf, workers)
+}
+
 // Tasks implements relocate.Tasker.
 func (src siteSource) Tasks(domain string) (map[string][]byte, error) {
 	return tasks.OfSite(src.s.opts.Root, domain)
@@ -613,6 +624,35 @@ func (t meshTarget) Prepare(ctx context.Context, domain string, dirs []string) (
 		case err != nil:
 			// One unanswered question is not the install failing; the
 			// move's own time (its context) is what gives up.
+		case j.Done && j.Error != "":
+			return "", errors.New(j.Error)
+		case j.Done:
+			return j.Output, nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
+// Migrate implements relocate.Migrator: the node runs the workers' imports
+// on its own and is asked how it goes, as Prepare.
+func (t meshTarget) Migrate(ctx context.Context, domain string, m []byte, workers []string) (string, error) {
+	body := map[string]any{"manifest": base64.StdEncoding.EncodeToString(m), "workers": workers}
+	if err := t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/migrate", body, nil); err != nil {
+		var re *nodes.RemoteError
+		if errors.As(err, &re) && re.Status == http.StatusNotFound {
+			return "", fmt.Errorf("%s cannot import a worker's data (update it to a version that can)", t.x.Name)
+		}
+		return "", err
+	}
+	for {
+		var j prepareJob
+		err := t.m.Call(ctx, t.x, "GET", "/relocate/"+domain+"/migrate", nil, &j)
+		switch {
+		case err != nil:
 		case j.Done && j.Error != "":
 			return "", errors.New(j.Error)
 		case j.Done:

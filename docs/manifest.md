@@ -456,9 +456,10 @@ that is where a database keeps its data, out of the folder.
                 "volumes": ["pg:/var/lib/postgresql/data"] },
     "env": { "PGDATA": "/var/lib/postgresql/data/pgdata" },
     "move": {
-      "export": ["./scripts/db-export.sh"],
-      "ready":  ["pg_isready", "-U", "app", "-p", "$PORT"],
-      "import": ["./scripts/db-import.sh"]
+      "export": ["pg_dump", "-Fc", "-U", "app", "-d", "app", "-p", "$PORT"],
+      "output": ".move/app.dump",
+      "ready":  ["pg_isready", "-h", "127.0.0.1", "-U", "app", "-p", "$PORT"],
+      "import": ["pg_restore", "-U", "app", "-d", "app", "-p", "$PORT", ".move/app.dump"]
     }
   }
 }
@@ -474,10 +475,22 @@ starts on a database that has its data. A docker worker's `ready` and
 `import` run inside its container (the image has the database's tools, and
 a command from a manifest never holds the docker socket); a process worker's
 run as the site's processes do. All get the site's environment, the
-worker's on top, and `$PORT`. `timeout` bounds each (30m). A move that fails
+worker's on top, and `$PORT`. `output`, a file inside the folder, gets the
+export's standard output, written by the house: inside a database's
+container the export runs as the database's user, who cannot write in the
+site's folder. `timeout` bounds each (30m). A move that fails
 removes the volumes it created and starts the site again where it was, whose
-database has only been read. Only an import from V1 runs `move` yet; a move
-between nodes of a site that has it is refused.
+database has only been read.
+
+Where the site is a site of a V2 house, the move holds it (its maintenance
+page, its other workers stopped) and keeps the workers whose data moves up
+for their `export`, which runs inside the worker's container. `"live": true`
+takes the data while the site serves instead: `export` runs before the first
+copy and `import` on the target before the site stops, so it is down only for
+the last copy and the start; what the site writes after the export does not
+travel. A live import writes where the worker keeps its data (its volume):
+what it writes in the folder is replaced by the last copy, which leaves the
+folder as it is where the site was.
 
 ## Tasks: `tasks/<name>.json`
 

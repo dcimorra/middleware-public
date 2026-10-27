@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -233,6 +234,34 @@ type WorkerMove struct {
 	Import []string `json:"import"`
 	// Timeout bounds each of them (30m when empty).
 	Timeout Duration `json:"timeout,omitempty"`
+	// Output, a path inside the folder, is where the house writes the
+	// export's standard output ("pg_dump -Fc" with no file of its own).
+	// The export inside a database's container runs as the database's user,
+	// who cannot write in the site's folder: the house can, and the file it
+	// makes is readable by the import there.
+	Output string `json:"output,omitempty"`
+	// Live takes the data while the site serves: export, and import on the
+	// target, run before the site stops, so it is down only for the last
+	// copy and the start. What the site writes after the export does not
+	// travel. Without it, the site is put on hold (its workers up) for the
+	// export and the import, which is the whole of the down time.
+	Live bool `json:"live,omitempty"`
+}
+
+// MovingWorkers are the workers whose data moves by command, by name;
+// live picks the ones that move while the site serves, or the others.
+func (m *Manifest) MovingWorkers(live bool) []string {
+	if m == nil {
+		return nil
+	}
+	var out []string
+	for name, w := range m.Workers {
+		if w != nil && w.Move != nil && !w.Disabled && w.Move.Live == live {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Hold shows a page instead of the site, with the process stopped.
@@ -681,6 +710,11 @@ func (m *Manifest) Validate() error {
 			}
 			if mv.Timeout < 0 {
 				return fmt.Errorf("workers.%s.move.timeout: negative", name)
+			}
+			if o := mv.Output; o != "" {
+				if c := path.Clean(o); c != o || path.IsAbs(o) || c == "." || c == ".." || strings.HasPrefix(c, "../") || c == FileName {
+					return fmt.Errorf("workers.%s.move.output: %q is not a file inside the folder", name, o)
+				}
 			}
 		}
 		for k := range w.EnvFromFile {

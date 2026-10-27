@@ -155,6 +155,9 @@ func (s *Server) registerMigrate(rc relocate.Receiver) {
 		domain := r.PathValue("domain")
 		var body struct {
 			Manifest string `json:"manifest"`
+			// Workers are the ones to import now (a move takes the live
+			// ones while the site serves); none is all of them.
+			Workers []string `json:"workers"`
 		}
 		if err := ReadJSON(r, &body); err != nil {
 			return nil, err
@@ -179,7 +182,7 @@ func (s *Server) registerMigrate(rc relocate.Receiver) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), migrateTimeFor(raw))
 			defer cancel()
-			said, err := rc.Migrate(ctx, domain, raw)
+			said, err := rc.Migrate(ctx, domain, raw, body.Workers)
 			s.migrates.mu.Lock()
 			job.Done, job.Output = true, said
 			if err != nil {

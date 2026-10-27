@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/manifest"
@@ -45,6 +47,13 @@ type State struct {
 	ContainerID string    `json:"container_id,omitempty"`
 	LogFile     string    `json:"log_file,omitempty"`
 	StartedAt   time.Time `json:"started_at"`
+}
+
+// StatePath is where the engine keeps an instance's state: key is a
+// domain, or domain/worker, written domain@worker. One place, because the
+// engine writes it and the guard and a move read it.
+func StatePath(dataDir, key string) string {
+	return filepath.Join(dataDir, "state", strings.ReplaceAll(key, "/", "@")+".json")
 }
 
 // Runtime starts instances and re-adopts the ones it finds.

@@ -413,7 +413,8 @@ func (d Docker) RemoveVolume(ctx context.Context, name string) error {
 // PORT. It is how a move reaches a worker's database without giving the
 // command the docker socket: a command written in a site's manifest with
 // docker in its hands would own the machine.
-func (d Docker) ExecIn(ctx context.Context, container string, spec *manifest.Spec, port int, home string, out *os.File) error {
+// stdout nil is the log (out), with its errors.
+func (d Docker) ExecIn(ctx context.Context, container string, spec *manifest.Spec, port int, home string, out, stdout *os.File) error {
 	// The command with $PORT in it expanded too, not only the environment:
 	// ["pg_isready", "-p", "$PORT"] got "$PORT" as its port, and a move
 	// waited three minutes for a database that was up.
@@ -426,6 +427,9 @@ func (d Docker) ExecIn(ctx context.Context, container string, spec *manifest.Spe
 	args = append(args, argv...)
 	cmd := exec.CommandContext(ctx, d.bin(), args...)
 	cmd.Stdout, cmd.Stderr = out, out
+	if stdout != nil {
+		cmd.Stdout = stdout
+	}
 	cmd.WaitDelay = 5 * time.Second
 	return cmd.Run()
 }

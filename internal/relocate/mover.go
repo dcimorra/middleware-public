@@ -2,6 +2,7 @@ package relocate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -190,13 +191,29 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	parts := m.PartsFor(domain)
 
 	progress(StepCheck, "asking "+t.Name()+" whether it can take "+domain)
-	moving, err := m.Check(ctx, domain, t)
-	if err != nil {
+	if _, err := m.Check(ctx, domain, t); err != nil {
 		return rep, err
 	}
 	exporter, _ := m.Source.(Exporter)
 	migrator, _ := t.(Migrator)
 	tasker, _ := m.Source.(Tasker)
+	// The workers whose data moves while the site serves (move.live), and
+	// the ones that wait for it to stop. The live ones are exported before
+	// the first copy, which carries their dump, and imported there before
+	// the site stops here: it is down only for the last copy and the start.
+	planned := m.plannedManifest(domain, dir)
+	plannedRaw, _ := json.Marshal(planned)
+	liveWorkers, stopWorkers := planned.MovingWorkers(true), planned.MovingWorkers(false)
+	if len(liveWorkers) > 0 {
+		progress(StepExport, "exporting the data of "+strings.Join(liveWorkers, ", ")+" here, while it serves")
+		said, err := exporter.Export(ctx, domain, plannedRaw, liveWorkers)
+		if err != nil {
+			return rep, fmt.Errorf("export: %w", err)
+		}
+		if said != "" {
+			progress(StepExport, said)
+		}
+	}
 
 	// The first copy, with the site serving. What is written while it
 	// goes is caught by the second, which carries everything changed
@@ -224,6 +241,17 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 		if said != "" {
 			// The same step again: its message becomes what was done.
 			progress(StepInstall, said)
+		}
+	}
+
+	if len(liveWorkers) > 0 {
+		progress(StepImport, "importing the data of "+strings.Join(liveWorkers, ", ")+" on "+t.Name()+", while it serves here")
+		said, err := migrator.Migrate(ctx, domain, plannedRaw, liveWorkers)
+		if err != nil {
+			return rep, undone(fmt.Errorf("import: %w", err), m.undo(t, domain, false))
+		}
+		if said != "" {
+			progress(StepImport, said)
 		}
 	}
 
@@ -265,9 +293,9 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 		return rep, fmt.Errorf("%w; it runs here again, as it was", cause)
 	}
 
-	if len(moving) > 0 {
-		progress(StepExport, "exporting the data of "+strings.Join(moving, ", ")+" here, with the site stopped")
-		said, err := exporter.Export(ctx, domain, original)
+	if len(stopWorkers) > 0 {
+		progress(StepExport, "exporting the data of "+strings.Join(stopWorkers, ", ")+" here, with the site stopped")
+		said, err := exporter.Export(ctx, domain, original, stopWorkers)
 		if err != nil {
 			return restore(undone(fmt.Errorf("export: %w", err), m.undo(t, domain, false)))
 		}
@@ -283,9 +311,9 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	}
 	rep.Last = n
 
-	if len(moving) > 0 {
-		progress(StepImport, "importing the data of "+strings.Join(moving, ", ")+" on "+t.Name()+", before the site starts there")
-		said, err := migrator.Migrate(ctx, domain, original)
+	if len(stopWorkers) > 0 {
+		progress(StepImport, "importing the data of "+strings.Join(stopWorkers, ", ")+" on "+t.Name()+", before the site starts there")
+		said, err := migrator.Migrate(ctx, domain, original, stopWorkers)
 		if err != nil {
 			return restore(undone(fmt.Errorf("import: %w", err), m.undo(t, domain, false)))
 		}

@@ -83,6 +83,11 @@ func (m *Manifest) CheckInside(siteDir string) error {
 		if err := insideDocker("workers."+name+".docker", w.Docker, inside); err != nil {
 			return err
 		}
+		if w.Move != nil && w.Move.Output != "" {
+			if err := inside("workers."+name+".move.output", w.Move.Output); err != nil {
+				return err
+			}
+		}
 		for _, f := range w.EnvFiles {
 			if err := inside("workers."+name+".env_files", Expand(f, vars)); err != nil {
 				return err

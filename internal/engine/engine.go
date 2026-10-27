@@ -499,7 +499,7 @@ func backoff(failures int, max time.Duration) time.Duration {
 // statePath is one file per instance; a worker's key ("a.example/api")
 // becomes "a.example@api.json" so every state lives in one flat folder.
 func (e *Engine) statePath(key string) string {
-	return filepath.Join(e.opts.DataDir, "state", strings.ReplaceAll(key, "/", "@")+".json")
+	return runtime.StatePath(e.opts.DataDir, key)
 }
 
 func (e *Engine) saveState(st runtime.State) {

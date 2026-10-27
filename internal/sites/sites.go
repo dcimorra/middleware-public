@@ -451,7 +451,56 @@ func (m *Manager) StopForMove(ctx context.Context, domain string) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
+	mf, err := manifest.Parse(original)
+	if err != nil {
+		return nil, fmt.Errorf("cannot stop %s for a move: %w", domain, err)
+	}
+	if keep := mf.MovingWorkers(false); len(keep) > 0 {
+		return original, m.holdForMove(ctx, domain, dir, mf, keep)
+	}
 	return original, m.stopAndWait(ctx, domain, dir, original)
+}
+
+// holdForMove stops a site whose data is exported with it stopped, but not
+// the workers that hold that data (a database): its instance and every
+// other worker stop, and the site answers its maintenance page meanwhile.
+// Disabled, the engine stopped the workers too, and the export had no
+// database to read.
+func (m *Manager) holdForMove(ctx context.Context, domain, dir string, mf *manifest.Manifest, keep []string) error {
+	kept := map[string]bool{}
+	for _, k := range keep {
+		kept[k] = true
+	}
+	mf.Hold = &manifest.Hold{Enabled: true, Mode: "maintenance"}
+	for name, w := range mf.Workers {
+		if w != nil && !kept[name] {
+			w.Disabled = true
+		}
+	}
+	if err := manifest.Save(dir, mf); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		sn, ok := m.lookup(domain)
+		done := !ok || !sn.Alive
+		for name, w := range sn.Workers {
+			if kept[name] {
+				done = done && w.Alive
+			} else {
+				done = done && !w.Alive
+			}
+		}
+		if done {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("%s: the engine did not stop the instance and keep %s up in time", domain, strings.Join(keep, ", "))
 }
 
 // Resume writes back the manifest StopForMove returned, which starts the

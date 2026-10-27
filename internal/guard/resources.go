@@ -95,13 +95,12 @@ func (g *Guard) units(domain string) []unit {
 			out = append(out, unit{name: name, pid: st.PID, container: st.ContainerID})
 		}
 	}
-	dir := filepath.Join(g.opts.DataDir, "state")
-	read("", filepath.Join(dir, domain+".json"))
-	ents, _ := os.ReadDir(dir)
+	read("", runtime.StatePath(g.opts.DataDir, domain))
+	ents, _ := os.ReadDir(filepath.Join(g.opts.DataDir, "state"))
 	for _, e := range ents {
 		rest, ok := strings.CutPrefix(e.Name(), domain+"@")
 		if name, isJSON := strings.CutSuffix(rest, ".json"); ok && isJSON && name != "" && !e.IsDir() {
-			read(name, filepath.Join(dir, e.Name()))
+			read(name, runtime.StatePath(g.opts.DataDir, domain+"/"+name))
 		}
 	}
 	return out

@@ -30,14 +30,17 @@ import (
 // been read, so undoing the move is starting the site there again.
 
 // Exporter is a Source that runs its site's workers' move.export.
+// workers are the ones to export now: a move takes the live ones while the
+// site serves and the others once it is held.
 type Exporter interface {
-	Export(ctx context.Context, domain string, manifestData []byte) (string, error)
+	Export(ctx context.Context, domain string, manifestData []byte, workers []string) (string, error)
 }
 
 // Migrator is a target that brings the staged site's workers up and runs
 // their move.ready and move.import before the commit.
+// workers are the ones to import now, as Exporter's.
 type Migrator interface {
-	Migrate(ctx context.Context, domain string, manifestData []byte) (string, error)
+	Migrate(ctx context.Context, domain string, manifestData []byte, workers []string) (string, error)
 }
 
 // Planner is a Source that says which manifest the move will commit
@@ -52,17 +55,10 @@ const moveTime = 30 * time.Minute
 // readyTime bounds the wait for a worker brought up for its import.
 const readyTime = 3 * time.Minute
 
-// MovingWorkers are the names of the workers whose data moves by command.
+// MovingWorkers are the names of the workers whose data moves by command,
+// live or not.
 func MovingWorkers(m *manifest.Manifest) []string {
-	if m == nil {
-		return nil
-	}
-	var out []string
-	for name, w := range m.Workers {
-		if w != nil && w.Move != nil && !w.Disabled {
-			out = append(out, name)
-		}
-	}
+	out := append(m.MovingWorkers(true), m.MovingWorkers(false)...)
 	sort.Strings(out)
 	return out
 }
@@ -117,24 +113,52 @@ func commandSpec(domain, dir string, m *manifest.Manifest, name string, cmd []st
 // runCommand runs one move command to its end, its output in logFile:
 // inside container when it is set (a docker worker's), otherwise as a
 // process of the site, as a task runs.
-func runCommand(ctx context.Context, d runtime.Docker, container string, spec *manifest.Spec, port int, logFile, home string, timeout time.Duration) error {
+//
+// output, when set, is a file inside the site's folder that gets the
+// command's standard output (move.output), written by the house.
+func runCommand(ctx context.Context, d runtime.Docker, container string, spec *manifest.Spec, port int, logFile, home string, timeout time.Duration, output string) error {
 	if err := os.MkdirAll(filepath.Dir(logFile), 0o755); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return err
 	}
-	argv, _ := spec.WithPort(port)
+	argv, env := spec.WithPort(port)
 	what := strings.Join(argv, " ")
-	if container != "" {
+	if container != "" || output != "" {
 		out, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
 			return err
 		}
 		defer out.Close()
+		dump, finish, err := openOutput(spec.SiteDir, output)
+		if err != nil {
+			return err
+		}
 		cctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-		if err := d.ExecIn(cctx, container, spec, port, home, out); err != nil {
+		if container != "" {
+			err = d.ExecIn(cctx, container, spec, port, home, out, dump)
+		} else {
+			// A process worker's export with an output: run here, its
+			// standard output to the file, as the site's processes run.
+			e := []string{"HOME=" + home, "PORT=" + strconv.Itoa(port)}
+			for _, k := range []string{"PATH", "LANG", "LC_ALL", "TZ"} {
+				if v, ok := os.LookupEnv(k); ok {
+					e = append(e, k+"="+v)
+				}
+			}
+			for k, v := range env {
+				e = append(e, k+"="+v)
+			}
+			err = runExec(cctx, argv, spec.Cwd, e, out, dump)
+		}
+		if err == nil {
+			err = finish()
+		} else if dump != nil {
+			dump.Close()
+		}
+		if err != nil {
 			if cctx.Err() == context.DeadlineExceeded {
 				return fmt.Errorf("%s: cut after %s (its output is in %s)", what, timeout, logFile)
 			}
@@ -165,7 +189,7 @@ func runCommand(ctx context.Context, d runtime.Docker, container string, spec *m
 // import, in their environment with the site's on top: the database it
 // reads is one that person's machine runs (a V1 site's container, which no
 // house manages), reached however they reach it.
-func runAsOperator(ctx context.Context, spec *manifest.Spec, port int, logFile string, timeout time.Duration) error {
+func runAsOperator(ctx context.Context, spec *manifest.Spec, port int, logFile string, timeout time.Duration, output string) error {
 	if err := os.MkdirAll(filepath.Dir(logFile), 0o755); err != nil {
 		return err
 	}
@@ -177,22 +201,24 @@ func runAsOperator(ctx context.Context, spec *manifest.Spec, port int, logFile s
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	argv, _ := spec.WithPort(port)
-	cmd := exec.CommandContext(cctx, argv[0], argv[1:]...)
-	cmd.Dir = spec.Cwd
-	cmd.Env = os.Environ()
+	env := os.Environ()
 	for k, v := range spec.Env {
-		cmd.Env = append(cmd.Env, k+"="+v)
+		env = append(env, k+"="+v)
 	}
 	if port != 0 {
-		cmd.Env = append(cmd.Env, "PORT="+strconv.Itoa(port))
+		env = append(env, "PORT="+strconv.Itoa(port))
 	}
-	cmd.Stdout, cmd.Stderr = out, out
-	// Its own group, killed whole when it is cut: pg_dump under a shell
-	// outlives a kill of the shell alone.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.WaitDelay = 5 * time.Second
-	if err := cmd.Run(); err != nil {
+	dump, finish, err := openOutput(spec.SiteDir, output)
+	if err != nil {
+		return err
+	}
+	err = runExec(cctx, argv, spec.Cwd, env, out, dump)
+	if err == nil {
+		err = finish()
+	} else if dump != nil {
+		dump.Close()
+	}
+	if err != nil {
 		what := strings.Join(argv, " ")
 		if cctx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("%s: cut after %s (its output is in %s)", what, timeout, logFile)
@@ -200,6 +226,46 @@ func runAsOperator(ctx context.Context, spec *manifest.Spec, port int, logFile s
 		return fmt.Errorf("%s: %w (its output is in %s)%s", what, err, logFile, logTail(logFile))
 	}
 	return nil
+}
+
+// runExec runs argv in dir with env to its end, its errors (and its output
+// when stdout is nil) in log. Its own group, killed whole when it is cut:
+// pg_dump under a shell outlives a kill of the shell alone.
+func runExec(ctx context.Context, argv []string, dir string, env []string, log, stdout *os.File) error {
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir = dir
+	cmd.Env = env
+	cmd.Stdout, cmd.Stderr = log, log
+	if stdout != nil {
+		cmd.Stdout = stdout
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 5 * time.Second
+	return cmd.Run()
+}
+
+// openOutput makes the file a command's standard output goes to, rel
+// inside dir; nil when rel is "". It is written beside, as .part, and
+// finish puts it in place: a dump cut halfway is never taken for one.
+func openOutput(dir, rel string) (*os.File, func() error, error) {
+	if rel == "" {
+		return nil, func() error { return nil }, nil
+	}
+	final := filepath.Join(dir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
+		return nil, nil, err
+	}
+	f, err := os.OpenFile(final+".part", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, nil, err
+	}
+	return f, func() error {
+		if err := f.Close(); err != nil {
+			return err
+		}
+		return os.Rename(final+".part", final)
+	}, nil
 }
 
 // logTail is the end of a failed command's log, for its error: the log is
@@ -234,14 +300,40 @@ func workerPort(w *manifest.Worker) (int, error) {
 
 // Export runs each moving worker's move.export in dir, as the person who
 // runs the import. root is where its log goes (data/logs).
-func Export(ctx context.Context, root, dir, domain string, m *manifest.Manifest) (string, error) {
+func Export(ctx context.Context, root, dir, domain string, m *manifest.Manifest, workers []string) (string, error) {
 	var said []string
-	for _, name := range MovingWorkers(m) {
+	for _, name := range workers {
 		w := m.Workers[name]
 		port := w.Port
 		logFile := filepath.Join(root, "data", "logs", domain, "move-"+name+".log")
 		spec := commandSpec(domain, dir, m, name, w.Move.Export)
-		if err := runAsOperator(ctx, spec, port, logFile, moveTimeout(w.Move)); err != nil {
+		if err := runAsOperator(ctx, spec, port, logFile, moveTimeout(w.Move), w.Move.Output); err != nil {
+			return "", fmt.Errorf("%s: export: %w", name, err)
+		}
+		said = append(said, name+": exported")
+	}
+	return strings.Join(said, " · "), nil
+}
+
+// ExportHere runs workers' move.export where the site is a site of this
+// house (root): inside each worker's running container, as the house runs
+// a target's imports, or as the site's processes run for a process worker.
+// The worker must be up: StopForMove holds the site and keeps it.
+func ExportHere(ctx context.Context, root, siteDir, domain string, m *manifest.Manifest, workers []string) (string, error) {
+	var said []string
+	data := filepath.Join(root, "data")
+	for _, name := range workers {
+		w := m.Workers[name]
+		if w == nil || w.Move == nil {
+			return "", fmt.Errorf("%s: not a worker whose data moves by command", name)
+		}
+		var st runtime.State
+		if err := fsx.ReadJSON(runtime.StatePath(data, domain+"/"+name), &st); err != nil || (st.Container == "" && st.PID == 0) {
+			return "", fmt.Errorf("%s: not running here, so its data cannot be exported", name)
+		}
+		logFile := filepath.Join(data, "logs", domain, "move-"+name+".log")
+		spec := commandSpec(domain, siteDir, m, name, w.Move.Export)
+		if err := runCommand(ctx, runtime.Docker{}, st.Container, spec, st.Port, logFile, filepath.Join(data, "homes", domain), moveTimeout(w.Move), w.Move.Output); err != nil {
 			return "", fmt.Errorf("%s: export: %w", name, err)
 		}
 		said = append(said, name+": exported")
@@ -254,12 +346,12 @@ func (s *V1Source) Planned(string) []byte { return s.converted }
 
 // Export implements Exporter: with the V1 site stopped, against the
 // database it was using.
-func (s *V1Source) Export(ctx context.Context, domain string, manifestData []byte) (string, error) {
+func (s *V1Source) Export(ctx context.Context, domain string, manifestData []byte, workers []string) (string, error) {
 	m, err := manifest.Parse(manifestData)
 	if err != nil {
 		return "", err
 	}
-	return Export(ctx, s.Root, filepath.Join(s.Root, "sites", domain), domain, m)
+	return Export(ctx, s.Root, filepath.Join(s.Root, "sites", domain), domain, m, workers)
 }
 
 // volumesFile lists the volumes a migration created in a staging, so a
@@ -279,7 +371,8 @@ func (r Receiver) docker() runtime.Docker {
 // for it (its port, then move.ready), runs move.import, and stops it. The
 // named volumes it creates are written down first: a migration that fails
 // halfway leaves nothing behind once the move is undone.
-func (r Receiver) Migrate(ctx context.Context, domain string, manifestData []byte) (string, error) {
+// workers nil is every moving worker.
+func (r Receiver) Migrate(ctx context.Context, domain string, manifestData []byte, workers []string) (string, error) {
 	if !manifest.ValidName(domain) {
 		return "", ErrBadName
 	}
@@ -291,9 +384,23 @@ func (r Receiver) Migrate(ctx context.Context, domain string, manifestData []byt
 	if err != nil {
 		return "", fmt.Errorf("the manifest sent with the move: %w", err)
 	}
+	if workers == nil {
+		workers = MovingWorkers(m)
+	}
+	for _, name := range workers {
+		if w := m.Workers[name]; w == nil || w.Move == nil {
+			return "", fmt.Errorf("%s: not a worker whose data moves by command", name)
+		}
+	}
 	d := r.docker()
+	// Added to what an earlier call of this move recorded (the live
+	// workers', imported while the site still served): written over, those
+	// volumes would stay behind a move that is undone.
 	var volumes []string
-	for _, name := range MovingWorkers(m) {
+	if raw, err := os.ReadFile(r.volumesFile(domain)); err == nil {
+		_ = json.Unmarshal(raw, &volumes)
+	}
+	for _, name := range workers {
 		w := m.Workers[name]
 		if w.Docker == nil {
 			continue
@@ -318,7 +425,7 @@ func (r Receiver) Migrate(ctx context.Context, domain string, manifestData []byt
 	}
 	home := filepath.Join(r.Root, "data", "homes", domain)
 	var said []string
-	for _, name := range MovingWorkers(m) {
+	for _, name := range workers {
 		w := m.Workers[name]
 		port, err := workerPort(w)
 		if err != nil {
@@ -357,7 +464,7 @@ func (r Receiver) Migrate(ctx context.Context, domain string, manifestData []byt
 					return err
 				}
 			}
-			if err := runCommand(ctx, d, container, cmdSpec(w.Move.Import), port, logFile, home, moveTimeout(w.Move)); err != nil {
+			if err := runCommand(ctx, d, container, cmdSpec(w.Move.Import), port, logFile, home, moveTimeout(w.Move), ""); err != nil {
 				return fmt.Errorf("import: %w", err)
 			}
 			return nil
@@ -380,7 +487,7 @@ func (r Receiver) Migrate(ctx context.Context, domain string, manifestData []byt
 func (r Receiver) untilReady(ctx context.Context, d runtime.Docker, container string, spec *manifest.Spec, port int, logFile, home string) error {
 	deadline := time.Now().Add(readyTime)
 	for {
-		err := runCommand(ctx, d, container, spec, port, logFile, home, time.Minute)
+		err := runCommand(ctx, d, container, spec, port, logFile, home, time.Minute, "")
 		if err == nil {
 			return nil
 		}

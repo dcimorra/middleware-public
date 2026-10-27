@@ -144,8 +144,8 @@ func (t HTTPTarget) Prepare(ctx context.Context, d string, dirs []string) (strin
 // own and is asked how it goes, as Prepare. A house too old to have the
 // route is an error, not a skip: the site would start there on an empty
 // database.
-func (t HTTPTarget) Migrate(ctx context.Context, d string, manifestData []byte) (string, error) {
-	body := map[string]any{"manifest": base64.StdEncoding.EncodeToString(manifestData)}
+func (t HTTPTarget) Migrate(ctx context.Context, d string, manifestData []byte, workers []string) (string, error) {
+	body := map[string]any{"manifest": base64.StdEncoding.EncodeToString(manifestData), "workers": workers}
 	if err := t.do(ctx, "POST", "/relocate/"+d+"/migrate", "application/json", jsonBody(body), nil); err != nil {
 		if strings.Contains(err.Error(), "answered 404") {
 			return "", fmt.Errorf("%s cannot import a worker's data (update it to a version that can)", t.Name())

@@ -20,6 +20,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/ports"
 	"github.com/dcimorra/middleware-public/internal/runtime"
+	"os/exec"
 )
 
 // TestMain lets the test binary double as the supervised site, the same
@@ -563,5 +564,63 @@ func TestAProjectIsGivenADomain(t *testing.T) {
 	// again.
 	if _, err := f.m.Rename(context.Background(), "tools.example.com", "tools"); err != nil {
 		t.Fatalf("back to a project: %v", err)
+	}
+}
+
+// Stopped for a move whose data is exported with the site stopped, a site
+// is held, not disabled: its instance and its other workers stop, and the
+// worker that holds the data stays up for the export. Disabled, the engine
+// stopped the database too, and there was nothing to export from.
+func TestASiteStoppedForAMoveKeepsTheWorkerItsDataIsIn(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 stands in for the processes")
+	}
+	f := newFixture(t, true)
+	dir := filepath.Join(f.root, "sites", "h.test")
+	os.MkdirAll(dir, 0o755)
+	serve := `["python3","-m","http.server","$PORT","--bind","127.0.0.1"]`
+	original := []byte(`{"version":2,"run":{"command":` + serve + `},"workers":{
+ "db":{"command":` + serve + `,"move":{"export":["true"],"import":["true"]}},
+ "queue":{"command":` + serve + `}}}`)
+	os.WriteFile(filepath.Join(dir, "site.json"), original, 0o644)
+	alive := func(cond func(sn engine.Snapshot) bool) bool {
+		deadline := time.Now().Add(20 * time.Second)
+		for time.Now().Before(deadline) {
+			if sn, ok := f.m.lookup("h.test"); ok && cond(sn) {
+				return true
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		return false
+	}
+	if !alive(func(sn engine.Snapshot) bool { return sn.Alive && sn.Workers["db"].Alive && sn.Workers["queue"].Alive }) {
+		t.Fatal("the site never came up")
+	}
+	t.Cleanup(func() {
+		os.WriteFile(filepath.Join(dir, "site.json"), []byte(`{"version":2,"disabled":true,"run":{"command":`+serve+`},"workers":{"db":{"command":`+serve+`},"queue":{"command":`+serve+`}}}`), 0o644)
+		alive(func(sn engine.Snapshot) bool {
+			return !sn.Alive && !sn.Workers["db"].Alive && !sn.Workers["queue"].Alive
+		})
+	})
+	got, err := f.m.StopForMove(context.Background(), "h.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("the manifest it had: %s", got)
+	}
+	sn, _ := f.m.lookup("h.test")
+	if sn.Alive || !sn.Workers["db"].Alive || sn.Workers["queue"].Alive {
+		t.Fatalf("instance %v, db %v, queue %v: want only db up", sn.Alive, sn.Workers["db"].Alive, sn.Workers["queue"].Alive)
+	}
+	held, _ := manifest.Load(dir)
+	if held.Hold == nil || !held.Hold.Enabled || held.Disabled {
+		t.Fatalf("not held: %+v", held)
+	}
+	if err := f.m.Resume("h.test", got); err != nil {
+		t.Fatal(err)
+	}
+	if !alive(func(sn engine.Snapshot) bool { return sn.Alive && sn.Workers["queue"].Alive }) {
+		t.Fatal("it did not come back as it was")
 	}
 }

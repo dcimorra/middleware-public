@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/runtime"
 )
 
@@ -17,8 +19,8 @@ import (
 // real, through the Receiver.
 type migratingTarget struct{ localTarget }
 
-func (t *migratingTarget) Migrate(ctx context.Context, d string, m []byte) (string, error) {
-	return t.rc.Migrate(ctx, d, m)
+func (t *migratingTarget) Migrate(ctx context.Context, d string, m []byte, workers []string) (string, error) {
+	return t.rc.Migrate(ctx, d, m, workers)
 }
 
 const liveImage = "postgres:16-alpine"
@@ -35,7 +37,10 @@ func dockerOut(t *testing.T, args ...string) string {
 func waitPostgres(t *testing.T, container string, port int) {
 	t.Helper()
 	deadline := time.Now().Add(90 * time.Second)
-	for exec.Command("docker", "exec", container, "pg_isready", "-U", "postgres", "-p", fmt.Sprint(port)).Run() != nil {
+	// Over TCP: while it initialises, the image runs a temporary server on
+	// the socket alone and then restarts it, and a dump started on the
+	// socket's first answer fell in that restart.
+	for exec.Command("docker", "exec", container, "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-p", fmt.Sprint(port)).Run() != nil {
 		if time.Now().After(deadline) {
 			logs, _ := exec.Command("docker", "logs", container).CombinedOutput()
 			t.Fatalf("%s never answered: %s", container, logs)
@@ -121,5 +126,70 @@ func TestAWorkersDatabaseMovesByItsOwnCommandsBeforeTheSiteStartsThere(t *testin
 	}
 	if raw, _ := os.ReadFile(filepath.Join(srcRoot, "sites", "bad.test", "site.json")); strings.Contains(string(raw), "disabled") {
 		t.Fatalf("the V1 site was not started again: %s", raw)
+	}
+}
+
+// Between two V2 houses: the source's export runs inside the worker's own
+// container as the database's user, who cannot write in the site's folder,
+// so the house writes the dump (move.output) and the target imports it.
+// DOCKER=1 runs it.
+func TestAV2WorkersDatabaseIsExportedInsideItsContainer(t *testing.T) {
+	if os.Getenv("DOCKER") != "1" {
+		t.Skip("DOCKER=1 runs it against the machine's docker")
+	}
+	src, dst := t.TempDir(), t.TempDir()
+	site := filepath.Join(src, "sites", "v2.test")
+	os.MkdirAll(site, 0o755)
+	raw := []byte(`{"version":2,"static":{},"workers":{"db":{"command":["postgres","-p","$PORT"],"runtime":"docker","port":41979,
+ "docker":{"image":"` + liveImage + `","user":"70:70","volumes":["pg:/var/lib/postgresql/data"]},
+ "env":{"POSTGRES_HOST_AUTH_METHOD":"trust","PGDATA":"/var/lib/postgresql/data/pgdata"},
+ "move":{"export":["pg_dump","-Fc","-U","postgres","-p","$PORT"],"output":".move/db.dump",
+  "ready":["pg_isready","-h","127.0.0.1","-p","$PORT","-U","postgres"],
+  "import":["pg_restore","-U","postgres","-p","$PORT","-d","postgres","--exit-on-error",".move/db.dump"]}}}}`)
+	m, err := manifest.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vol := runtime.NamedVolume("v2.test", "pg")
+	t.Cleanup(func() { exec.Command("docker", "volume", "rm", "-f", vol).Run() })
+	spec := manifest.WorkerSpec("v2.test", site, "db", m.Workers["db"])
+	inst, err := runtime.Docker{}.Start(context.Background(), spec, 41979, filepath.Join(src, "data", "logs", "v2.test", "worker-db.log"), filepath.Join(src, "data", "homes", "v2.test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := inst.State().Container
+	t.Cleanup(func() { exec.Command("docker", "rm", "-f", name).Run() })
+	fsx.WriteJSON(runtime.StatePath(filepath.Join(src, "data"), "v2.test/db"), inst.State(), 0o644)
+	waitPostgres(t, name, 41979)
+	dockerOut(t, "exec", name, "psql", "-U", "postgres", "-p", "41979", "-v", "ON_ERROR_STOP=1", "-c", "create table t (v text); insert into t values ('from the source node');")
+
+	if _, err := ExportHere(context.Background(), src, site, "v2.test", m, []string{"db"}); err != nil {
+		logs, _ := os.ReadFile(filepath.Join(src, "data", "logs", "v2.test", "move-db.log"))
+		t.Fatalf("%v\n%s", err, logs)
+	}
+	dump := filepath.Join(site, ".move", "db.dump")
+	if st, err := os.Stat(dump); err != nil || st.Size() < 100 {
+		t.Fatalf("no dump: %v", err)
+	}
+	// The source's container goes, as the move archives the site, and the
+	// target brings its own up on the same port.
+	exec.Command("docker", "rm", "-f", name).Run()
+	exec.Command("docker", "volume", "rm", "-f", vol).Run()
+
+	r := Receiver{Root: dst}
+	staged := r.StagingSite("v2.test")
+	os.MkdirAll(filepath.Join(staged, ".move"), 0o755)
+	b, _ := os.ReadFile(dump)
+	os.WriteFile(filepath.Join(staged, ".move", "db.dump"), b, 0o644)
+	if _, err := r.Migrate(context.Background(), "v2.test", raw, nil); err != nil {
+		logs, _ := os.ReadFile(filepath.Join(dst, "data", "logs", "v2.test", "move-db.log"))
+		t.Fatalf("%v\n%s", err, logs)
+	}
+	check := "mwtest-v2check"
+	dockerOut(t, "run", "-d", "--name", check, "--user", "70:70", "-e", "PGDATA=/var/lib/postgresql/data/pgdata", "-v", vol+":/var/lib/postgresql/data", liveImage)
+	t.Cleanup(func() { exec.Command("docker", "rm", "-f", check).Run() })
+	waitPostgres(t, check, 5432)
+	if got := dockerOut(t, "exec", check, "psql", "-U", "postgres", "-tAc", "select v from t"); got != "from the source node" {
+		t.Fatalf("the target's database has %q", got)
 	}
 }
