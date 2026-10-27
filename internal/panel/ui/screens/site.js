@@ -464,9 +464,13 @@ function overviewTab(domain) {
   // Restart is for now; stop and start are written to the manifest
   // (workers.<name>.disabled), so they survive a restart of the house.
   function workerActions(name, def, w) {
+    // The site's own address, here: this tab is not inside siteScreen,
+    // whose base the first version of these links used and broke the
+    // overview of every site with a worker.
+    const tabs = `#/sites/${enc(domain)}`;
     const box = h("div", { class: "actions" },
-      h("a", { class: "btn sm", href: `${base}/logs?worker=${enc(name)}` }, icon("list"), t("site.workerLogs")),
-      h("a", { class: "btn sm", href: `${base}/activity?worker=${enc(name)}` }, icon("gauge"), t("site.workerUsage")));
+      h("a", { class: "btn sm", href: `${tabs}/logs?worker=${enc(name)}` }, icon("list"), t("site.workerLogs")),
+      h("a", { class: "btn sm", href: `${tabs}/activity?worker=${enc(name)}` }, icon("gauge"), t("site.workerUsage")));
     const path = `/sites/${enc(domain)}/workers/${enc(name)}`;
     if (def.disabled) {
       box.append(btn(t("site.workerStart"), "play", () => act("start", path + "/start", t("site.workerStarted", { name })), "sm"));
