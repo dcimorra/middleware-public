@@ -138,7 +138,7 @@ func runCommand(ctx context.Context, d runtime.Docker, container string, spec *m
 			if cctx.Err() == context.DeadlineExceeded {
 				return fmt.Errorf("%s: cut after %s (its output is in %s)", what, timeout, logFile)
 			}
-			return fmt.Errorf("%s: %w (its output is in %s)", what, err, logFile)
+			return fmt.Errorf("%s: %w (its output is in %s)%s", what, err, logFile, logTail(logFile))
 		}
 		return nil
 	}
@@ -149,7 +149,7 @@ func runCommand(ctx context.Context, d runtime.Docker, container string, spec *m
 	select {
 	case err := <-inst.Done():
 		if err != nil {
-			return fmt.Errorf("%s: %w (its output is in %s)", what, err, logFile)
+			return fmt.Errorf("%s: %w (its output is in %s)%s", what, err, logFile, logTail(logFile))
 		}
 		return nil
 	case <-time.After(timeout):
@@ -197,9 +197,25 @@ func runAsOperator(ctx context.Context, spec *manifest.Spec, port int, logFile s
 		if cctx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("%s: cut after %s (its output is in %s)", what, timeout, logFile)
 		}
-		return fmt.Errorf("%s: %w (its output is in %s)", what, err, logFile)
+		return fmt.Errorf("%s: %w (its output is in %s)%s", what, err, logFile, logTail(logFile))
 	}
 	return nil
+}
+
+// logTail is the end of a failed command's log, for its error: the log is
+// on the target, and the person running an import on the source only sees
+// the error. hogarify's import failed with "exit status 1" and the reason,
+// a "Permission denied" two lines up, was on another machine.
+func logTail(logFile string) string {
+	raw, err := os.ReadFile(logFile)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(lines) > 5 {
+		lines = lines[len(lines)-5:]
+	}
+	return "; it ended with: " + strings.Join(lines, " | ")
 }
 
 // workerPort is the worker's written port, or a free one for the time of

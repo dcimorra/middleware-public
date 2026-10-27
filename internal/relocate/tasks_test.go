@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/middleware-public/internal/runtime"
 	"github.com/dcimorra/middleware-public/internal/tasks"
 )
 
@@ -114,5 +116,18 @@ func TestAMoveWhoseDataMovesByCommandIsRefusedWhereNothingRunsIt(t *testing.T) {
 	}
 	if strings.Join(steps, " ") != "check" {
 		t.Fatalf("it got as far as %v", steps)
+	}
+}
+
+// A move command that fails says why in its error, not only in a log on
+// the other machine.
+func TestAFailedMoveCommandSaysTheEndOfItsOutput(t *testing.T) {
+	dir := t.TempDir()
+	spec := &manifest.Spec{Domain: "a.test/db/move", SiteDir: dir, Cwd: dir, Env: map[string]string{}, Runtime: "process",
+		Command: []string{"sh", "-c", "echo restoring; echo 'rm: cannot remove x: Permission denied' >&2; exit 1"}}
+	log := filepath.Join(dir, "move.log")
+	err := runCommand(context.Background(), runtime.Docker{}, "", spec, 0, log, filepath.Join(dir, "home"), time.Minute)
+	if err == nil || !strings.Contains(err.Error(), "Permission denied") {
+		t.Fatalf("err: %v", err)
 	}
 }
