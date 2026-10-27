@@ -280,3 +280,28 @@ func TestADockerWorkerAndItsMoveAreChecked(t *testing.T) {
 		t.Fatalf("a worker's volume out of the folder: %v", err)
 	}
 }
+
+func TestMoveExcludeMatchesFoldersAndFilesAndRefusesWhatLeavesTheFolder(t *testing.T) {
+	m, err := Parse([]byte(`{"version":2,"static":{},"move":{"exclude":["storage/products/*",".next-*/cache","*.log"]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rel, want := range map[string]bool{
+		"storage/products/ab/c.webp": false, // under a matched folder: the walk never gets there
+		"storage/products/ab":        true,
+		"storage/products":           false, // the folder stays, for the site to write into
+		".next-20261019/cache":       true,
+		".next-20261019/server":      false,
+		"debug.log":                  true,
+		"storage/uploads/x.png":      false,
+	} {
+		if got := m.Excluded(rel); got != want {
+			t.Errorf("%s: excluded=%v, want %v", rel, got, want)
+		}
+	}
+	for _, bad := range []string{`"/etc"`, `"../x"`, `"a/../../b"`, `"site.json"`, `"*"`, `""`, `"[x"`} {
+		if _, err := Parse([]byte(`{"version":2,"static":{},"move":{"exclude":[` + bad + `]}}`)); err == nil {
+			t.Errorf("move.exclude %s was accepted", bad)
+		}
+	}
+}

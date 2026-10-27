@@ -47,10 +47,12 @@ type Manifest struct {
 	Run      *Run               `json:"run,omitempty"`
 	Upstream string             `json:"upstream,omitempty"`
 	Workers  map[string]*Worker `json:"workers,omitempty"`
-	Disabled bool               `json:"disabled,omitempty"`
-	Hold     *Hold              `json:"hold,omitempty"`
-	Access   *Access            `json:"access,omitempty"`
-	WAF      *WAF               `json:"waf,omitempty"`
+	// Move says what a move to another node leaves behind (see SiteMove).
+	Move     *SiteMove `json:"move,omitempty"`
+	Disabled bool      `json:"disabled,omitempty"`
+	Hold     *Hold     `json:"hold,omitempty"`
+	Access   *Access   `json:"access,omitempty"`
+	WAF      *WAF      `json:"waf,omitempty"`
 	// Security decides by what a caller claims to be and where it is
 	// (robots, browsers, countries), and which paths are never served.
 	Security *security.Rules `json:"security,omitempty"`
@@ -188,6 +190,31 @@ type Worker struct {
 	// folder (a database in a named volume): copying its files while it
 	// runs would carry a torn copy, and not copying them carries nothing.
 	Move *WorkerMove `json:"move,omitempty"`
+}
+
+// SiteMove is what a move does with the site's folder.
+type SiteMove struct {
+	// Exclude are globs relative to the folder ("storage/products/*",
+	// ".next-*/cache") whose folders and files do not travel: what the
+	// site makes again on demand. comparaloo's 7.9 GB of image cache, in
+	// 692,042 files, was most of what a move of it would have copied. A
+	// folder's own pattern leaves out the folder; "folder/*" its contents,
+	// so the folder is there for the site to write into.
+	Exclude []string `json:"exclude,omitempty"`
+}
+
+// Excluded says whether rel, a slash path inside the site's folder, is
+// one the manifest's move.exclude leaves out.
+func (m *Manifest) Excluded(rel string) bool {
+	if m == nil || m.Move == nil {
+		return false
+	}
+	for _, pat := range m.Move.Exclude {
+		if ok, _ := path.Match(pat, rel); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // WorkerMove are the commands a move runs for a worker's data. Arrays, as
@@ -616,6 +643,22 @@ func (m *Manifest) Validate() error {
 	}
 	if m.Upstream != "" && !strings.HasPrefix(m.Upstream, "http://") && !strings.HasPrefix(m.Upstream, "https://") {
 		return fmt.Errorf("upstream: %q must start with http:// or https://", m.Upstream)
+	}
+	if m.Move != nil {
+		for _, pat := range m.Move.Exclude {
+			clean := path.Clean(pat)
+			if pat == "" || clean != pat || path.IsAbs(pat) || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+				return fmt.Errorf("move.exclude: %q is not a path inside the folder (relative, clean, no ..)", pat)
+			}
+			if _, err := path.Match(pat, ""); err != nil {
+				return fmt.Errorf("move.exclude: %q: %v", pat, err)
+			}
+			// The manifest is what makes the site there: leaving it out
+			// would move a folder that is not a site.
+			if ok, _ := path.Match(pat, FileName); ok {
+				return fmt.Errorf("move.exclude: %q leaves out %s", pat, FileName)
+			}
+		}
 	}
 	for name, w := range m.Workers {
 		if !validName(name) {

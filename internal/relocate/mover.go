@@ -187,10 +187,7 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	} else if !info.IsDir() {
 		return rep, ErrNotAFolder
 	}
-	parts := Parts(m.Root, domain)
-	if m.Parts != nil {
-		parts = m.Parts(m.Root, domain)
-	}
+	parts := m.PartsFor(domain)
 
 	progress(StepCheck, "asking "+t.Name()+" whether it can take "+domain)
 	moving, err := m.Check(ctx, domain, t)
@@ -220,7 +217,7 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	// the install is not part of the time it is down.
 	if pr, ok := t.(Preparer); ok && m.Install {
 		progress(StepInstall, "installing its dependencies on "+t.Name()+", for that machine, while it serves here")
-		said, err := pr.Prepare(ctx, domain, LeftBehind(dir))
+		said, err := pr.Prepare(ctx, domain, LeftBehind(dir, siteSkip(parts)))
 		if err != nil {
 			return rep, undone(fmt.Errorf("installing its dependencies there: %w", err), m.undo(t, domain, false))
 		}
@@ -360,6 +357,20 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	rep.Archive = path
 	progress(StepDone, fmt.Sprintf("%s runs on %s; it was down %s", domain, t.Name(), rep.Down))
 	return rep, nil
+}
+
+// PartsFor is what a move of domain copies: the source's parts, less what
+// the manifest it will have leaves out (move.exclude).
+func (m *Mover) PartsFor(domain string) []archive.Part {
+	dir := filepath.Join(m.Root, "sites", domain)
+	if m.Dir != "" {
+		dir = m.Dir
+	}
+	parts := Parts(m.Root, domain)
+	if m.Parts != nil {
+		parts = m.Parts(m.Root, domain)
+	}
+	return Excluding(parts, dir, m.plannedManifest(domain, dir))
 }
 
 // Check asks the target, before anything is touched, whether it can take

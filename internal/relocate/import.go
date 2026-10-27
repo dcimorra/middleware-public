@@ -306,10 +306,10 @@ func (t HTTPTarget) Publish(ctx context.Context, d, door string) error {
 // ImportParts are what an import takes: the folder, without what the
 // target installs again, and the site's HOME.
 func ImportParts(root, domain string) []archive.Part {
-	skip := Reinstalled
+	skip := SkipReinstalled
 	return []archive.Part{
-		{Name: "site", Path: filepath.Join(root, "sites", domain), SkipDir: skip},
-		{Name: "data/homes/" + domain, Path: filepath.Join(root, "data", "homes", domain), SkipDir: skip},
+		{Name: "site", Path: filepath.Join(root, "sites", domain), Skip: skip},
+		{Name: "data/homes/" + domain, Path: filepath.Join(root, "data", "homes", domain), Skip: skip},
 	}
 }
 

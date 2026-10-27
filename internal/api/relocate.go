@@ -445,7 +445,7 @@ func (s *Server) registerRelocateSource(m *nodes.Mesh) {
 		if _, ok := src.Published(domain); ok {
 			names = src.Names(domain)
 		}
-		a := relocate.Analyze(dir, parts(s.opts.Root, domain), install, names)
+		a := relocate.Analyze(dir, relocate.Excluding(parts(s.opts.Root, domain), dir, site.Manifest), install, names)
 		out := map[string]any{"analysis": a}
 		if install && a.Node == "" {
 			if v := siteNodeMajor(r.Context(), dir, site.Manifest.Run.Command); v != "" {

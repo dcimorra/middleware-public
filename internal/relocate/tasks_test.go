@@ -131,3 +131,52 @@ func TestAFailedMoveCommandSaysTheEndOfItsOutput(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 }
+
+// What move.exclude names stays behind, folders and files alike, and the
+// plan shown first says so; a folder whose contents are excluded arrives
+// empty, for the site to fill again; nothing is installed inside what is
+// left out.
+func TestAMoveLeavesBehindWhatTheManifestExcludes(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	seed(t, src)
+	site := filepath.Join(src, "sites/a.test")
+	write := func(rel, body string) {
+		os.MkdirAll(filepath.Dir(filepath.Join(site, rel)), 0o755)
+		os.WriteFile(filepath.Join(site, rel), []byte(body), 0o644)
+	}
+	os.WriteFile(filepath.Join(site, "site.json"), []byte(`{"version":2,"static":{"root":"public"},"move":{"exclude":["storage/products/*",".next-*/cache","*.log"]}}`), 0o644)
+	write("storage/products/ab/1.webp", strings.Repeat("i", 50000))
+	write("storage/uploads/u.png", "upload")
+	write(".next-1/cache/images/x", strings.Repeat("c", 50000))
+	write(".next-1/cache/tool/package.json", `{"dependencies":{"x":"1"}}`)
+	os.MkdirAll(filepath.Join(site, ".next-1/cache/tool/node_modules"), 0o755)
+	write(".next-1/server/page.js", "page")
+	write("debug.log", "noise")
+
+	m := &Mover{Root: src, Source: &localSource{root: src}, Poll: 10 * time.Millisecond, ReadyWait: time.Second}
+	plan := Analyze(site, m.PartsFor("a.test"), true, nil)
+	for _, in := range plan.Installs {
+		if strings.Contains(in.Dir, "cache") {
+			t.Fatalf("an install inside what is left out: %+v", plan.Installs)
+		}
+	}
+	if plan.Bytes > 250000+100000 {
+		t.Fatalf("the plan counts what is left out: %d bytes", plan.Bytes)
+	}
+	if _, err := m.Move(context.Background(), "a.test", &localTarget{rc: Receiver{Root: dst}, ready: true}, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := filepath.Join(dst, "sites/a.test")
+	for rel, want := range map[string]bool{
+		"storage/uploads/u.png":      true,
+		".next-1/server/page.js":     true,
+		"storage/products":           true,
+		"storage/products/ab/1.webp": false,
+		".next-1/cache":              false,
+		"debug.log":                  false,
+	} {
+		if _, err := os.Stat(filepath.Join(got, rel)); (err == nil) != want {
+			t.Errorf("%s on the target: %v, want %v", rel, err == nil, want)
+		}
+	}
+}

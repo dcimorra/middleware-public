@@ -168,6 +168,8 @@ manifest](manifest.md#workers)). Its `export` runs on the V1 machine as the
 person running the import, against the database the V1 site used (a
 `docker exec` into its container, for one), with the site stopped; the dump
 travels in the last copy and is imported in V2 before the site starts.
+What the site makes again on demand need not travel: `move.exclude` in its
+`site.v2.json` ([the manifest](manifest.md#move)) leaves it behind.
 
 ### From any server
 

@@ -131,7 +131,7 @@ func dockerCmd(path string) []string {
 
 // Parts implements Mover.Parts: the folder, without its dependencies.
 func (s *GenericSource) Parts(_, _ string) []archive.Part {
-	return []archive.Part{{Name: "site", Path: s.Dir, SkipDir: Reinstalled}}
+	return []archive.Part{{Name: "site", Path: s.Dir, Skip: SkipReinstalled}}
 }
 
 // Needs implements Needer.

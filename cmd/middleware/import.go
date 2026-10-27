@@ -97,11 +97,7 @@ func importCmd(args []string) error {
 	}
 	// What it will do, before it does it: the same analysis a move between
 	// nodes shows in the panel.
-	parts := relocate.ImportParts
-	if mover.Parts != nil {
-		parts = mover.Parts
-	}
-	plan := relocate.Analyze(dir, parts(mover.Root, domain), true, nil)
+	plan := relocate.Analyze(dir, mover.PartsFor(domain), true, nil)
 	fmt.Printf("  plan: copies %.1f MB in %d files", float64(plan.Bytes)/(1<<20), plan.Files)
 	if plan.Node != "" {
 		fmt.Printf(", Node %s", plan.Node)
@@ -133,7 +129,10 @@ func importCmd(args []string) error {
 		fmt.Println("Nothing was moved (--dry-run).")
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+	// A backstop, not a budget: each step bounds itself (the install, each
+	// move command by its timeout, the wait for the site), and a database
+	// of tens of gigabytes made two hours too short for the whole.
+	ctx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
 	defer cancel()
 	begin := time.Now()
 	rep, err := mover.Move(ctx, domain, target, func(step, msg string) {

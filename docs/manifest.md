@@ -415,6 +415,21 @@ rest of the path follows; the query string follows unless `to` has its own.
 The first rule that matches wins; one that would send a request to itself
 is not followed. The site's page edits them (Redirects).
 
+## Move
+
+```json
+"move": { "exclude": ["storage/products/*", ".next-*/cache"] }
+```
+
+What a move to another node, or an import, leaves behind: globs relative to
+the site's folder (`*` does not cross a `/`), for folders and files alike,
+of what the site makes again on demand (an image cache, a build's cache). A
+folder's own pattern leaves out the folder; `folder/*` leaves out what is in
+it, so the folder arrives empty for the site to write into. Nothing is
+installed inside what is left out, and the plan a move or an import shows
+first counts without it. A pattern that leaves the folder, or that would
+leave out `site.json`, is refused.
+
 ## Workers
 
 A worker is a process that must always be up and answers no domain: a backend

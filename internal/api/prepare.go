@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/relocate"
 )
 
@@ -120,8 +121,31 @@ func (s *Server) registerPrepare(rc relocate.Receiver) {
 	})
 }
 
-// migrateTime bounds a received site's data imports.
+// migrateTime bounds a received site's data imports when its manifest
+// asks for little: past it the job is cut whatever its commands say. A
+// database of tens of gigabytes takes longer than the two hours this once
+// was, so it grows with what the moving workers' timeouts add up to.
 const migrateTime = 2 * time.Hour
+
+func migrateTimeFor(raw []byte) time.Duration {
+	m, err := manifest.Parse(raw)
+	if err != nil {
+		return migrateTime
+	}
+	var total time.Duration
+	for _, name := range relocate.MovingWorkers(m) {
+		t := time.Duration(m.Workers[name].Move.Timeout)
+		if t <= 0 {
+			t = 30 * time.Minute
+		}
+		// ready and import, each up to its timeout, and the worker's start.
+		total += 2*t + 5*time.Minute
+	}
+	if total < migrateTime {
+		return migrateTime
+	}
+	return total
+}
 
 // registerMigrate runs a received site's workers' imports (move.import)
 // before its commit, on their own as the install does, for the same
@@ -153,7 +177,7 @@ func (s *Server) registerMigrate(rc relocate.Receiver) {
 		job := &prepareJob{}
 		s.migrates.jobs[domain] = job
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), migrateTime)
+			ctx, cancel := context.WithTimeout(context.Background(), migrateTimeFor(raw))
 			defer cancel()
 			said, err := rc.Migrate(ctx, domain, raw)
 			s.migrates.mu.Lock()

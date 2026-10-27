@@ -48,7 +48,7 @@ import (
 // installs again for its own machine (Mover.Install).
 func MoveParts(root, domain string) []archive.Part {
 	parts := Parts(root, domain)
-	parts[0].SkipDir = Reinstalled
+	parts[0].Skip = SkipReinstalled
 	return parts
 }
 
@@ -58,13 +58,19 @@ func MoveParts(root, domain string) []archive.Part {
 // package.json is in frontend/ (litterae.cc) arrived with its root
 // installed, which has none, and frontend/ without node_modules: "fork/exec
 // frontend/node_modules/.bin/vite: no such file or directory".
-func LeftBehind(siteDir string) []string {
+//
+// skip is the site part's Skip: nothing is installed inside what the move
+// leaves out (move.exclude), and nil is Reinstalled alone.
+func LeftBehind(siteDir string, skip func(string, bool) bool) []string {
 	var out []string
 	_ = filepath.WalkDir(siteDir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || !d.IsDir() {
 			return nil
 		}
 		if d.Name() == ".git" {
+			return filepath.SkipDir
+		}
+		if skip != nil && p != siteDir && !Reinstalled(p) && skip(p, true) {
 			return filepath.SkipDir
 		}
 		if Reinstalled(p) {
@@ -80,6 +86,43 @@ func LeftBehind(siteDir string) []string {
 	sort.Strings(out) // "." first
 	return out
 }
+
+// Excluding returns parts with the site's folder (the part named "site")
+// also leaving out what m's move.exclude names: the one place that rule is
+// applied, for the copy, the plan a move shows first and the installs.
+func Excluding(parts []archive.Part, siteDir string, m *manifest.Manifest) []archive.Part {
+	if m == nil || m.Move == nil || len(m.Move.Exclude) == 0 {
+		return parts
+	}
+	out := append([]archive.Part(nil), parts...)
+	for i := range out {
+		if out[i].Name != "site" {
+			continue
+		}
+		prev := out[i].Skip
+		out[i].Skip = func(p string, dir bool) bool {
+			if prev != nil && prev(p, dir) {
+				return true
+			}
+			rel, err := filepath.Rel(siteDir, p)
+			return err == nil && m.Excluded(filepath.ToSlash(rel))
+		}
+	}
+	return out
+}
+
+// siteSkip is the Skip of the part that is the site's folder.
+func siteSkip(parts []archive.Part) func(string, bool) bool {
+	for _, p := range parts {
+		if p.Name == "site" {
+			return p.Skip
+		}
+	}
+	return nil
+}
+
+// SkipReinstalled is Reinstalled as a part's Skip.
+func SkipReinstalled(path string, dir bool) bool { return dir && Reinstalled(path) }
 
 // Reinstalled says a folder is a package's dependencies, which the target
 // installs again: a node_modules beside a package.json that declares some.

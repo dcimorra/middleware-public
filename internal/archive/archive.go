@@ -90,11 +90,12 @@ type Part struct {
 	Name string
 	// Path is where it is on this machine: a folder (walked) or a file.
 	Path string
-	// SkipDir, when set, leaves out a folder inside the part, given its
-	// path (what the other side reinstalls: a package's node_modules); nil
-	// is everything. The path and not the name: a build keeps folders of
-	// that same name that nothing reinstalls (Next's .next/node_modules).
-	SkipDir func(path string) bool
+	// Skip, when set, leaves out a folder or a file inside the part, given
+	// its path and whether it is a folder (what the other side reinstalls:
+	// a package's node_modules; what the manifest's move.exclude names);
+	// nil is everything. The path and not the name: a build keeps folders
+	// of that same name that nothing reinstalls (Next's .next/node_modules).
+	Skip func(path string, dir bool) bool
 }
 
 // PackParts writes parts to w as one .tar.gz, each under its name, with
@@ -124,7 +125,7 @@ func PackPartsSince(ctx context.Context, w io.Writer, parts []Part, since time.T
 		if _, err := os.Lstat(p.Path); errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
-		if err := addTreeSince(ctx, tw, p.Path, strings.Trim(filepath.ToSlash(p.Name), "/"), &rep, since, &index, p.SkipDir); err != nil {
+		if err := addTreeSince(ctx, tw, p.Path, strings.Trim(filepath.ToSlash(p.Name), "/"), &rep, since, &index, p.Skip); err != nil {
 			return rep, err
 		}
 	}
@@ -148,7 +149,7 @@ func addTree(ctx context.Context, tw *tar.Writer, root, prefix string, rep *Repo
 	return addTreeSince(ctx, tw, root, prefix, rep, time.Time{}, nil, nil)
 }
 
-func addTreeSince(ctx context.Context, tw *tar.Writer, root, prefix string, rep *Report, since time.Time, index *[]string, skipDir func(string) bool) error {
+func addTreeSince(ctx context.Context, tw *tar.Writer, root, prefix string, rep *Report, since time.Time, index *[]string, skip func(string, bool) bool) error {
 	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -167,8 +168,11 @@ func addTreeSince(ctx context.Context, tw *tar.Writer, root, prefix string, rep 
 		if prefix != "" {
 			name = strings.TrimSuffix(prefix+"/"+name, "/")
 		}
-		if skipDir != nil && rel != "" && d.IsDir() && skipDir(p) {
-			return filepath.SkipDir
+		if skip != nil && rel != "" && skip(p, d.IsDir()) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		info, err := d.Info()
 		if err != nil {

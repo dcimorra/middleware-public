@@ -358,7 +358,7 @@ func TestTheFoldersWhoseDependenciesAreLeftBehindAreFound(t *testing.T) {
 	os.MkdirAll(filepath.Join(site, ".next", "node_modules", "@prisma"), 0o755) // a build's own
 	os.MkdirAll(filepath.Join(site, "docs"), 0o755)
 	os.WriteFile(filepath.Join(site, "docs", "package.json"), []byte("{}"), 0o644) // never installed: nothing to put back
-	if got := strings.Join(LeftBehind(site), ","); got != ".,frontend,packages/api" {
+	if got := strings.Join(LeftBehind(site, nil), ","); got != ".,frontend,packages/api" {
 		t.Fatalf("left behind: %s", got)
 	}
 }
@@ -424,7 +424,7 @@ func TestABuildsNodeModulesTravelsEvenWithAPackageJSONBesideIt(t *testing.T) {
 	if !Reinstalled(filepath.Join(dir, "node_modules")) {
 		t.Fatal("a package's node_modules was carried")
 	}
-	if got := strings.Join(LeftBehind(dir), ","); got != "." {
+	if got := strings.Join(LeftBehind(dir, nil), ","); got != "." {
 		t.Fatalf("left behind: %s", got)
 	}
 }

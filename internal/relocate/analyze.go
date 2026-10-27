@@ -79,8 +79,11 @@ func Analyze(siteDir string, parts []archive.Part, install bool, names []string)
 			if err != nil {
 				return nil
 			}
-			if d.IsDir() && path != p.Path && p.SkipDir != nil && p.SkipDir(path) {
-				return filepath.SkipDir
+			if path != p.Path && p.Skip != nil && p.Skip(path, d.IsDir()) {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
 			}
 			if d.Type().IsRegular() {
 				if info, err := d.Info(); err == nil {
@@ -92,7 +95,7 @@ func Analyze(siteDir string, parts []archive.Part, install bool, names []string)
 		})
 	}
 	if install {
-		for _, dir := range LeftBehind(siteDir) {
+		for _, dir := range LeftBehind(siteDir, siteSkip(parts)) {
 			cmd, lock := InstallCommand(filepath.Join(siteDir, filepath.FromSlash(dir)))
 			a.Installs = append(a.Installs, Install{Dir: dir, Command: cmd, Lockfile: lock})
 			if !lock {
