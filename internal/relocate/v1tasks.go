@@ -189,6 +189,17 @@ func (s *V1Source) convertTasks(domain string) (map[string][]byte, []string, err
 		if err != nil {
 			return nil, nil, fmt.Errorf("task %s: %w", name, err)
 		}
+		if s.TasksOff {
+			t, err := tasks.Parse(v2)
+			if err != nil {
+				return nil, nil, fmt.Errorf("task %s: %w", name, err)
+			}
+			t.Disabled = true
+			if v2, err = json.MarshalIndent(t, "", "  "); err != nil {
+				return nil, nil, err
+			}
+			v2 = append(v2, '\n')
+		}
 		out[name] = v2
 		if t, _ := tasks.Parse(v2); t != nil && !t.Disabled {
 			on++
@@ -198,6 +209,9 @@ func (s *V1Source) convertTasks(domain string) (map[string][]byte, []string, err
 		}
 	}
 	notes := []string{fmt.Sprintf("tasks: %d go with it (%d on, %d off), and are turned off here", len(out), on, len(out)-on)}
+	if s.TasksOff {
+		notes[0] = fmt.Sprintf("tasks: %d go with it, all turned off there (--tasks-off), and are turned off here", len(out))
+	}
 	keys := make([]string, 0, len(said))
 	for k := range said {
 		keys = append(keys, k)

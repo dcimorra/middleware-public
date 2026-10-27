@@ -180,3 +180,38 @@ func TestAMoveLeavesBehindWhatTheManifestExcludes(t *testing.T) {
 		}
 	}
 }
+
+// --tasks-off: a site that stays on the target for a while, on a machine
+// too small for its nightly jobs, gets its tasks there turned off; here
+// they are turned off as always, and an undone move puts back the ones
+// that were on.
+func TestTasksOffHasEveryTaskArriveTurnedOff(t *testing.T) {
+	src := t.TempDir()
+	on := `{"title":"Sync","group":"old","schedule":"50 0 * * *","command":["/bin/true"],"site":"old.test"}`
+	seedV1(t, src, map[string]string{"old-sync": on})
+	s := &V1Source{Root: src, TasksOff: true, Running: func(string) bool { return false }}
+	if _, err := s.Convert("old.test"); err != nil {
+		t.Fatal(err)
+	}
+	files, err := s.Tasks("old.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tk, err := tasks.Parse(files["old-sync"]); err != nil || !tk.Disabled || tk.Title != "Sync" {
+		t.Fatalf("the task arrives as %+v (%v)", tk, err)
+	}
+	notes, _ := s.TaskNotes("old.test")
+	if !strings.Contains(strings.Join(notes, " "), "--tasks-off") {
+		t.Fatalf("the plan does not say it: %v", notes)
+	}
+	held, err := s.HoldTasks("old.test")
+	if err != nil || len(held) != 1 {
+		t.Fatalf("held %v %v", held, err)
+	}
+	if err := s.ReleaseTasks(held); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(filepath.Join(src, "tasks", "old-sync.json")); string(raw) != on {
+		t.Fatalf("not put back as it was: %s", raw)
+	}
+}

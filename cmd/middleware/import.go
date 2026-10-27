@@ -16,7 +16,7 @@ import (
 
 func init() {
 	subcommands["import"] = importCmd
-	extraUsage += `  import --to <url> --token <token> [--domain d] [--command "…"] [--stop "…"] [--start "…"] <folder>
+	extraUsage += `  import --to <url> --token <token> [--domain d] [--command "…"] [--stop "…"] [--start "…"] [--tasks-off] <folder>
                move one site or app into a V2 house (the token is made in its panel): a V1 house's
                site (<root>/sites/<domain>) or any app folder on any server
 `
@@ -36,13 +36,14 @@ func importCmd(args []string) error {
 	command := fs.String("command", "", "how the app starts, when its folder does not say (\"node server.js\")")
 	stop := fs.String("stop", "", "a shell line that stops the app here for the last copy (\"pm2 stop shop\")")
 	start := fs.String("start", "", "a shell line that starts it here again if the import fails")
+	tasksOff := fs.Bool("tasks-off", false, "the site's tasks arrive turned off (and are turned off here, as always)")
 	dryRun := fs.Bool("dry-run", false, "say what the import would do (what is copied, where dependencies are installed, what will not travel well) and stop")
 	rest, err := parseInterleaved(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(rest) != 1 || *to == "" || *token == "" {
-		return errors.New("usage: middleware import --to <url> --token <token> [--domain d] [--command …] [--stop …] [--start …] <folder>")
+		return errors.New("usage: middleware import --to <url> --token <token> [--domain d] [--command …] [--stop …] [--start …] [--tasks-off] <folder>")
 	}
 	dir, err := filepath.Abs(strings.TrimRight(rest[0], "/"))
 	if err != nil {
@@ -60,7 +61,7 @@ func importCmd(args []string) error {
 	v1 := filepath.Base(filepath.Dir(dir)) == "sites" && filepath.Base(dir) == domain && *command == "" && *stop == ""
 	if v1 {
 		root := filepath.Dir(filepath.Dir(dir))
-		src := &relocate.V1Source{Root: root}
+		src := &relocate.V1Source{Root: root, TasksOff: *tasksOff}
 		if notes, err := src.Convert(domain); err == nil {
 			for _, n := range notes {
 				fmt.Printf("  note: %s\n", n)

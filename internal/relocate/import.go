@@ -321,6 +321,10 @@ type V1Source struct {
 	Wait time.Duration
 	// Running says a process still works in dir; replaced by tests.
 	Running func(dir string) bool
+	// TasksOff has the site's tasks arrive turned off (import --tasks-off):
+	// a site that stays on the target only for a while, on a machine too
+	// small for its nightly jobs, keeps them for when it moves on.
+	TasksOff bool
 
 	original  []byte
 	converted []byte
