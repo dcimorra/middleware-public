@@ -53,7 +53,7 @@ func v2Manifest(srcContainer, importCmd string) string {
   "env":{"POSTGRES_HOST_AUTH_METHOD":"trust","PGDATA":"/var/lib/postgresql/data/pgdata"},
   "move":{
    "export":["sh","-c","mkdir -p .move && docker exec ` + srcContainer + ` pg_dump -U postgres > .move/db.sql"],
-   "ready":["sh","-c","pg_isready -U postgres -p $PORT"],
+   "ready":["pg_isready","-h","127.0.0.1","-p","$PORT","-U","postgres"],
    "import":["sh","-c",` + fmt.Sprintf("%q", importCmd) + `]}}}}`
 }
 

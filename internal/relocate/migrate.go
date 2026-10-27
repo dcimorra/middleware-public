@@ -124,7 +124,8 @@ func runCommand(ctx context.Context, d runtime.Docker, container string, spec *m
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return err
 	}
-	what := strings.Join(spec.Command, " ")
+	argv, _ := spec.WithPort(port)
+	what := strings.Join(argv, " ")
 	if container != "" {
 		out, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
@@ -175,7 +176,8 @@ func runAsOperator(ctx context.Context, spec *manifest.Spec, port int, logFile s
 	defer out.Close()
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, spec.Command[0], spec.Command[1:]...)
+	argv, _ := spec.WithPort(port)
+	cmd := exec.CommandContext(cctx, argv[0], argv[1:]...)
 	cmd.Dir = spec.Cwd
 	cmd.Env = os.Environ()
 	for k, v := range spec.Env {
@@ -191,7 +193,7 @@ func runAsOperator(ctx context.Context, spec *manifest.Spec, port int, logFile s
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Run(); err != nil {
-		what := strings.Join(spec.Command, " ")
+		what := strings.Join(argv, " ")
 		if cctx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("%s: cut after %s (its output is in %s)", what, timeout, logFile)
 		}

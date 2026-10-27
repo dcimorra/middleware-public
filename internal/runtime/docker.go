@@ -397,13 +397,16 @@ func (d Docker) RemoveVolume(ctx context.Context, name string) error {
 // command the docker socket: a command written in a site's manifest with
 // docker in its hands would own the machine.
 func (d Docker) ExecIn(ctx context.Context, container string, spec *manifest.Spec, port int, home string, out *os.File) error {
-	_, env := spec.WithPort(port)
+	// The command with $PORT in it expanded too, not only the environment:
+	// ["pg_isready", "-p", "$PORT"] got "$PORT" as its port, and a move
+	// waited three minutes for a database that was up.
+	argv, env := spec.WithPort(port)
 	args := []string{"exec", "-i", "-w", spec.Cwd}
 	for _, kv := range containerEnv(env, port, spec.Domain, spec.SiteDir, home) {
 		args = append(args, "-e", kv)
 	}
 	args = append(args, container)
-	args = append(args, spec.Command...)
+	args = append(args, argv...)
 	cmd := exec.CommandContext(ctx, d.bin(), args...)
 	cmd.Stdout, cmd.Stderr = out, out
 	cmd.WaitDelay = 5 * time.Second
