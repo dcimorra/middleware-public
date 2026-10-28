@@ -18,7 +18,7 @@ export function open({ title, body, buttons, wide, onSubmit, initialFocus }) {
     const bodyEl = h("div", { class: "dlg-body" });
     append(bodyEl, [body]);
     const foot = h("div", { class: "dlg-foot" });
-    const errBox = h("div", { class: "error-box", hidden: true });
+    const errBox = h("div", { class: "error-box", role: "alert", hidden: true });
     bodyEl.append(errBox);
     let settled = false;
     const finish = (value) => {
@@ -35,8 +35,12 @@ export function open({ title, body, buttons, wide, onSubmit, initialFocus }) {
       }, b.label);
       if (!b.submit) {
         btn.addEventListener("click", async () => {
+          // A second tap while the first is still at work sent the same
+          // request twice.
+          if (btn.classList.contains("busy")) return;
           if (b.onClick) {
             btn.classList.add("busy");
+            btn.setAttribute("aria-busy", "true");
             try {
               const r = await b.onClick(form, showError);
               if (r === false) return;
@@ -45,6 +49,7 @@ export function open({ title, body, buttons, wide, onSubmit, initialFocus }) {
               showError(e.message || String(e));
             } finally {
               btn.classList.remove("busy");
+              btn.removeAttribute("aria-busy");
             }
             return;
           }
@@ -62,7 +67,8 @@ export function open({ title, body, buttons, wide, onSubmit, initialFocus }) {
       e.preventDefault();
       if (!onSubmit) { finish(true); return; }
       const submitBtn = foot.querySelector("button[type=submit]");
-      if (submitBtn) submitBtn.classList.add("busy");
+      if (submitBtn && submitBtn.classList.contains("busy")) return;
+      if (submitBtn) { submitBtn.classList.add("busy"); submitBtn.setAttribute("aria-busy", "true"); }
       try {
         const r = await onSubmit(form, showError);
         if (r === false) return;
@@ -70,7 +76,7 @@ export function open({ title, body, buttons, wide, onSubmit, initialFocus }) {
       } catch (err) {
         showError(err.message || String(err));
       } finally {
-        if (submitBtn) submitBtn.classList.remove("busy");
+        if (submitBtn) { submitBtn.classList.remove("busy"); submitBtn.removeAttribute("aria-busy"); }
       }
     });
     closeBtn.addEventListener("click", () => finish(null));

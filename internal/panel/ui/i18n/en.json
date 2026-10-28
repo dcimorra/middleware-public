@@ -72,8 +72,8 @@
   "template.node": "Node.js app",
   "template.go": "Go app",
   "template.docker": "Docker container",
-  "auth.loginTitle": "Sign in",
-  "auth.loginLead": "The operator password for this installation.",
+  "auth.loginTitle": "Welcome back",
+  "auth.loginLead": "Sign in with the operator password of this installation.",
   "auth.setupTitle": "Set up the operator",
   "auth.setupLead": "This installation has no operator yet. Run `middleware setup` on the server to get a one-time code.",
   "auth.code": "One-time code",
@@ -1711,5 +1711,9 @@
   "activity.which": "What to measure",
   "activity.all": "The site and its workers",
   "activity.worker": "Worker {name}",
-  "activity.workerNow": "Of which worker {name}: {cpu}% of a core, {mem}."
+  "activity.workerNow": "Of which worker {name}: {cpu}% of a core, {mem}.",
+  "common.retry": "Try again",
+  "shell.theme": "Theme",
+  "auth.showPassword": "Show password",
+  "auth.hidePassword": "Hide password"
 }

@@ -45,22 +45,27 @@ export function houseScreen() {
         cell(fmtAgo(r.started, t), t("house.col.since")),
         cell(stop, null, "right"));
     });
-    const asking = (w.asking || []).map((a) => h("li", null, h("a", { href: convPath(a.name).href }, a.name)));
+    // Who waits for an answer: a chip each, a link to the conversation.
+    const waiting = () => (w.asking || []).map((a) => h("a", { class: "house-chip", href: convPath(a.name).href }, a.name));
     if (!rows.length) {
-      // Who waits for an answer goes on the same line, a link each.
-      const waiting = (w.asking || []).map((a) => h("a", { href: convPath(a.name).href }, a.name));
+      // One line: the state on the left, the slots on the right, and who
+      // waits between them (under them on a phone, where the three side by
+      // side wrapped into a column of fragments).
       live.className = "house-live idle";
-      clear(live).append(...[h("span", { class: "tool-state ok", "aria-hidden": "true" }), h("span", null, t("house.noneRunning")),
-        waiting.length ? h("span", { class: "asking" }, h("span", { class: "muted" }, t("house.waiting", { n: waiting.length })), ...waiting) : null,
-        h("span", { class: "muted" }, t("house.liveCount", { used: cap.used, max: cap.max }))].filter(Boolean));
+      const ws = waiting();
+      clear(live).append(...[
+        h("span", { class: "house-live-state" }, h("span", { class: "tool-state ok", "aria-hidden": "true" }), h("span", null, t("house.noneRunning"))),
+        ws.length ? h("span", { class: "asking" }, h("span", { class: "muted" }, t("house.waiting", { n: ws.length })), ...ws) : null,
+        h("span", { class: "house-live-cap muted" }, t("house.liveCount", { used: cap.used, max: cap.max }))].filter(Boolean));
       return;
     }
+    const asking = waiting();
     live.className = "house-live card pad0";
     clear(live).append(...[
       h("div", { class: "log-bar card-pad" }, h("h2", { class: "grow" }, t("house.live")), h("span", { class: "small muted" }, t("house.liveCount", { used: cap.used, max: cap.max }))),
       rows.length ? table([{ label: t("house.col.conversation") }, { label: t("house.col.provider") }, { label: t("house.col.since") }, { label: "" }], rows, { responsive: true }).el
         : h("p", { class: "card-pad small muted" }, t("house.noneRunning")),
-      asking.length ? h("div", { class: "card-pad" }, h("h3", null, t("house.waiting", { n: asking.length })), h("ul", null, ...asking)) : null].filter(Boolean));
+      asking.length ? h("div", { class: "card-pad house-asking" }, h("h3", null, t("house.waiting", { n: asking.length })), h("div", { class: "asking" }, ...asking)) : null].filter(Boolean));
   }
   loadLive();
   const subs = [onEvent("agent.", (ev) => { if (/^agent\.(started|done|error|question)$/.test(ev.type)) loadLive(); })];
