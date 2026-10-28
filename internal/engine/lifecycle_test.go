@@ -6,11 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/middleware-public/internal/ports"
 	"github.com/dcimorra/middleware-public/internal/runtime"
 )
 
@@ -38,6 +41,116 @@ func waitDead(t *testing.T, pid int, what string) {
 	}
 	if !dead(pid) {
 		t.Fatalf("%s (pid %d) is still running", what, pid)
+	}
+}
+
+// gatedRuntime is the process runtime with a hand on Start: gate, when
+// set, runs before every start and may block it, the way a docker build
+// or an nvm install does. Every instance it started is kept.
+type gatedRuntime struct {
+	runtime.Process
+	gate    func(spec *manifest.Spec)
+	mu      sync.Mutex
+	started []runtime.Instance
+	starts  map[string]int
+}
+
+func (g *gatedRuntime) Start(ctx context.Context, spec *manifest.Spec, port int, logFile, home string) (runtime.Instance, error) {
+	if g.gate != nil {
+		g.gate(spec)
+	}
+	g.mu.Lock()
+	if g.starts == nil {
+		g.starts = map[string]int{}
+	}
+	g.starts[spec.Domain]++
+	g.mu.Unlock()
+	inst, err := g.Process.Start(ctx, spec, port, logFile, home)
+	if err == nil {
+		g.mu.Lock()
+		g.started = append(g.started, inst)
+		g.mu.Unlock()
+	}
+	return inst, err
+}
+
+func (g *gatedRuntime) instances() []runtime.Instance {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]runtime.Instance(nil), g.started...)
+}
+
+func (g *gatedRuntime) startsOf(domain string) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.starts[domain]
+}
+
+// newGatedEngine is newTestEngine on a gatedRuntime.
+func newGatedEngine(t *testing.T, g *gatedRuntime) (*Engine, string) {
+	t.Helper()
+	root := t.TempDir()
+	sites := filepath.Join(root, "sites")
+	os.MkdirAll(sites, 0o755)
+	e := New(Options{SitesDir: sites, DataDir: filepath.Join(root, "data"), Ports: ports.New(41000, 41100), Bus: events.New(""), Tick: 200 * time.Millisecond,
+		Runtimes: map[string]runtime.Runtime{"process": g}})
+	t.Cleanup(func() {
+		stopEverything(e)
+		for _, inst := range g.instances() {
+			_ = inst.Stop(context.Background(), time.Second)
+		}
+	})
+	return e, sites
+}
+
+// A handover that finishes after its site's folder was removed used to
+// install the new generation on the detached site and save its state: it
+// ran on, on its port, and nothing would ever stop it.
+func TestAHandoverThatEndsAfterItsSiteWasRemovedStopsWhatItStarted(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	g := &gatedRuntime{gate: func(spec *manifest.Spec) {
+		if spec.Domain == "gone.test" {
+			once.Do(func() { close(entered) })
+			<-release
+		}
+	}}
+	e, sites := newGatedEngine(t, g)
+	dir := writeSite(t, sites, "gone.test", "x", "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the handover never started")
+	}
+	// The manifest goes, not the folder: a start in a folder that is gone
+	// fails by itself, and this is about the start that succeeds.
+	os.Remove(filepath.Join(dir, "site.json"))
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, ok := e.Lookup("gone.test"); !ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the removed site is still known")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	close(release)
+	deadline = time.Now().Add(15 * time.Second)
+	for len(g.instances()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	insts := g.instances()
+	if len(insts) != 1 {
+		t.Fatalf("%d instances started", len(insts))
+	}
+	waitDead(t, insts[0].State().PID, "the generation that started after its site was removed")
+	time.Sleep(300 * time.Millisecond)
+	if _, err := os.Stat(e.statePath("gone.test")); !os.IsNotExist(err) {
+		t.Fatalf("its state was left behind: %v", err)
 	}
 }
 

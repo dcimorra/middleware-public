@@ -473,13 +473,27 @@ func (e *Engine) handover(ctx context.Context, s *Site, spec *manifest.Spec, act
 		return
 	}
 	e.mu.Lock()
+	if e.sites[domain] != s || s.Mode != manifest.ModeRun {
+		// The folder went, or stopped saying run, while this generation
+		// started. The tick already stopped what the site ran and cleared
+		// its state; installed on the detached site it kept running, on
+		// its port, with nothing left that would ever stop it.
+		s.handing = false
+		e.mu.Unlock()
+		_ = inst.Stop(ctx, 5*time.Second)
+		e.opts.Ports.Release(port)
+		e.emit("instance.discarded", domain, "", "the site was removed or stopped while its new generation started; stopped it", map[string]any{"port": port, "revision": spec.Revision})
+		return
+	}
 	old := s.Instance
 	s.Instance = inst
 	s.failures = 0
 	s.lastErr = ""
 	s.handing = false
-	e.mu.Unlock()
+	// Under the lock, so a tick that removes the site in between cannot
+	// clear the state before it is written and leave it behind.
 	e.saveState(inst.State())
+	e.mu.Unlock()
 	if old == nil {
 		e.opts.Bus.Emit(events.Event{Type: "instance.started", Subject: domain, Actor: actor, Data: map[string]any{"port": port, "revision": spec.Revision}})
 		return
