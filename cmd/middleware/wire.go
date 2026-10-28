@@ -180,6 +180,11 @@ func buildWire(a *app.App) app.Hook {
 		return nil
 	}
 	srv := apiHook.Server
+	if chatManager != nil {
+		// The socket confines a site's agent turn to its site: the chat
+		// manager knows which processes are turns right now.
+		apiHook.SiteOf = chatManager.SiteOf
+	}
 	w := &wireHook{}
 	// A site whose command wants Node gets one: the version it asks for,
 	// installed with nvm under modules/nvm when the machine has none or
@@ -399,10 +404,16 @@ func buildWire(a *app.App) app.Hook {
 				return s
 			},
 			// The house's AI for automatic work when there is one; the
-			// site's own agent otherwise, as before it existed.
+			// site's own agent otherwise, as before it existed. In the
+			// site's repair conversation, not the operator's: the prompt
+			// quotes the site's log (chat.RepairConversation).
 			Send: func(domain, prompt string) (string, error) {
 				s, _ := settings.Load(a.Root)
-				return chatManager.SendWith(domain, prompt, chat.SendOptions{Provider: s.Automation.Provider, Model: s.Automation.Model})
+				name, err := chatManager.RepairConversation(domain)
+				if err != nil {
+					return "", err
+				}
+				return chatManager.SendWith(name, prompt, chat.SendOptions{Provider: s.Automation.Provider, Model: s.Automation.Model})
 			},
 			Automatic: func() bool {
 				s, _ := settings.Load(a.Root)

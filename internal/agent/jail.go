@@ -20,6 +20,10 @@ type Jail struct {
 	SiteDir string
 	// Home is the HOME the child gets, under data/homes/<domain>.
 	Home string
+	// Config is where the CLIs keep their own state for this site, under
+	// data/agents/config/<domain>: not in Home, which the site can write
+	// (ConfigHome says why).
+	Config string
 	// Deny is the list of absolute paths the agent must not touch.
 	Deny []string
 	// Commands are command prefixes the agent must not run: what reaches
@@ -83,7 +87,7 @@ func NewJail(root, workdir, home string) Jail {
 	if home != "" {
 		home = absolute(home)
 	}
-	j := Jail{SiteDir: workdir, Home: home, Commands: append([]string(nil), deniedCommands...)}
+	j := Jail{SiteDir: workdir, Home: home, Config: configBase(root, home), Commands: append([]string(nil), deniedCommands...)}
 	if workdir != root {
 		j.Commands = append(j.Commands, siteOnlyCommands...)
 	}
@@ -129,6 +133,11 @@ func NewJail(root, workdir, home string) Jail {
 		for _, s := range machineSecrets {
 			add(filepath.Join(h, s))
 		}
+	}
+	if j.Config != "" {
+		// Denied even before the folder exists (the siblings below are
+		// listed as they are now): it holds the CLI's sessions and login.
+		add(filepath.Dir(filepath.Dir(j.Config)))
 	}
 	if workdir == root {
 		for _, ent := range readDir(root) {

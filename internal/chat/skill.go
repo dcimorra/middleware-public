@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"embed"
 	"os"
+	"path"
 	"path/filepath"
 
+	"github.com/dcimorra/middleware-public/internal/agent"
 	"github.com/dcimorra/middleware-public/internal/fsx"
 )
 
@@ -45,16 +47,55 @@ func InstallSkill(dir string) error {
 // installSkillFor puts the skill where the provider's CLI will read it
 // from the run's HOME. Claude Code loads skills from ~/.claude/skills;
 // the Antigravity CLI from ~/.gemini/config/skills, so the same file goes
-// there too.
-func installSkillFor(home, provider string) error {
+// there too. Claude Code now runs with its own folder outside HOME
+// (agent.Jail.ConfigHome) and loads its skills from there; the copy in
+// HOME stays, as the guide every other agent is told to read.
+func installSkillFor(j agent.Jail, provider string) error {
+	home := j.Home
 	if home == "" {
 		return nil
 	}
-	if err := InstallSkill(filepath.Join(home, ".claude", "skills", SkillName)); err != nil {
+	if err := installSkillUnder(home, path.Join(".claude", "skills", SkillName)); err != nil {
 		return err
 	}
+	if cfg := j.ConfigPath(provider); cfg != "" && !needsSkillHint[provider] {
+		if err := InstallSkill(filepath.Join(cfg, "skills", SkillName)); err != nil {
+			return err
+		}
+	}
 	if provider == "agy" {
-		return InstallSkill(filepath.Join(home, ".gemini", "config", "skills", SkillName))
+		return installSkillUnder(home, path.Join(".gemini", "config", "skills", SkillName))
+	}
+	return nil
+}
+
+// installSkillUnder is InstallSkill into rel inside home, through an
+// os.Root: the HOME is the site's to write, and a .claude made a link to
+// another site's folder had the house write the skill there.
+func installSkillUnder(home, rel string) error {
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(home)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	data := SkillContent()
+	file := path.Join(rel, "SKILL.md")
+	if cur, err := root.ReadFile(file); err == nil && bytes.Equal(cur, data) {
+		return nil
+	}
+	if err := root.MkdirAll(rel, 0o755); err != nil {
+		return err
+	}
+	tmp := path.Join(rel, ".SKILL.md."+newID()+".tmp")
+	if err := root.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	if err := root.Rename(tmp, file); err != nil {
+		_ = root.Remove(tmp)
+		return err
 	}
 	return nil
 }

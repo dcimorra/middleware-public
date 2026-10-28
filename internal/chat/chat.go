@@ -148,6 +148,9 @@ const (
 	// OriginSite is the site's own code, through the site door: a program,
 	// not a person, on the other side.
 	OriginSite = "site"
+	// OriginRepair is the house's automatic repairs of a site (autofix):
+	// nobody on the other side, and a prompt made of the site's own log.
+	OriginRepair = "repair"
 )
 
 // Conversation is one conversation's file.
@@ -216,6 +219,9 @@ type Manager struct {
 	// asks caches, per conversation file, whether it ends asking (Waiting).
 	askMu sync.Mutex
 	asks  map[string]askState
+
+	// repairMu keeps two repairs from opening two conversations.
+	repairMu sync.Mutex
 
 	opts    Options
 	mu      sync.Mutex
@@ -789,7 +795,7 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 	}
 	// The skill goes in before every turn, not once at start: the home
 	// may be new, and the binary may have been upgraded since the last one.
-	if err := installSkillFor(s.Jail.Home, s.Provider); err != nil {
+	if err := installSkillFor(s.Jail, s.Provider); err != nil {
 		return fail(fmt.Errorf("skill not installed: %w", err))
 	}
 	var system string
@@ -836,8 +842,15 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 	turnEnv := m.opts.TurnEnv
 	m.mu.Unlock()
 	// The house's own conversation pushes with whatever the machine has;
-	// a site's code, which answers the internet, gets nothing here.
-	if turnEnv != nil && domain != Middleware && c.Origin != OriginSite {
+	// a site's code, which answers the internet, gets nothing here, and
+	// neither does a repair: it runs unattended on a prompt that quotes
+	// the site's log, which any visitor writes, and a push is how what a
+	// prompt injected there would leave the machine.
+	if c.Origin == OriginRepair {
+		system += "\nThis is an automatic repair with nobody watching: `git push` is not available in it, so leave committing and pushing to the operator.\n"
+		req.System = system
+	}
+	if turnEnv != nil && domain != Middleware && c.Origin != OriginSite && c.Origin != OriginRepair {
 		for k, v := range turnEnv(domain) {
 			if _, set := req.Env[k]; !set {
 				req.Env[k] = v

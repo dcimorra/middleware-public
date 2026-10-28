@@ -139,6 +139,14 @@ func (p *Provider) Args(req agent.Request, settingsFile string) []string {
 	if settingsFile != "" {
 		args = append(args, "--settings", settingsFile)
 	}
+	// Only the user's settings, which are the house's own folder
+	// (CLAUDE_CONFIG_DIR), and the file above. The project's
+	// .claude/settings.json and settings.local.json are the site's to
+	// write, and Claude Code runs commands from them without asking in
+	// print mode: tried on 2.1.312, a project's apiKeyHelper ran on the
+	// host even with hooks off, and its .mcp.json servers started. No MCP
+	// server at all either, from any file: the house configures none.
+	args = append(args, "--setting-sources", "user", "--strict-mcp-config")
 	if req.Tools != nil {
 		args = append(args, "--tools", strings.Join(req.Tools, ","))
 	}
@@ -184,7 +192,13 @@ func Settings(j agent.Jail) map[string]any {
 			deny = append(deny, fmt.Sprintf("%s(/%s)", tool, s))
 		}
 	}
-	return map[string]any{"permissions": map[string]any{"deny": deny}}
+	// No hook runs, from any settings file: a hook is a command Claude
+	// Code runs on the host by itself, and the files that can hold one
+	// were the site's to write (its HOME is mounted into its container,
+	// its folder comes from its repository). The --settings file outranks
+	// every file but the machine's managed policy, so a project that sets
+	// it back to false does not win.
+	return map[string]any{"disableAllHooks": true, "permissions": map[string]any{"deny": deny}}
 }
 
 // Start implements agent.Provider.
@@ -198,23 +212,44 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 	if err := req.Jail.Prepare(); err != nil {
 		return nil, err
 	}
-	settingsFile := ""
-	if len(req.Jail.Deny) > 0 || len(req.Jail.Secrets) > 0 || len(req.Jail.Commands) > 0 || len(req.Jail.Lent) > 0 {
-		dir := req.Jail.Home
+	// The CLI's own folder is the house's (agent.Jail.ConfigHome), not the
+	// site's HOME. The sessions it resumes come with it once, and so does
+	// a login made under that HOME, except for a vendor's turn, which must
+	// not be able to spend on Anthropic.
+	var carry []string
+	from := ""
+	if req.Jail.Home != "" {
+		from = filepath.Join(req.Jail.Home, ".claude")
+		carry = []string{"projects"}
+		if len(p.cfg.Env) == 0 {
+			carry = append(carry, ".credentials.json")
+		}
+	}
+	config, err := req.Jail.ConfigHome(p.cfg.Key, from, carry...)
+	if err != nil {
+		return nil, err
+	}
+	// The settings file goes there too: written in HOME, the container
+	// could swap it between the house writing it and the CLI reading it.
+	dir := config
+	if dir == "" {
+		dir = req.Jail.Home
 		if dir == "" {
 			dir = req.Workdir
 		}
-		// One per conversation: two conversations of one site with different
-		// tool levels used to rewrite each other's file without a single
-		// error anywhere (V1). A '#' is fine in a file name.
-		file := "claude-settings.json"
-		if req.Name != "" && strings.Contains(req.Name, "#") {
-			file = "claude-settings-" + strings.ReplaceAll(req.Name, "/", "_") + ".json"
-		}
-		settingsFile = filepath.Join(dir, ".middleware", file)
-		if err := fsx.WriteJSON(settingsFile, Settings(req.Jail), 0o600); err != nil {
-			return nil, err
-		}
+		dir = filepath.Join(dir, ".middleware")
+	}
+	// One per conversation: two conversations of one site with different
+	// tool levels used to rewrite each other's file without a single
+	// error anywhere (V1). A '#' is fine in a file name. Never
+	// settings.json, which in the config folder is the user's settings.
+	file := "claude-settings.json"
+	if req.Name != "" && strings.Contains(req.Name, "#") {
+		file = "claude-settings-" + strings.ReplaceAll(req.Name, "/", "_") + ".json"
+	}
+	settingsFile := filepath.Join(dir, file)
+	if err := fsx.WriteJSON(settingsFile, Settings(req.Jail), 0o600); err != nil {
+		return nil, err
 	}
 	env := map[string]string{}
 	for k, v := range req.Env {
@@ -232,7 +267,14 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 	env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] = "0"
 	if p.cfg.ConfigDir != "" && len(p.cfg.Env) == 0 {
 		env["CLAUDE_CONFIG_DIR"] = p.cfg.ConfigDir
+	} else if config != "" {
+		env["CLAUDE_CONFIG_DIR"] = config
 	}
+	// --setting-sources user drops the project's CLAUDE.md with the
+	// project's settings (tried on 2.1.312); this has it read again from
+	// the --add-dir folders, the site's own first, and none of their
+	// settings with it.
+	env["CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD"] = "1"
 	if p.cfg.OAuthToken != "" && p.cfg.APIKey == "" && len(p.cfg.Env) == 0 {
 		env["CLAUDE_CODE_OAUTH_TOKEN"] = p.cfg.OAuthToken
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -128,6 +129,89 @@ func TestAMissingBinaryIsReportedAsUnavailable(t *testing.T) {
 	}
 	if _, err := p.Start(context.Background(), agent.Request{Workdir: t.TempDir(), Prompt: "x"}); err == nil {
 		t.Fatal("start succeeded without a binary")
+	}
+}
+
+// The CLI's own folder is the house's: settings, hooks off, no project
+// settings and no MCP server; a login and the sessions a site's HOME held
+// come over once, plain files only, and a link planted there is not
+// followed out of it.
+func TestTheCLIRunsFromTheHousesFolderWithHooksOff(t *testing.T) {
+	dir := t.TempDir()
+	bin, argsFile, envFile := fakeBin(t, dir)
+	root := filepath.Join(dir, "root")
+	site := filepath.Join(root, "sites", "a.example")
+	home := filepath.Join(root, "data", "homes", "a.example")
+	other := filepath.Join(root, "sites", "b.example")
+	os.MkdirAll(site, 0o755)
+	os.MkdirAll(other, 0o755)
+	os.WriteFile(filepath.Join(other, ".env"), []byte("SECRET=b"), 0o600)
+	os.MkdirAll(filepath.Join(home, ".claude", "projects", "p"), 0o700)
+	os.WriteFile(filepath.Join(home, ".claude", ".credentials.json"), []byte(`{"login":1}`), 0o600)
+	os.WriteFile(filepath.Join(home, ".claude", "projects", "p", "s1.jsonl"), []byte("session"), 0o600)
+	os.Symlink(other, filepath.Join(home, ".claude", "projects", "other"))
+	os.Symlink(filepath.Join(other, ".env"), filepath.Join(home, ".claude", "projects", "p", "leak.jsonl"))
+	os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(`{"hooks":{}}`), 0o644)
+
+	jail := agent.NewJail(root, site, home)
+	run, err := New(Config{Bin: bin}).Start(context.Background(), agent.Request{Workdir: site, Prompt: "hi", Jail: jail})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.Collect(context.Background(), run)
+	config := filepath.Join(root, "data", "agents", "config", "a.example", "claude")
+	env, _ := os.ReadFile(envFile)
+	for _, want := range []string{"CLAUDE_CONFIG_DIR=" + config + "\n", "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1\n"} {
+		if !strings.Contains(string(env), want) {
+			t.Errorf("env missing %q:\n%s", want, env)
+		}
+	}
+	args, _ := os.ReadFile(argsFile)
+	settingsFile := filepath.Join(config, "claude-settings.json")
+	for _, want := range []string{"--settings\n" + settingsFile + "\n", "--setting-sources\nuser\n", "--strict-mcp-config\n", "--add-dir\n" + site + "\n"} {
+		if !strings.Contains(string(args), want) {
+			t.Errorf("args missing %q:\n%s", want, args)
+		}
+	}
+	var s map[string]any
+	data, _ := os.ReadFile(settingsFile)
+	if json.Unmarshal(data, &s) != nil || s["disableAllHooks"] != true {
+		t.Fatalf("settings:\n%s", data)
+	}
+	if got, _ := os.ReadFile(filepath.Join(config, ".credentials.json")); string(got) != `{"login":1}` {
+		t.Fatalf("the login did not come over: %q", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(config, "projects", "p", "s1.jsonl")); string(got) != "session" {
+		t.Fatalf("the session did not come over: %q", got)
+	}
+	for _, p := range []string{"projects/other", "projects/p/leak.jsonl", "settings.json"} {
+		if _, err := os.Lstat(filepath.Join(config, p)); err == nil {
+			t.Errorf("%s came over from the site's HOME", p)
+		}
+	}
+	// The agent's own tools may not reach the folder.
+	if !slices.Contains(jail.Deny, filepath.Join(root, "data", "agents")) {
+		t.Fatalf("the CLI's folder is not denied: %v", jail.Deny)
+	}
+
+	// Once: a login the site writes into its HOME later is not taken.
+	os.WriteFile(filepath.Join(home, ".claude", ".credentials.json"), []byte(`{"login":2}`), 0o600)
+	os.Remove(filepath.Join(config, ".credentials.json"))
+	run, _ = New(Config{Bin: bin}).Start(context.Background(), agent.Request{Workdir: site, Prompt: "hi", Jail: jail})
+	agent.Collect(context.Background(), run)
+	if _, err := os.Stat(filepath.Join(config, ".credentials.json")); err == nil {
+		t.Fatal("the site's HOME was carried over twice")
+	}
+
+	// A vendor run through Claude Code gets its own folder and no login.
+	run, _ = New(Config{Bin: bin, Key: "deepseek", Env: map[string]string{"ANTHROPIC_BASE_URL": "http://x"}}).Start(context.Background(), agent.Request{Workdir: site, Prompt: "hi", Jail: jail})
+	agent.Collect(context.Background(), run)
+	vendor := filepath.Join(root, "data", "agents", "config", "a.example", "deepseek")
+	if _, err := os.Stat(filepath.Join(vendor, ".credentials.json")); err == nil {
+		t.Fatal("a vendor's turn was given the Claude login")
+	}
+	if _, err := os.Stat(filepath.Join(vendor, "projects", "p", "s1.jsonl")); err != nil {
+		t.Fatal("a vendor's sessions did not come over")
 	}
 }
 

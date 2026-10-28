@@ -58,6 +58,15 @@ var scopeRoutes = map[string][]string{
 // Scopes is the closed list, for the panel.
 func Scopes() []string { return []string{"read", "restart", "deploy"} }
 
+// TurnScopes are what a site's agent turn opens when it calls the house
+// over the socket (the middleware CLI from one of its Bash calls): what a
+// service door for that site opens, and not tokens, settings, the house's
+// conversation or any other site. The turn runs as the supervisor's user,
+// so the socket used to take it for the operator.
+func TurnScopes(site string) []string {
+	return []string{"read:" + site, "restart:" + site, "deploy:" + site}
+}
+
 // ErrBadScope is a scope outside the list.
 var ErrBadScope = errors.New("scope")
 

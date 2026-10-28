@@ -32,6 +32,9 @@ type Caller struct {
 	Token   string // the token's name, for the audit trail
 	// Scopes are the token's; empty is full access.
 	Scopes []string
+	// Turn is the site whose agent turn made this socket request; its
+	// Scopes are then TurnScopes(Turn).
+	Turn string
 }
 
 // Authenticated reports whether the caller may use the API.
@@ -42,19 +45,35 @@ type ctxKey int
 const (
 	callerKey ctxKey = iota
 	socketKey
+	turnKey
 )
 
 // WithSocket marks a context as belonging to a connection that arrived
-// over the unix socket. The socket listener sets it as the server's
-// BaseContext; nothing a client sends can set it.
+// over the unix socket. The socket listener sets it per connection, once
+// it has looked at who connected; nothing a client sends can set it.
 func WithSocket(ctx context.Context) context.Context {
 	return context.WithValue(ctx, socketKey, true)
+}
+
+// WithSocketTurn marks a socket connection made from inside a site's
+// agent turn: the caller is that site's, not the operator.
+func WithSocketTurn(ctx context.Context, site string) context.Context {
+	return context.WithValue(WithSocket(ctx), turnKey, site)
 }
 
 // IsSocket reports whether ctx came through WithSocket.
 func IsSocket(ctx context.Context) bool {
 	v, _ := ctx.Value(socketKey).(bool)
 	return v
+}
+
+// SocketCaller is the caller of a socket connection: the operator, or a
+// site's turn confined to its site.
+func SocketCaller(ctx context.Context) Caller {
+	if site, _ := ctx.Value(turnKey).(string); site != "" {
+		return Caller{Via: ViaSocket, Turn: site, Scopes: TurnScopes(site)}
+	}
+	return Caller{Via: ViaSocket}
 }
 
 // FromContext returns the caller Middleware resolved, or the zero Caller.
@@ -74,7 +93,7 @@ func WithCaller(ctx context.Context, c Caller) context.Context {
 // cookie. Deciding what an unauthenticated caller may do is the API's.
 func (s *Store) Resolve(r *http.Request) Caller {
 	if IsSocket(r.Context()) {
-		return Caller{Via: ViaSocket}
+		return SocketCaller(r.Context())
 	}
 	if h := r.Header.Get("Authorization"); h != "" {
 		if secret, ok := strings.CutPrefix(h, "Bearer "); ok {

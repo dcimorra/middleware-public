@@ -308,15 +308,15 @@ func (s *Server) Panel() http.Handler {
 // ServeHTTP implements http.Handler: resolve the caller, gate, dispatch.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	caller := auth.Caller{Via: auth.ViaSocket}
+	caller := auth.Caller{}
 	if m, ok := nodes.MemberFrom(r.Context()); ok {
 		// Set only by the mesh door, after it checked the tunnel address
 		// and the secret; nothing a browser or the panel sends makes it.
 		caller = auth.Caller{Via: auth.ViaNode, Token: m.Name}
 	} else if s.opts.Auth != nil {
 		caller = s.opts.Auth.Resolve(r)
-	} else if !auth.IsSocket(r.Context()) {
-		caller = auth.Caller{}
+	} else if auth.IsSocket(r.Context()) {
+		caller = auth.SocketCaller(r.Context())
 	}
 	r = r.WithContext(auth.WithCaller(r.Context(), caller))
 	_, pattern := s.mux.Handler(r)
@@ -334,7 +334,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// A scoped token is a service door: the route it asks for must be one
 	// its scopes open, for the site in the path. Public routes are public
 	// to it as to anyone.
-	if !public && len(caller.Scopes) > 0 && !auth.Allows(caller.Scopes, pattern, siteIn(pattern, r.URL.Path)) {
+	if !public && len(caller.Scopes) > 0 && !auth.Allows(caller.Scopes, pattern, siteIn(pattern, r.URL.Path)) && !turnReadsOwnEvents(caller, pattern, r) {
+		if caller.Turn != "" {
+			// An agent reaching for the operator's routes is worth knowing
+			// about: it is what a prompt injected into a site's turn does.
+			if s.opts.Bus != nil {
+				s.opts.Bus.Emit(events.Event{Type: "api.turn_refused", Subject: caller.Turn, Actor: "agent", Level: "warn", Message: "a turn of this site's conversation asked the socket for " + pattern, Data: map[string]any{"method": r.Method, "path": r.URL.Path}})
+			}
+			s.writeError(w, r, Errorf(http.StatusForbidden, "a turn of %s's conversation may read, restart and deploy that site and nothing else; %s is the operator's", caller.Turn, pattern))
+			return
+		}
 		s.writeError(w, r, Errorf(http.StatusForbidden, "this token's scopes (%s) do not open %s", strings.Join(caller.Scopes, ", "), pattern))
 		return
 	}
@@ -353,6 +362,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// turnReadsOwnEvents lets a site's turn list the events about its own
+// site, which the skill tells it to read (`middleware events --subject`):
+// the list is filtered by that subject, so nothing of another site's
+// comes back. The stream is not filtered and stays closed.
+func turnReadsOwnEvents(c auth.Caller, pattern string, r *http.Request) bool {
+	return c.Turn != "" && pattern == "GET "+Prefix+"/events" && r.URL.Query().Get("subject") == c.Turn
 }
 
 // siteIn is the {domain} of path under pattern, or "". The mux does not

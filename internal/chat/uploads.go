@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -17,6 +19,13 @@ import (
 // files move to sent/<turn>/ and are swept a day later. The folder is lent
 // to the turn read-only: an attachment is something to read, not a place
 // to write.
+//
+// That HOME is the site's to write too (a docker site has it mounted, the
+// agent's Bash reaches it), so every file operation here goes through an
+// os.Root on the HOME and no link in it leads out. They used to be plain
+// paths: uploads/main/sent made a link to another site's folder had the
+// day's sweep RemoveAll what was there, and a link at pending/<name> had
+// an upload write through it.
 
 // MaxUpload is one attachment's size limit.
 const MaxUpload = 25 << 20
@@ -30,13 +39,35 @@ type Upload struct {
 	Bytes int64  `json:"bytes"`
 }
 
-func (m *Manager) uploadsDir(name string) string {
-	domain, id := split(name)
+// uploadsHome is the HOME the conversation's attachments live in, and
+// uploadsRel their folder inside it, in the slash form os.Root takes.
+func (m *Manager) uploadsHome(name string) string {
+	domain, _ := split(name)
+	return filepath.Join(m.opts.Root, "data", "homes", domain)
+}
+
+func uploadsRel(name string) string {
+	_, id := split(name)
 	conv := "main"
 	if id != "" {
 		conv = id
 	}
-	return filepath.Join(m.opts.Root, "data", "homes", domain, "uploads", conv)
+	return path.Join("uploads", conv)
+}
+
+func (m *Manager) uploadsDir(name string) string {
+	return filepath.Join(m.uploadsHome(name), filepath.FromSlash(uploadsRel(name)))
+}
+
+// openHome opens the HOME as a root; create makes it first.
+func (m *Manager) openHome(name string, create bool) (*os.Root, error) {
+	home := m.uploadsHome(name)
+	if create {
+		if err := os.MkdirAll(home, 0o700); err != nil {
+			return nil, err
+		}
+	}
+	return os.OpenRoot(home)
 }
 
 // AddUpload stores r as an attachment of the next message of name.
@@ -48,11 +79,20 @@ func (m *Manager) AddUpload(name, file string, r io.Reader) (Upload, error) {
 	if file == "" || file == "." || file == ".." || strings.HasPrefix(file, ".") {
 		return Upload{}, ErrBadName
 	}
-	dir := filepath.Join(m.uploadsDir(name), "pending")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	root, err := m.openHome(name, true)
+	if err != nil {
 		return Upload{}, err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, file), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	defer root.Close()
+	dir := path.Join(uploadsRel(name), "pending")
+	if err := root.MkdirAll(dir, 0o700); err != nil {
+		return Upload{}, err
+	}
+	p := path.Join(dir, file)
+	// Whatever is there goes first, a link included, and the file is made
+	// new: written over, a link would have been written through.
+	_ = root.Remove(p)
+	f, err := root.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return Upload{}, err
 	}
@@ -62,17 +102,32 @@ func (m *Manager) AddUpload(name, file string, r io.Reader) (Upload, error) {
 		err = fmt.Errorf("an attachment is at most %d MB", MaxUpload>>20)
 	}
 	if err != nil {
-		os.Remove(filepath.Join(dir, file))
+		root.Remove(p)
 		return Upload{}, err
 	}
 	return Upload{Name: file, Bytes: n}, nil
 }
 
+// readDir lists dir inside root, links not followed.
+func readDir(root *os.Root, dir string) []fs.DirEntry {
+	f, err := root.Open(dir)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	ents, _ := f.ReadDir(-1)
+	return ents
+}
+
 // Uploads lists what goes with the next message.
 func (m *Manager) Uploads(name string) []Upload {
-	ents, _ := os.ReadDir(filepath.Join(m.uploadsDir(name), "pending"))
 	out := []Upload{}
-	for _, e := range ents {
+	root, err := m.openHome(name, false)
+	if err != nil {
+		return out
+	}
+	defer root.Close()
+	for _, e := range readDir(root, path.Join(uploadsRel(name), "pending")) {
 		if info, err := e.Info(); err == nil && info.Mode().IsRegular() {
 			out = append(out, Upload{Name: e.Name(), Bytes: info.Size()})
 		}
@@ -87,7 +142,22 @@ func (m *Manager) RemoveUpload(name, file string) error {
 	if file == "." || file == ".." || strings.HasPrefix(file, ".") {
 		return ErrBadName
 	}
-	return os.Remove(filepath.Join(m.uploadsDir(name), "pending", file))
+	root, err := m.openHome(name, false)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.Remove(path.Join(uploadsRel(name), "pending", file))
+}
+
+// removeUploads drops every attachment of name, for Purge.
+func (m *Manager) removeUploads(name string) {
+	root, err := m.openHome(name, false)
+	if err != nil {
+		return
+	}
+	defer root.Close()
+	_ = root.RemoveAll(uploadsRel(name))
 }
 
 // attach adds the pending attachments to a prompt and returns the folder
@@ -110,18 +180,21 @@ func (m *Manager) attach(name, prompt string) (string, string) {
 // sent moves what went with a turn to sent/<turn>/ and sweeps what was
 // sent more than a day ago.
 func (m *Manager) sent(name, turnID string) {
-	base := m.uploadsDir(name)
-	pending := filepath.Join(base, "pending")
-	if ents, _ := os.ReadDir(pending); len(ents) > 0 {
-		dest := filepath.Join(base, "sent", turnID)
-		if os.MkdirAll(filepath.Dir(dest), 0o700) == nil {
-			_ = os.Rename(pending, dest)
+	root, err := m.openHome(name, false)
+	if err != nil {
+		return
+	}
+	defer root.Close()
+	base := uploadsRel(name)
+	pending := path.Join(base, "pending")
+	if len(readDir(root, pending)) > 0 {
+		if root.MkdirAll(path.Join(base, "sent"), 0o700) == nil {
+			_ = root.Rename(pending, path.Join(base, "sent", turnID))
 		}
 	}
-	old, _ := os.ReadDir(filepath.Join(base, "sent"))
-	for _, e := range old {
+	for _, e := range readDir(root, path.Join(base, "sent")) {
 		if info, err := e.Info(); err == nil && time.Since(info.ModTime()) > 24*time.Hour {
-			_ = os.RemoveAll(filepath.Join(base, "sent", e.Name()))
+			_ = root.RemoveAll(path.Join(base, "sent", e.Name()))
 		}
 	}
 }

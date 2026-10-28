@@ -10,7 +10,11 @@ domain.
 - `Authorization: Bearer <token>` — API tokens, created in Settings.
 - Session cookie `mw_session` — set by `POST /api/v1/auth/login`.
 - The unix socket `data/api.sock` needs no credentials: whoever can open it
-  already owns the files. The CLI uses it.
+  already owns the files. The CLI uses it. One exception: a process started
+  by a site conversation's agent turn (one of its parents is the turn) is
+  that site's, with the routes a token scoped `read`, `restart` and
+  `deploy` for it opens, and `GET /events?subject=<its site>`; anything
+  else is a 403 and an `api.turn_refused` event. `/auth/me` says `turn`.
 
 **Who reaches the panel.** The address lists of `/auth/panel-access` go before
 everything the panel answers (403). The unix socket always gets in; a TCP
@@ -58,7 +62,7 @@ API never answers. Tokens and the socket need no header.
 | POST | `/auth/setup` | `{code, password}` → `{ok}` |
 | POST | `/auth/login` | `{password}` → sets cookie, `{ok}` |
 | POST | `/auth/logout` | → `{ok}` |
-| GET | `/auth/me` | → `{authenticated, via: "cookie"|"token"|"socket", setup_pending, passkeys, password_closed, open_until?}` |
+| GET | `/auth/me` | → `{authenticated, via: "cookie"|"token"|"socket", turn?, setup_pending, passkeys, password_closed, open_until?}`; `turn` is the site whose agent turn called over the socket |
 | GET | `/auth/tokens` | → `[{id, name, scopes?, created, last_used}]` |
 | POST | `/auth/tokens` | `{name, scopes?: ["restart:shop.example", "read"]}` → `{id, token}` (shown once); 400 for a scope outside the list |
 | DELETE | `/auth/tokens/{id}` | → `{ok}` |
@@ -202,10 +206,15 @@ lines.
 
 Off until `autofix.enabled` in the settings (with `attempts`, 2; `wait_minutes`,
 30; `daily_usd`, 2). A run site with five failed starts in a row, or any site
-with three failed health checks in a row, is handed to its own conversation
-with the reason, its command and the last 60 log lines (fenced as evidence);
-the house restarts it when the turn ends and writes the outcome to
-`data/repairs.jsonl`. A manifest's `"autofix": false` keeps it away.
+with three failed health checks in a row, is handed to its agent with the
+reason, its command and the engine's error and the last 60 log lines, fenced
+as untrusted data between markers drawn at random for each prompt (a fixed
+marker could be closed by a request's path written to the log); the house
+restarts it when the turn ends and writes the outcome to
+`data/repairs.jsonl`. A manifest's `"autofix": false` keeps it away. The
+repairs run in a conversation of the site's own for them (origin `repair`,
+"Automatic repairs" in the panel), not in the operator's, and without the
+credential that lets the panel's conversation `git push`.
 
 The turn runs with the house's AI for automatic work, `automation: {provider,
 model}` in the settings (Settings → "The house's AI for automatic work"),
