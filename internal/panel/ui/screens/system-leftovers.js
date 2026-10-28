@@ -9,19 +9,20 @@ import { t } from "../lib/i18n.js";
 import { api } from "../lib/api.js";
 import { confirm } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
+import { cardHead } from "./settings-kit.js";
 
 export function leftoversCard() {
-  const el = h("div", { class: "card" });
+  const el = h("div", { class: "card sys-card" });
   const list = h("div", { class: "stack-sm" });
   const cleanBtn = h("button", { type: "button", class: "btn danger" }, icon("trash"), t("leftovers.clean"));
-  el.append(h("h2", null, t("leftovers.title")), h("p", { class: "small muted" }, t("leftovers.hint")), list, h("div", { class: "row" }, cleanBtn));
+  el.append(cardHead(t("leftovers.title"), t("leftovers.hint")), list, h("div", { class: "form-actions sys-foot" }, cleanBtn));
   let items = [];
 
   function selected() { return [...list.querySelectorAll("input[type=checkbox]:checked")].map((c) => c.value); }
   function paint() {
     clear(list);
     cleanBtn.hidden = !items.length;
-    if (!items.length) { list.append(h("p", { class: "small muted" }, t("leftovers.none"))); return; }
+    if (!items.length) { list.append(h("p", { class: "sys-none" }, icon("check", { size: 16 }), t("leftovers.none"))); return; }
     const total = items.reduce((n, l) => n + l.bytes, 0);
     list.append(h("p", { class: "small" }, t("leftovers.total", { n: items.length, size: fmtBytes(total) })));
     for (const l of items) {

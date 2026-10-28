@@ -10,16 +10,21 @@ import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
 import { page, table, cell, empty, errorBox, loading } from "../components/page.js";
 import { usageBlock } from "../components/usage.js";
+import { cardHead, quietEmpty } from "./settings-kit.js";
 
 export function llmUsageScreen() {
   const p = page({ title: t("nav.llm"), sub: t("llmUse.sub"), icon: "gauge" });
   const usage = h("div", { class: "card" });
   const cost = h("div", { class: "card pad0" });
+  // What the projects spent in 30 days, beside their card's name.
+  const costSum = h("span", { class: "llm-sum" });
   const range = h("select", { class: "auto", "aria-label": t("claudeUse.days") }, ...[7, 30, 90].map((n) => h("option", { value: String(n) }, t("claudeUse.lastDays", { n }))));
   range.value = "30";
-  const body = h("div", { class: "card pad0" });
-  p.body.append(h("div", { class: "grid-2" }, usage, cost),
-    h("div", { class: "row" }, h("div", { class: "grow" }, h("h2", null, t("llmUse.doors")), h("p", { class: "small muted" }, t("claudeUse.sub"))), range), body);
+  const body = h("div", { class: "card pad0 llm-doors" });
+  // The doors' heading and its range on one line: the "row" class this
+  // used is not a layout anywhere, and the select fell under the words.
+  p.body.append(h("div", { class: "grid-2 llm-top" }, usage, cost),
+    h("div", { class: "llm-doors-head" }, h("div", { class: "grow" }, h("h2", null, t("llmUse.doors")), h("p", null, t("claudeUse.sub"))), range), body);
   const usd = (v) => `$${Number(v || 0).toFixed(2)}`;
 
   // A bar per day, scaled to the busiest one: a few cents and a few
@@ -50,7 +55,7 @@ export function llmUsageScreen() {
     clear(body).append(loading());
     try {
       const d = await api.get(`/claude/sites?days=${range.value}`);
-      if (!d.sites.length) { clear(body).append(empty(t("claudeUse.none"), t("claudeUse.noneHint"))); return; }
+      if (!d.sites.length) { clear(body).append(empty(t("claudeUse.none"), t("claudeUse.noneHint"), null, "door")); return; }
       const rows = d.sites.map((s) => h("tr", null,
         cell(s.exists ? h("a", { href: `#/sites/${enc(s.domain)}/overview` }, s.domain) : h("span", { class: "muted" }, s.domain), null, "primary"),
         cell(s.open ? h("span", { class: "badge ok", title: permsLabel(s.permissions) }, `${s.provider || "claude"} · ${permsLabel(s.permissions)}`) : h("span", { class: "badge" }, t("claudeUse.closed")), t("claudeUse.door")),
@@ -77,10 +82,10 @@ export function llmUsageScreen() {
     } catch (e) { clear(body).append(errorBox(e)); }
   }
   (async () => {
-    clear(usage).append(h("h2", null, t("llmUse.subscriptions")));
+    clear(usage).append(cardHead(t("llmUse.subscriptions"), null));
     try {
       const list = await api.get("/agents/usage");
-      if (!list.length) usage.append(h("p", { class: "small muted" }, t("usage.noSubscription")));
+      if (!list.length) usage.append(quietEmpty("gauge", t("usage.noSubscription"), t("llmUse.noSubscriptionHint")));
       for (const st of list) usage.append(h("h3", null, st.name), usageBlock(st));
     } catch (e) { usage.append(h("p", { class: "small muted" }, e.message)); }
   })();
@@ -96,9 +101,11 @@ export function llmUsageScreen() {
           cell(String(b.turns), t("llmUse.col.turns"), "num"),
           cell(Object.entries(b.models || {}).map(([m, v]) => `${m} $${v.toFixed(2)}`).join(" · "), t("llmUse.col.models"), "small"));
       });
-      clear(cost).append(h("div", { class: "card-pad" }, h("h2", null, t("llmUse.cost"))),
+      const sum = (c.books || []).reduce((n, b) => n + (b.total_usd || 0), 0);
+      costSum.textContent = rows.length ? t("llmUse.total30", { usd: sum.toFixed(2) }) : "";
+      clear(cost).append(h("div", { class: "card-pad" }, cardHead(t("llmUse.cost"), null, costSum)),
         rows.length ? table([{ label: t("llmUse.col.project") }, { label: t("llmUse.col.cost"), class: "num" }, { label: t("llmUse.col.turns"), class: "num" }, { label: t("llmUse.col.models") }], rows, { responsive: true }).el
-          : h("p", { class: "card-pad small muted" }, t("llmUse.noCost")));
+          : quietEmpty("gauge", t("llmUse.noCost"), null));
     } catch (e) { clear(cost).append(h("p", { class: "card-pad small muted" }, e.message)); }
   })();
   range.addEventListener("change", load);

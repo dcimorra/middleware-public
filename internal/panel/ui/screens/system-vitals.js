@@ -6,6 +6,7 @@ import { h, clear, svg, fmtBytes } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api } from "../lib/api.js";
 import { notice } from "../components/page.js";
+import { cardHead } from "./settings-kit.js";
 
 // A line over the hour, 0 to 100, with the threshold drawn.
 function chart(values, line, label) {
@@ -21,25 +22,27 @@ function chart(values, line, label) {
 }
 
 export function vitalsCard() {
-  const el = h("div", { class: "card" });
+  const el = h("div", { class: "card sys-card" });
   const pct = (v) => `${Number(v || 0).toFixed(0)}%`;
   async function load() {
     let v;
-    try { v = await api.get("/system/vitals"); } catch (e) { clear(el).append(h("h2", null, t("vitals.title")), notice("bad", e.message)); return; }
+    try { v = await api.get("/system/vitals"); } catch (e) { clear(el).append(cardHead(t("vitals.title"), null), notice("bad", e.message)); return; }
     const hist = v.history || [];
     const n = v.now || {};
     const row = (label, value, values, line, extra) => h("div", { class: "vrow" },
       h("div", { class: "vhead" }, h("span", null, label), h("strong", { class: "mono" }, value), extra ? h("span", { class: "small muted" }, extra) : null),
       chart(values, line, label));
-    clear(el).append(h("h2", null, t("vitals.title")), h("p", { class: "small muted" }, t("vitals.hint")),
+    // Three charts side by side where there is room: stacked, the hour
+    // of the machine was 400px before anything else on the screen.
+    clear(el).append(cardHead(t("vitals.title"), t("vitals.hint")), h("div", { class: "sys-vitals" },
       row(t("vitals.cpu"), pct(n.cpu), hist.map((s) => s.cpu), v.lines && v.lines.cpu,
         t("vitals.cpuExtra", { cores: n.cores || 0, iowait: pct(n.iowait), load: Number(n.load1 || 0).toFixed(2) })),
       row(t("vitals.memory"), pct(n.mem_pct), hist.map((s) => s.mem_pct), v.lines && v.lines.memory,
         `${fmtBytes(n.mem_used)} / ${fmtBytes(n.mem_total)}` + (n.swap_total ? " · " + t("vitals.swap", { used: fmtBytes(n.swap_used), total: fmtBytes(n.swap_total) }) : "")),
-      row(t("vitals.disk"), pct(n.disk_pct), hist.map((s) => s.disk_pct), 0, `${fmtBytes(n.disk_used)} / ${fmtBytes(n.disk_total)}`));
+      row(t("vitals.disk"), pct(n.disk_pct), hist.map((s) => s.disk_pct), 0, `${fmtBytes(n.disk_used)} / ${fmtBytes(n.disk_total)}`)));
     const eps = v.episodes || [];
-    el.append(h("h3", null, t("vitals.episodes")));
-    if (!eps.length) { el.append(h("p", { class: "small muted" }, t("vitals.noEpisodes"))); return; }
+    el.append(h("h3", { class: "sys-episodes-h" }, t("vitals.episodes")));
+    if (!eps.length) { el.append(h("p", { class: "hint" }, t("vitals.noEpisodes"))); return; }
     for (const e of eps.slice(0, 10)) {
       const when = new Date(e.from).toLocaleString() + (e.to && !e.to.startsWith("0001") ? " → " + new Date(e.to).toLocaleTimeString() : " · " + t("vitals.ongoing"));
       el.append(h("details", { class: "episode" },
