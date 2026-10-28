@@ -2,6 +2,8 @@ package chat
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -9,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/dcimorra/middleware-public/internal/manifest"
 )
 
 // MarkVar is put in every turn's environment, and everything a turn
@@ -135,4 +139,113 @@ func zombie(pid int) bool {
 	}
 	i := bytes.LastIndexByte(data, ')')
 	return i < 0 || i+2 >= len(data) || data[i+2] == 'Z'
+}
+
+// A site's turn runs as the supervisor's own user, and the middleware
+// binary is in its PATH: whatever it starts can open data/api.sock, which
+// trusted every connection as the operator. A site's conversation (or a
+// prompt injected into it through a page it read) could mint itself a
+// full token or read another site's secrets with one command. SiteOfProcess
+// is how the house tells such a caller from the operator: the process and
+// its ancestors, each checked against the turns running now (turns, pid
+// to conversation) and against the mark every turn's environment carries.
+//
+// Both, because each alone has a way round. A process can scrub the mark
+// from its own environment, but not from its ancestors', which keep the
+// environment they were started with; and a process detached with setsid
+// is handed to init and leaves the chain, but keeps the mark unless it
+// also scrubs it. Any site found anywhere counts, and a house mark never
+// lifts one: a turn that sets MIDDLEWARE_CHAT_ID=middleware for its child
+// still has its own turn above it.
+//
+// The answer is the site, or "" for a caller that no site's turn started
+// (the operator, the house's own conversation). An error says the caller
+// cannot be told: the process is gone before it was looked at (a client
+// can connect and exit, leaving the connection to a child), or the chain
+// names two sites, which only a forged mark does. The caller refuses it.
+func SiteOfProcess(procRoot string, pid int, turns map[int]string) (string, error) {
+	site := ""
+	note := func(name string) error {
+		domain, _ := split(name)
+		if domain == Middleware || !manifest.ValidName(domain) {
+			return nil
+		}
+		if site != "" && site != domain {
+			return fmt.Errorf("process %d runs under the turns of both %s and %s", pid, site, domain)
+		}
+		site = domain
+		return nil
+	}
+	mark := []byte(MarkVar + "=")
+	p := pid
+	for depth := 0; p > 0 && depth < 256; depth++ {
+		parent, err := parentOf(procRoot, p)
+		if err != nil {
+			if p == pid {
+				return "", err
+			}
+			break
+		}
+		if name, ok := turns[p]; ok {
+			if err := note(name); err != nil {
+				return "", err
+			}
+		}
+		// Another user's environment is not readable, and need not be: a
+		// turn runs as this one.
+		if env, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(p), "environ")); err == nil {
+			for _, kv := range bytes.Split(env, []byte{0}) {
+				if v, ok := bytes.CutPrefix(kv, mark); ok {
+					if err := note(string(v)); err != nil {
+						return "", err
+					}
+				}
+			}
+		}
+		if parent == p {
+			break
+		}
+		p = parent
+	}
+	return site, nil
+}
+
+// errNoProcess says a pid has no readable stat.
+var errNoProcess = errors.New("no such process")
+
+// parentOf reads a process's parent from its stat: the field after the
+// state, which follows the last ')' (a command name may hold one).
+func parentOf(procRoot string, pid int) (int, error) {
+	data, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return 0, fmt.Errorf("process %d: %w", pid, errNoProcess)
+	}
+	i := bytes.LastIndexByte(data, ')')
+	if i < 0 {
+		return 0, fmt.Errorf("process %d: %w", pid, errNoProcess)
+	}
+	f := strings.Fields(string(data[i+1:]))
+	if len(f) < 2 {
+		return 0, fmt.Errorf("process %d: %w", pid, errNoProcess)
+	}
+	return strconv.Atoi(f[1])
+}
+
+// TurnPIDs are the agent CLIs of the turns running now, by the name of
+// their conversation.
+func (m *Manager) TurnPIDs() map[int]string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := map[int]string{}
+	for name, r := range m.running {
+		if pr, ok := r.run.(interface{ PID() int }); ok && pr.PID() > 1 {
+			out[pr.PID()] = name
+		}
+	}
+	return out
+}
+
+// SiteOf is SiteOfProcess with the turns this manager runs now.
+func (m *Manager) SiteOf(pid int) (string, error) {
+	return SiteOfProcess(m.procRoot(), pid, m.TurnPIDs())
 }

@@ -90,6 +90,9 @@ func (s *Server) authMe(w http.ResponseWriter, r *http.Request) (any, error) {
 	if c.Via == auth.ViaToken {
 		out["token"] = map[string]string{"id": c.TokenID, "name": c.Token}
 	}
+	if c.Turn != "" {
+		out["turn"] = c.Turn
+	}
 	if s.opts.Auth != nil {
 		// Tells a fresh panel whether to show the setup screen or the
 		// login; harmless to anyone else.

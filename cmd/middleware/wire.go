@@ -180,6 +180,11 @@ func buildWire(a *app.App) app.Hook {
 		return nil
 	}
 	srv := apiHook.Server
+	if chatManager != nil {
+		// The socket confines a site's agent turn to its site: the chat
+		// manager knows which processes are turns right now.
+		apiHook.SiteOf = chatManager.SiteOf
+	}
 	w := &wireHook{}
 	// A site whose command wants Node gets one: the version it asks for,
 	// installed with nvm under modules/nvm when the machine has none or

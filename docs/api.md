@@ -10,7 +10,11 @@ domain.
 - `Authorization: Bearer <token>` — API tokens, created in Settings.
 - Session cookie `mw_session` — set by `POST /api/v1/auth/login`.
 - The unix socket `data/api.sock` needs no credentials: whoever can open it
-  already owns the files. The CLI uses it.
+  already owns the files. The CLI uses it. One exception: a process started
+  by a site conversation's agent turn (one of its parents is the turn) is
+  that site's, with the routes a token scoped `read`, `restart` and
+  `deploy` for it opens, and `GET /events?subject=<its site>`; anything
+  else is a 403 and an `api.turn_refused` event. `/auth/me` says `turn`.
 
 **Who reaches the panel.** The address lists of `/auth/panel-access` go before
 everything the panel answers (403). This machine (loopback, with no proxy
@@ -53,7 +57,7 @@ API never answers. Tokens and the socket need no header.
 | POST | `/auth/setup` | `{code, password}` → `{ok}` |
 | POST | `/auth/login` | `{password}` → sets cookie, `{ok}` |
 | POST | `/auth/logout` | → `{ok}` |
-| GET | `/auth/me` | → `{authenticated, via: "cookie"|"token"|"socket", setup_pending, passkeys, password_closed, open_until?}` |
+| GET | `/auth/me` | → `{authenticated, via: "cookie"|"token"|"socket", turn?, setup_pending, passkeys, password_closed, open_until?}`; `turn` is the site whose agent turn called over the socket |
 | GET | `/auth/tokens` | → `[{id, name, scopes?, created, last_used}]` |
 | POST | `/auth/tokens` | `{name, scopes?: ["restart:shop.example", "read"]}` → `{id, token}` (shown once); 400 for a scope outside the list |
 | DELETE | `/auth/tokens/{id}` | → `{ok}` |

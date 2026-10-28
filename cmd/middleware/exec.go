@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/dcimorra/middleware-public/internal/chat"
 	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/runtime"
 	"github.com/dcimorra/middleware-public/internal/settings"
@@ -45,6 +46,19 @@ func execCommand(args []string) error {
 	}
 	if !manifest.ValidName(domain) {
 		return fmt.Errorf("%q is not a site or project", domain)
+	}
+	// The skill tells a docker site's conversation to install with
+	// `middleware exec <its domain>`, and the command needs no supervisor:
+	// from a site's turn, `middleware exec other.site -- env` printed the
+	// other site's secrets, the very folder its jail denies. A turn may
+	// exec in its own site and nowhere else; one that cannot be told
+	// (two sites' marks in its chain) nowhere.
+	turn, err := chat.SiteOfProcess("/proc", os.Getpid(), nil)
+	if err != nil {
+		return fmt.Errorf("exec refused: %w", err)
+	}
+	if turn != "" && turn != domain {
+		return fmt.Errorf("exec refused: this runs under a turn of %s's conversation, which may exec in %s only", turn, turn)
 	}
 	dir := settings.Root(*root)
 	siteDir := filepath.Join(dir, "sites", domain)

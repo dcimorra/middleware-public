@@ -164,6 +164,9 @@ bearer token or a session cookie. `/api/v1/events` is a server-sent stream of
 everything that happens (instance started, handover done, certificate
 renewed, address blocked). The panel is static HTML/CSS/JS embedded in the
 binary, no build step; the CLI uses the same API over the unix socket.
+The socket is the operator's except to a site's agent turn: it reads which
+process connected, walks its parents, and a request from under a site
+conversation's turn is confined to that site (`auth.TurnScopes`).
 
 ## Linked nodes
 

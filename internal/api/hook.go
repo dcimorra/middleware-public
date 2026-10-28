@@ -27,6 +27,10 @@ func SocketPath(root string) string { return filepath.Join(root, "data", SocketN
 // on the unix socket. Build it with NewHook from cmd/middleware.
 type Hook struct {
 	Server *Server
+	// SiteOf says which site's agent turn a process runs under ("" for
+	// none); the wiring sets it to the chat manager's. Without it the
+	// marks in the processes' environments alone decide.
+	SiteOf func(pid int) (string, error)
 	socket net.Listener
 }
 
@@ -66,7 +70,9 @@ func (h *Hook) Wrap(next http.Handler) http.Handler { return next }
 // Run implements app.Hook: it installs the panel handler and opens the
 // socket. The socket's requests are trusted (auth.WithSocket) because
 // its mode lets only the service user and its group connect, and whoever
-// can open it can also edit every manifest by hand.
+// can open it can also edit every manifest by hand. All but one: a site's
+// agent turn runs as that same user, and it is confined to its site
+// (SocketServer says how it is told apart).
 func (h *Hook) Run(ctx context.Context, a *app.App) error {
 	a.Proxy.Panel = h.Server.Panel()
 	mgr := h.Server.opts.Sites
@@ -78,11 +84,7 @@ func (h *Hook) Run(ctx context.Context, a *app.App) error {
 		return err
 	}
 	h.socket = ln
-	srv := &http.Server{
-		Handler:           h.Server.Panel(),
-		ReadHeaderTimeout: 15 * time.Second,
-		BaseContext:       func(net.Listener) context.Context { return auth.WithSocket(ctx) },
-	}
+	srv := SocketServer(ctx, h.Server.Panel(), h.SiteOf)
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)

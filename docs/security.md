@@ -73,6 +73,21 @@ by the core before anything reaches the CLI: paths are resolved and checked
 against the site folder, symlinks included. The adapter is a subprocess with
 no say in it.
 
+**The CLI from inside a turn.** A turn runs as the supervisor's user with
+the `middleware` binary in its PATH, so whatever its Bash calls start can
+open `data/api.sock`. The socket reads who connected (`SO_PEERCRED`) and
+walks that process's parents: when one of them is a site conversation's
+turn (the chat manager's running turns, or the `MIDDLEWARE_CHAT_ID` mark
+every turn's environment carries, its ancestors' included), the request is
+that site's and opens what a token scoped `read`, `restart` and `deploy`
+for it opens, plus the events about it; no tokens, no settings, no other
+site, not the house's conversation. Refusals emit `api.turn_refused`. A
+connection whose process cannot be looked at is not trusted. `middleware
+exec` reads the same chain and runs only in the turn's own site. The
+house's own conversation stays the operator, by design. This is a fence
+against an agent (or a prompt injected into it) using the obvious door,
+not a user boundary: see "what is not protected".
+
 **Credentials encrypted at rest.** Module credentials live in
 `data/modules.json`, AES-256-GCM, key from `MIDDLEWARE_SECRET_KEY` or
 `data/modules-key` (mode `0600`). Backups of the root are safe to store
