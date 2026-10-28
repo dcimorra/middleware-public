@@ -30,6 +30,11 @@ import (
 
 // prepareJob is one site's install in its staging.
 type prepareJob struct {
+	// ID is this job's own, answered to the POST that started it and with
+	// every GET: the moving node polls for its job, not for whichever one
+	// has the site's name here (an earlier attempt's, still running on a
+	// staging that was since received again).
+	ID     string `json:"id,omitempty"`
 	Done   bool   `json:"done"`
 	Output string `json:"output,omitempty"`
 	Error  string `json:"error,omitempty"`
@@ -78,9 +83,9 @@ func (s *Server) registerPrepare(rc relocate.Receiver) {
 			s.prepares.jobs = map[string]*prepareJob{}
 		}
 		if j := s.prepares.jobs[domain]; j != nil && !j.Done {
-			return map[string]any{"started": false, "running": true}, nil
+			return map[string]any{"started": false, "running": true, "id": j.ID}, nil
 		}
-		job := &prepareJob{}
+		job := &prepareJob{ID: newJobID()}
 		s.prepares.jobs[domain] = job
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), prepareTime)
@@ -108,7 +113,7 @@ func (s *Server) registerPrepare(rc relocate.Receiver) {
 			}
 			s.prepares.mu.Unlock()
 		}()
-		return map[string]any{"started": true}, nil
+		return map[string]any{"started": true, "id": job.ID}, nil
 	})
 	s.Handle("GET", Prefix+"/relocate/{domain}/prepare", "How the install of a received site's dependencies goes: done, what it said, or why it failed", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		s.prepares.mu.Lock()
@@ -175,9 +180,9 @@ func (s *Server) registerMigrate(rc relocate.Receiver) {
 			s.migrates.jobs = map[string]*prepareJob{}
 		}
 		if j := s.migrates.jobs[domain]; j != nil && !j.Done {
-			return map[string]any{"started": false, "running": true}, nil
+			return map[string]any{"started": false, "running": true, "id": j.ID}, nil
 		}
-		job := &prepareJob{}
+		job := &prepareJob{ID: newJobID()}
 		s.migrates.jobs[domain] = job
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), migrateTimeFor(raw))
@@ -195,7 +200,7 @@ func (s *Server) registerMigrate(rc relocate.Receiver) {
 			}
 			s.emitMove("relocate.migrated", domain, level, msg, nil)
 		}()
-		return map[string]any{"started": true}, nil
+		return map[string]any{"started": true, "id": job.ID}, nil
 	})
 	s.Handle("GET", Prefix+"/relocate/{domain}/migrate", "How the import of a received site's workers' data goes: done, what it said, or why it failed", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		s.migrates.mu.Lock()
@@ -207,6 +212,11 @@ func (s *Server) registerMigrate(rc relocate.Receiver) {
 		return *j, nil
 	})
 }
+
+// newJobID names a job of this node's apart from any other it ran since
+// it started, and from any it will run after a restart: the time, to the
+// nanosecond.
+func newJobID() string { return strconv.FormatInt(time.Now().UnixNano(), 36) }
 
 // oomKills is the kernel's count of processes it killed for memory, from
 // /proc/vmstat (any user may read it); -1 when it cannot be read.

@@ -506,9 +506,24 @@ run as the site's processes do. All get the site's environment, the
 worker's on top, and `$PORT`. `output`, a file inside the folder, gets the
 export's standard output, written by the house: inside a database's
 container the export runs as the database's user, who cannot write in the
-site's folder. `timeout` bounds each (30m). A move that fails
+site's folder. The house removes `output` (and its `.part`, all a failed
+export leaves) once the import there has ended, and here once the move is
+over (the archive of the copy here keeps it); in a folder that is a git
+repository it is added to `.git/info/exclude` first, so a dump is never
+committed nor pushed. What an export without `output` writes is the site's
+to clean. `timeout` bounds each (30m). A move that fails
 removes the volumes it created and starts the site again where it was, whose
 database has only been read.
+
+A target that already has one of the volumes the move would fill, or on
+which a worker's written `port` is taken, refuses the move at its check,
+before anything stops. Once the site runs there and the copy where it was
+is archived with the dump inside, the volumes of the workers exported with
+the site stopped are removed where it was: they hold nothing that is not
+in the database there and in the archive. A live worker's volume stays,
+listed among the leftovers of moves (what the site wrote after its export
+is only there), and so do all of them when the archive could not be
+written.
 
 Where the site is a site of a V2 house, the move holds it (its maintenance
 page, its other workers stopped) and keeps the workers whose data moves up
@@ -519,6 +534,20 @@ the last copy and the start; what the site writes after the export does not
 travel. A live import writes where the worker keeps its data (its volume):
 what it writes in the folder is replaced by the last copy, which leaves the
 folder as it is where the site was.
+
+`export` must only read: it is run more than once. Before a move stops the
+site, each `export` that waits for the stop is tried where it will run,
+while the site serves: its program is looked for there (inside the
+worker's running container for a docker worker, with the image's `sh`),
+and unless that same command (its arguments as resolved, in the same
+image) has already worked on this house, it is run once, its `output` to a
+scratch file that is then deleted. One that fails refuses the move with
+its error and the end of its output (`data/logs/<site>/move-<worker>-trial.log`),
+and nothing has stopped. An export written for the machine (`docker exec`,
+a client the machine has) is found there, not with the site down. The
+plan a move shows first, and `middleware import --dry-run`, look for the
+program and say whether the export will be tried. What an export without
+`output` writes, the trial writes too, where the real one writes it again.
 
 ## Tasks: `tasks/<name>.json`
 

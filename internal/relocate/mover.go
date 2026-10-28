@@ -108,6 +108,12 @@ type Needs struct {
 	Docker bool `json:"docker,omitempty"`
 	// Tasks are the names of its task files: none may be taken there.
 	Tasks []string `json:"tasks,omitempty"`
+	// Volumes are the docker volumes its move fills there (MoveVolumes):
+	// none may be there already.
+	Volumes []string `json:"volumes,omitempty"`
+	// Ports are the ones its workers have written (FixedPorts): each must
+	// be free there.
+	Ports []int `json:"ports,omitempty"`
 }
 
 // Steps of a move, in order.
@@ -153,6 +159,17 @@ type Mover struct {
 	// dependencies there after the first copy; Parts must then leave
 	// node_modules behind (MoveParts).
 	Install bool
+	// Journal, when set, has the move keep a journal from just before it
+	// stops the site until it ends (JournalPath), for Recover after a
+	// restart; its Target and ID are the caller's to fill.
+	Journal *Journal
+	// NoTrial has Check look for each export's program without running
+	// the export (Rehearser): a check answered inside a request (the
+	// panel's plan, the answer to the move's POST) has seconds, and a
+	// database's dump takes minutes. The move's own check runs it.
+	NoTrial bool
+	// Note, when set, hears what Check found of the exports.
+	Note func(string)
 }
 
 // Needer is a Source that says itself what its site needs of the target,
@@ -190,8 +207,12 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	}
 	parts := m.PartsFor(domain)
 
-	progress(StepCheck, "asking "+t.Name()+" whether it can take "+domain)
-	if _, err := m.Check(ctx, domain, t); err != nil {
+	ask := "asking " + t.Name() + " whether it can take " + domain
+	if held := m.rehearsed(domain); len(held) > 0 && !m.NoTrial {
+		ask += ", and trying the export of " + strings.Join(held, ", ") + " here while it serves"
+	}
+	progress(StepCheck, ask)
+	if _, err := m.check(ctx, domain, t, func(s string) { progress(StepCheck, s) }); err != nil {
 		return rep, err
 	}
 	exporter, _ := m.Source.(Exporter)
@@ -204,6 +225,11 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	planned := m.plannedManifest(domain, dir)
 	plannedRaw, _ := json.Marshal(planned)
 	liveWorkers, stopWorkers := planned.MovingWorkers(true), planned.MovingWorkers(false)
+	// However it ends, the dumps the exports leave here go: undone, the
+	// site runs here on the database they were taken from; done, the
+	// archive has them (it is packed before this runs), or nothing that
+	// keeps the folder here needs them.
+	defer DropOutputs(dir, planned, append(append([]string(nil), liveWorkers...), stopWorkers...))
 	if len(liveWorkers) > 0 {
 		progress(StepExport, "exporting the data of "+strings.Join(liveWorkers, ", ")+" here, while it serves")
 		said, err := exporter.Export(ctx, domain, plannedRaw, liveWorkers)
@@ -267,20 +293,47 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	var taskFiles map[string][]byte
 	var held []string
 	if tasker != nil {
-		if taskFiles, err = tasker.Tasks(domain); err == nil {
-			held, err = tasker.HoldTasks(domain)
+		if taskFiles, err = tasker.Tasks(domain); err != nil {
+			return rep, undone(fmt.Errorf("its tasks here: %w", err), m.undo(t, domain, false))
+		}
+	}
+	// The journal before anything stops: a restart from here on finds it,
+	// and the site back as it was (Recover).
+	var jr *Journal
+	if m.Journal != nil {
+		j := *m.Journal
+		j.Domain, j.Step, j.Started, j.Held = domain, JournalStop, time.Now().UTC(), enabledTasks(taskFiles)
+		j.Manifest, err = os.ReadFile(filepath.Join(dir, manifest.FileName))
+		if err == nil {
+			err = j.write(m.Root)
 		}
 		if err != nil {
+			return rep, undone(fmt.Errorf("writing down the move before stopping the site: %w", err), m.undo(t, domain, false))
+		}
+		jr = &j
+		defer removeJournal(m.Root, domain)
+	}
+	if tasker != nil {
+		if held, err = tasker.HoldTasks(domain); err != nil {
 			_ = tasker.ReleaseTasks(held)
 			return rep, undone(fmt.Errorf("turning its tasks off here: %w", err), m.undo(t, domain, false))
 		}
 	}
 	original, err := m.Source.Stop(ctx, domain)
 	if err != nil {
+		if jr != nil {
+			// A stop that failed halfway has written hold or disabled: the
+			// manifest it had goes back, or the site stays down.
+			_ = m.Source.Start(domain, jr.Manifest)
+		}
 		if tasker != nil {
 			_ = tasker.ReleaseTasks(held)
 		}
 		return rep, undone(fmt.Errorf("stop: %w", err), m.undo(t, domain, false))
+	}
+	if jr != nil {
+		jr.Manifest = original
+		_ = jr.write(m.Root)
 	}
 	stopped := time.Now()
 	// From here every failure before the target answers puts the source
@@ -328,6 +381,15 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	}
 
 	progress(StepCommit, "putting it in place on "+t.Name())
+	if jr != nil {
+		// Before the commit is asked for, not after it answered: a restart
+		// in between must ask the target, not start the site here again
+		// while it may run there.
+		jr.Step = JournalCommit
+		if err := jr.write(m.Root); err != nil {
+			return restore(undone(fmt.Errorf("writing down the move before its commit: %w", err), m.undo(t, domain, false)))
+		}
+	}
 	if err := t.Commit(ctx, domain, original, taskFiles); err != nil {
 		return restore(undone(fmt.Errorf("commit: %w", err), m.undo(t, domain, false)))
 	}
@@ -359,37 +421,110 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 		return restore(undone(err, m.undo(t, domain, true)))
 	}
 	rep.Down = time.Since(stopped).Round(time.Second)
+	if jr != nil {
+		jr.Step = JournalReady
+		_ = jr.write(m.Root)
+	}
 
-	// The site answers there. Its names move now, and only then does
-	// this node take its own route down: the other order would leave the
-	// names pointing at nothing.
+	if err := m.settle(ctx, domain, t, original, &rep, progress); err != nil {
+		return rep, err
+	}
+	progress(StepDone, fmt.Sprintf("%s runs on %s; it was down %s", domain, t.Name(), rep.Down))
+	return rep, nil
+}
+
+// settle ends a move whose site answers there: its names follow, the
+// target forgets how to take it out, and the copy here is archived. Each
+// on its own time, not the move's: the site already runs there, and a
+// move whose time ran out in these last steps left its names pointing
+// here and its folder half packed.
+func (m *Mover) settle(ctx context.Context, domain string, t Target, original []byte, rep *Report, progress func(step, msg string)) error {
+	own := context.WithoutCancel(ctx)
+	// Its names move now, and only then does this node take its own route
+	// down: the other order would leave the names pointing at nothing.
 	if door, ok := m.Source.Published(domain); ok {
 		progress(StepDNS, "pointing its names at "+t.Name())
-		if err := t.Publish(ctx, domain, door); err != nil {
+		pctx, cancel := context.WithTimeout(own, 5*time.Minute)
+		if err := t.Publish(pctx, domain, door); err != nil {
 			// It runs there; the names did not follow. Said, not undone:
 			// the target's own loop keeps trying, and this node keeps its
 			// records until it does.
 			rep.DNS = "the names were not moved: " + err.Error()
 		} else {
-			m.Source.Unpublish(ctx, domain)
+			m.Source.Unpublish(pctx, domain)
 			rep.DNS = "moved"
 		}
+		cancel()
 	}
 
 	if f, ok := t.(Finisher); ok {
 		// It stays there: the target forgets how to take it out. A target
 		// that does not answer keeps the record, which takes nothing out
 		// while the site is there.
-		_ = f.Finish(ctx, domain)
+		fctx, cancel := context.WithTimeout(own, time.Minute)
+		_ = f.Finish(fctx, domain)
+		cancel()
 	}
 	progress(StepCleanup, "archiving the copy that stays here")
-	path, err := m.Source.Archive(ctx, domain, original)
+	mf, _ := manifest.Parse(original)
+	dumped := dumpsThere(m.dir(domain), mf)
+	// Unbounded: packing a site of gigabytes takes what it takes, and
+	// cutting it leaves the folder here instead of in the archive.
+	path, err := m.Source.Archive(own, domain, original)
 	if err != nil {
-		return rep, fmt.Errorf("moved and running on %s, but the copy here could not be archived: %w", t.Name(), err)
+		path = ""
+	}
+	m.sourceVolumes(own, domain, mf, path, dumped)
+	if err != nil {
+		return fmt.Errorf("moved and running on %s, but the copy here could not be archived: %w", t.Name(), err)
 	}
 	rep.Archive = path
-	progress(StepDone, fmt.Sprintf("%s runs on %s; it was down %s", domain, t.Name(), rep.Down))
-	return rep, nil
+	return nil
+}
+
+// dir is the site's folder here.
+func (m *Mover) dir(domain string) string {
+	if m.Dir != "" {
+		return m.Dir
+	}
+	return filepath.Join(m.Root, "sites", domain)
+}
+
+// Budget is the time a move of domain is given in all, for a caller that
+// runs it in the background: what its steps are each bounded by, added
+// up, and an hour for the copies, which nothing else bounds. A fixed hour
+// for all of it was less than what a site with a database may take by
+// its own manifest (an export of 30 minutes, then an import of as much
+// there, the worker's start and the wait for the site), and a move cut
+// there is undone after the site was stopped for nothing.
+func (m *Mover) Budget(domain string) time.Duration {
+	ready := m.ReadyWait
+	if ready == 0 {
+		ready = 3 * time.Minute
+	}
+	// The copies and the questions; the wait for the site, before and
+	// after the target's AI looks at it (ten minutes at most).
+	b := time.Hour + 2*ready + 10*time.Minute
+	if m.Install {
+		// The install there (30 minutes at most), and the one at the
+		// commit an older house does instead (15).
+		b += 45 * time.Minute
+	}
+	dir := filepath.Join(m.Root, "sites", domain)
+	if m.Dir != "" {
+		dir = m.Dir
+	}
+	planned := m.plannedManifest(domain, dir)
+	if planned == nil {
+		return b
+	}
+	for _, name := range MovingWorkers(planned) {
+		t := moveTimeout(planned.Workers[name].Move)
+		// Its export tried before the stop and run for the move, its
+		// import there, the wait for it to be ready, and its start.
+		b += 3*t + readyTime + 5*time.Minute
+	}
+	return b
 }
 
 // PartsFor is what a move of domain copies: the source's parts, less what
@@ -410,13 +545,55 @@ func (m *Mover) PartsFor(domain string) []archive.Part {
 // the site: its name, its tasks' names, docker when it needs it, and every
 // name it answers to when they are published here (a target that cannot
 // point them would leave them on a node that no longer serves the site).
-// Nothing changes on either side, so an import's --dry-run asks it too. It
-// returns the workers whose data moves by command.
+// Nothing changes on either side, so an import's --dry-run asks it too,
+// and so does the panel's plan. The exports that wait for the stop are
+// tried too, where they will run (Rehearser). It returns the workers whose
+// data moves by command.
 func (m *Mover) Check(ctx context.Context, domain string, t Target) ([]string, error) {
-	dir := filepath.Join(m.Root, "sites", domain)
-	if m.Dir != "" {
-		dir = m.Dir
+	return m.check(ctx, domain, t, m.Note)
+}
+
+func (m *Mover) check(ctx context.Context, domain string, t Target, note func(string)) ([]string, error) {
+	need, moving, err := m.NeedsFor(domain, t)
+	if err != nil {
+		return nil, err
 	}
+	if err := t.Check(ctx, domain, need); err != nil {
+		return nil, err
+	}
+	// The live exports need no trial: they run before the stop anyway,
+	// and their failure stops nothing.
+	if held := m.rehearsed(domain); len(held) > 0 {
+		raw, _ := json.Marshal(m.plannedManifest(domain, m.dir(domain)))
+		said, err := m.Source.(Rehearser).Rehearse(ctx, domain, raw, held, !m.NoTrial)
+		if err != nil {
+			return nil, err
+		}
+		if said != "" && note != nil {
+			note(said)
+		}
+	}
+	return moving, nil
+}
+
+// rehearsed are the workers whose exports Check tries: the ones that
+// wait for the stop, of a source that can try them.
+func (m *Mover) rehearsed(domain string) []string {
+	if _, ok := m.Source.(Rehearser); !ok {
+		return nil
+	}
+	planned := m.plannedManifest(domain, m.dir(domain))
+	if planned == nil {
+		return nil
+	}
+	return planned.MovingWorkers(false)
+}
+
+// NeedsFor is what a move of domain to t asks of t (Needs), and the
+// workers whose data moves by command; an error when this source or t
+// cannot move that data.
+func (m *Mover) NeedsFor(domain string, t Target) (Needs, []string, error) {
+	dir := m.dir(domain)
 	need := NeedsOf(m.Root, domain, m.Source)
 	if n, ok := m.Source.(Needer); ok {
 		need = n.Needs(domain)
@@ -429,22 +606,22 @@ func (m *Mover) Check(ctx context.Context, domain string, t Target) ([]string, e
 	_, exports := m.Source.(Exporter)
 	_, migrates := t.(Migrator)
 	if len(moving) > 0 && (!exports || !migrates) {
-		return nil, fmt.Errorf("the data of %s moves by command (move in its manifest), which only an import from V1 runs yet: move it by hand", strings.Join(moving, ", "))
+		return need, nil, fmt.Errorf("the data of %s moves by command (move in its manifest), which this move cannot run on one side or the other: move it by hand", strings.Join(moving, ", "))
 	}
 	if UsesDocker(planned) {
 		need.Docker = true
 	}
+	// Found at the check, not at the import: there, the site was already
+	// stopped here and its last copy sent.
+	need.Volumes, need.Ports = MoveVolumes(domain, planned, moving), FixedPorts(planned)
 	if tasker, ok := m.Source.(Tasker); ok {
 		ts, err := tasker.Tasks(domain)
 		if err != nil {
-			return nil, fmt.Errorf("its tasks: %w", err)
+			return need, nil, fmt.Errorf("its tasks: %w", err)
 		}
 		need.Tasks = SortedNames(ts)
 	}
-	if err := t.Check(ctx, domain, need); err != nil {
-		return nil, err
-	}
-	return moving, nil
+	return need, moving, nil
 }
 
 // plannedManifest is the manifest the site will be committed with, read

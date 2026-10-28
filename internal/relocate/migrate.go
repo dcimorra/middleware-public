@@ -155,8 +155,8 @@ func runCommand(ctx context.Context, d runtime.Docker, container string, spec *m
 		}
 		if err == nil {
 			err = finish()
-		} else if dump != nil {
-			dump.Close()
+		} else {
+			abandon(dump)
 		}
 		if err != nil {
 			if cctx.Err() == context.DeadlineExceeded {
@@ -215,8 +215,8 @@ func runAsOperator(ctx context.Context, spec *manifest.Spec, port int, logFile s
 	err = runExec(cctx, argv, spec.Cwd, env, out, dump)
 	if err == nil {
 		err = finish()
-	} else if dump != nil {
-		dump.Close()
+	} else {
+		abandon(dump)
 	}
 	if err != nil {
 		what := strings.Join(argv, " ")
@@ -248,11 +248,23 @@ func runExec(ctx context.Context, argv []string, dir string, env []string, log, 
 // openOutput makes the file a command's standard output goes to, rel
 // inside dir; nil when rel is "". It is written beside, as .part, and
 // finish puts it in place: a dump cut halfway is never taken for one.
+// A command that fails has its .part removed (dropOutput): it was left in
+// the folder, and went with the site on its next move.
+//
+// rel absolute is a file of the house's, outside any site (a rehearsal's).
+// Inside a site whose folder is a git repository, the dump is kept out of
+// it first: the github module commits and pushes the folder, and a
+// database's dump on GitHub is its people's data in public.
 func openOutput(dir, rel string) (*os.File, func() error, error) {
 	if rel == "" {
 		return nil, func() error { return nil }, nil
 	}
 	final := filepath.Join(dir, filepath.FromSlash(rel))
+	if filepath.IsAbs(rel) {
+		final = rel
+	} else if err := ExcludeFromGit(dir, rel); err != nil {
+		return nil, nil, err
+	}
 	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
 		return nil, nil, err
 	}
@@ -266,6 +278,69 @@ func openOutput(dir, rel string) (*os.File, func() error, error) {
 		}
 		return os.Rename(final+".part", final)
 	}, nil
+}
+
+// abandon closes a dump whose command failed and removes it.
+func abandon(dump *os.File) {
+	if dump != nil {
+		dump.Close()
+		_ = os.Remove(dump.Name())
+	}
+}
+
+// DropOutputs removes the dumps the workers' exports wrote in dir
+// (move.output, and its .part), for a move that is over: done there, the
+// dump is the database's people's data lying in a folder that travels on
+// every later move and that the github module may push; undone, it is
+// that and nothing else. An export that writes its own files (no output)
+// is the site's to clean, as the house does not know their names.
+func DropOutputs(dir string, m *manifest.Manifest, workers []string) {
+	if m == nil {
+		return
+	}
+	for _, name := range workers {
+		w := m.Workers[name]
+		if w == nil || w.Move == nil || w.Move.Output == "" {
+			continue
+		}
+		p := filepath.Join(dir, filepath.FromSlash(w.Move.Output))
+		_ = os.Remove(p)
+		_ = os.Remove(p + ".part")
+	}
+}
+
+// ExcludeFromGit adds rel, and its .part, to the git repository's own
+// exclude file when dir is one (.git/info/exclude, never the site's
+// .gitignore, which is the site's and would travel with it).
+func ExcludeFromGit(dir, rel string) error {
+	info, err := os.Stat(filepath.Join(dir, ".git"))
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	path := filepath.Join(dir, ".git", "info", "exclude")
+	raw, _ := os.ReadFile(path)
+	have := map[string]bool{}
+	for _, l := range strings.Split(string(raw), "\n") {
+		have[strings.TrimSpace(l)] = true
+	}
+	var add []string
+	for _, p := range []string{"/" + rel, "/" + rel + ".part"} {
+		if !have[p] {
+			add = append(add, p)
+		}
+	}
+	if len(add) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	text := string(raw)
+	if text != "" && !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	text += "# a move's database dump: never committed\n" + strings.Join(add, "\n") + "\n"
+	return fsx.WriteAtomic(path, []byte(text), 0o644)
 }
 
 // logTail is the end of a failed command's log, for its error: the log is
@@ -390,6 +465,18 @@ func (r Receiver) Migrate(ctx context.Context, domain string, manifestData []byt
 	for _, name := range workers {
 		if w := m.Workers[name]; w == nil || w.Move == nil {
 			return "", fmt.Errorf("%s: not a worker whose data moves by command", name)
+		}
+	}
+	// The dumps go once their import ends, whichever way: left in the
+	// folder, a database's whole dump was put in place with the site,
+	// travelled with it on every later move, and sat in its git working
+	// tree for the github module to push. Kept out of git meanwhile.
+	defer DropOutputs(dir, m, workers)
+	for _, name := range workers {
+		if out := m.Workers[name].Move.Output; out != "" {
+			if err := ExcludeFromGit(dir, out); err != nil {
+				return "", err
+			}
 		}
 	}
 	d := r.docker()
