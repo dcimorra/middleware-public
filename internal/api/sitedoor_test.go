@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -510,5 +511,42 @@ func TestTheGatewayScreenSavesSeveralModelsWithTheDefaultAmongThem(t *testing.T)
 	}
 	if resp, _ := f.call("POST", "/api/v1/sites/s.test/claude-api", map[string]any{"enabled": true, "models": []string{"nonsense"}}); resp.StatusCode != 400 {
 		t.Fatalf("a model the agent does not have: %d", resp.StatusCode)
+	}
+}
+
+// The site's code names the files and owns the folder they are in, links
+// included: a link that leaves the folder, at the end or halfway, is
+// refused at the open itself, so swapping a file for one between a check
+// and the open has nothing to win.
+func TestAFileAttachedThroughALinkOutOfTheFolderIsRefused(t *testing.T) {
+	f, keys, _, _ := doorFixture(t, map[string]string{"j.test": `{"version":2,"claude_api":{}}`})
+	dir := filepath.Join(f.root, "sites", "j.test")
+	secret := filepath.Join(f.root, "data", "secret.txt")
+	os.WriteFile(secret, []byte("the house's"), 0o600)
+	os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("hello"), 0o644)
+	os.Symlink(secret, filepath.Join(dir, "out.txt"))
+	os.Symlink(filepath.Join(f.root, "data"), filepath.Join(dir, "updir"))
+	os.Symlink("notes.txt", filepath.Join(dir, "in.txt"))
+	if err := syscall.Mkfifo(filepath.Join(dir, "pipe"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ask := func(file string) (int, map[string]any) {
+		return f.asSite(keys, "j.test", "POST", "/api/v1/site/claude/ask", map[string]any{"prompt": "x", "files": []string{file}})
+	}
+	for _, bad := range []string{"out.txt", "updir/secret.txt", secret, "../../data/secret.txt", "pipe", "."} {
+		done := make(chan int, 1)
+		go func() { code, _ := ask(bad); done <- code }()
+		select {
+		case code := <-done:
+			if code != 400 {
+				t.Fatalf("%q was attached: %d", bad, code)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%q held the request", bad)
+		}
+	}
+	// A link that stays inside is the file it points to.
+	if code, out := ask("in.txt"); code != 200 {
+		t.Fatalf("a link inside the folder: %d %v", code, out)
 	}
 }

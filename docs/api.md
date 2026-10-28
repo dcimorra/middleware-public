@@ -649,7 +649,7 @@ site written for V1 moves without a line changed.
 | method | path | result |
 | --- | --- | --- |
 | GET | `/site` | → `{domain, claude: {available, provider, model, models, tools, limits: {provider, tools, permissions, daily_usd, daily_turns, max_chats, model, models, hide_chats}, spent_usd, left_usd, turns, chats_open, busy}}`; the `claude` key keeps its V1 name whatever agent answers |
-| POST | `/site/claude/ask` | `{prompt (or text), system?, model?, title?, format?: "json", schema?, wait?, files?: [paths in the site's folder]}` → `{chat, state: "done", text, model, turns, cost_usd, json?, json_error?, question?, error?}`; one question, one call. Still running when `wait` runs out: 202 `{chat, state: "running", why}` |
+| POST | `/site/claude/ask` | `{prompt (or text), system?, model?, title?, format?: "json", schema?, wait?, files?: [paths relative to the site's folder: regular files only, a link that leaves the folder is refused with 400]}` → `{chat, state: "done", text, model, turns, cost_usd, json?, json_error?, question?, error?}`; one question, one call. Still running when `wait` runs out: 202 `{chat, state: "running", why}` |
 | GET | `/site/claude/chats` | → `{chats: [{id, domain, title, model, created, updated, turns, cost_usd, busy, messages, origin, system, tools, asking}]}` |
 | POST | `/site/claude/chats` | `{title?, system?, model?, format?, schema?, prompt?, files?}` → `{chat: {…}}`, or the answer when a prompt was sent |
 | GET | `/site/claude/chats/{id}` | → `{chat, state, text, messages: [{seq, at, role: user\|assistant\|tool\|result, text, tool: {id, name, input, result, error, done, run, background}, agent, cost_usd, error}], more}`; `?limit=150` (the last ones) |

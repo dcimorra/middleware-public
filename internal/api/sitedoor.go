@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/auth"
@@ -906,15 +907,15 @@ func (o SiteDoorOptions) attachPaths(c doorCaller, name string, paths []string) 
 	if o.SiteDir == nil {
 		return Errorf(http.StatusBadRequest, "files cannot be attached here")
 	}
-	dir := o.SiteDir(c.Domain)
+	root, err := os.OpenRoot(o.SiteDir(c.Domain))
+	if err != nil {
+		return Errorf(http.StatusBadRequest, "files cannot be attached here: %v", err)
+	}
+	defer root.Close()
 	for _, p := range paths {
-		full, err := insideDir(dir, p)
+		f, err := openInside(root, p)
 		if err != nil {
 			return Errorf(http.StatusBadRequest, "%v", err)
-		}
-		f, err := openRegular(full)
-		if err != nil {
-			return Errorf(http.StatusBadRequest, "%s: %v", p, err)
 		}
 		_, err = o.Chat.AddUpload(name, filepath.Base(filepath.Clean(p)), f)
 		f.Close()
@@ -925,44 +926,43 @@ func (o SiteDoorOptions) attachPaths(c doorCaller, name string, paths []string) 
 	return nil
 }
 
-// insideDir resolves a name against the site's folder and refuses one
+// openInside opens a regular file of the site's folder and refuses one
 // that leaves it: what arrives here is written by the site's code, and a
-// path that ends in an os.Open is how the neighbour's .env is read with
-// the house's eyes. Symbolic links are followed before deciding.
-func insideDir(dir, name string) (string, error) {
+// path that ends in an open is how the neighbour's .env, or the house's
+// own sessions and door key, is read with the house's eyes.
+//
+// It used to resolve the links with EvalSymlinks, check the result was
+// inside, and then os.Open the path again. Between the check and the open
+// a site in a container swaps the file for a link to
+// data/auth/sessions.json, in a loop, and wins the race often enough.
+// os.Root resolves every component at the moment of the open and refuses
+// one that leaves the folder, so what is checked is what is opened; the
+// handle is then asked what it is, never the path again.
+//
+// O_NONBLOCK because a FIFO the site made would otherwise hold the open,
+// and the request, until something wrote to it; on a regular file it
+// changes nothing. A directory, a socket or a device is not an
+// attachment, and what would be read from /dev/zero is a full disk.
+func openInside(root *os.Root, name string) (*os.File, error) {
 	if strings.TrimSpace(name) == "" {
-		return "", errors.New("a file in the list has no name")
+		return nil, errors.New("a file in the list has no name")
 	}
-	full := filepath.Join(dir, name)
 	if filepath.IsAbs(name) {
-		full = filepath.Clean(name)
+		return nil, fmt.Errorf("%q: name it from the site's folder, not from /", name)
 	}
-	real, err := filepath.EvalSymlinks(full)
+	f, err := root.OpenFile(filepath.Clean(name), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return "", fmt.Errorf("%q: %v", name, err)
-	}
-	base, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		return "", err
-	}
-	rel, err := filepath.Rel(base, real)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("%q is outside this site's folder", name)
-	}
-	return real, nil
-}
-
-// openRegular opens a real file: a directory, a socket or a device is not
-// an attachment, and what would be read from /dev/zero is a full disk.
-func openRegular(path string) (*os.File, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
+		// os.Root says "path escapes from parent" and does not export the
+		// error; the site's code deserves to be told plainly.
+		if strings.Contains(err.Error(), "escapes") {
+			return nil, fmt.Errorf("%q is outside this site's folder", name)
+		}
+		return nil, fmt.Errorf("%q: %v", name, err)
 	}
 	st, err := f.Stat()
 	if err != nil || !st.Mode().IsRegular() {
 		f.Close()
-		return nil, errors.New("not a file")
+		return nil, fmt.Errorf("%q: not a file", name)
 	}
 	return f, nil
 }
