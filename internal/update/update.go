@@ -6,6 +6,11 @@
 // anything not newer than what runs. Then both restart: the helper by
 // ending, the supervisor with SIGTERM to itself, and the sites, which
 // outlive it, are re-adopted.
+//
+// The new release is on trial until the new supervisor says it serves
+// (ConfirmWhenServing, the helper's update.confirm); one that does not
+// say so in time is rolled back by the helper on its own and skipped
+// until a newer release is out. See internal/helper/update.go.
 package update
 
 import (
@@ -45,9 +50,30 @@ type Options struct {
 	Helper  func() bool
 	// Restart ends the supervisor so systemd starts the new binary.
 	Restart func()
-	HTTP    *http.Client
-	Arch    string
-	Now     func() time.Time
+	// Confirm tells the helper that Current is serving (update.confirm).
+	// nil is an installation without the helper, where nothing is ever
+	// on trial.
+	Confirm func(ctx context.Context, version string) (Confirmation, error)
+	// Settle is how long the supervisor serves before it confirms, and
+	// Probe how it proves it does, given the listener's address; zero and
+	// nil are the defaults (tests shorten and replace them).
+	Settle time.Duration
+	Probe  func(ctx context.Context, listen string) error
+	HTTP   *http.Client
+	Arch   string
+	Now    func() time.Time
+}
+
+// Confirmation is the helper's answer to a confirmation.
+type Confirmation struct {
+	// Confirmed is true when Current was on trial and no longer is.
+	Confirmed bool
+	// Skipped is a release the helper rolled back from and will not
+	// install; RolledBack and Why are said once, at the first start
+	// after the rollback.
+	Skipped    string
+	RolledBack string
+	Why        string
 }
 
 // Status is what the System screen shows.
@@ -63,6 +89,10 @@ type Status struct {
 	EveryMinutes int       `json:"every_minutes"`
 	NextCheck    time.Time `json:"next_check,omitzero"`
 	Installing   bool      `json:"installing,omitempty"`
+	// Skipped is a release this machine rolled back from: it did not say
+	// it was serving after it was installed. It is not offered, and the
+	// helper refuses it, until a newer one is out.
+	Skipped string `json:"skipped,omitempty"`
 	// CanInstall is false without the helper (a container, an install
 	// with --no-helper) or on a build that is not a release.
 	CanInstall bool `json:"can_install"`
@@ -148,10 +178,17 @@ func (u *Updater) Check(ctx context.Context, force bool) Status {
 		u.st.Error = err.Error()
 	} else {
 		u.st.Latest = latest
-		u.st.Available = release.Newer(latest, u.opts.Current)
+		u.st.Available = u.offered(latest)
 	}
 	u.mu.Unlock()
 	return u.Status()
+}
+
+// offered says whether latest is one to install: newer than what runs,
+// and newer than a release this machine rolled back from. Called with
+// u.mu held.
+func (u *Updater) offered(latest string) bool {
+	return release.Newer(latest, u.opts.Current) && (u.st.Skipped == "" || release.Newer(latest, u.st.Skipped))
 }
 
 // latest is the newest published release with a binary for this machine.
@@ -304,5 +341,150 @@ func (u *Updater) tick(ctx context.Context) {
 	u.mu.Unlock()
 	if !told {
 		u.opts.Bus.Emit(events.Event{Type: "update.available", Actor: "engine", Level: "warn", Message: st.Latest + " is available (running " + st.Current + "); install it from System"})
+	}
+}
+
+// DefaultSettle is how long the supervisor serves before it confirms an
+// update. The engine adopts the running sites and then reconciles every
+// two seconds: half a minute is a dozen passes, enough for a release that
+// panics in the engine, the proxy or a hook's loop to have done so, and
+// well inside the helper's five minutes.
+const DefaultSettle = 30 * time.Second
+
+// confirmFor is how long a confirmation is retried: the helper's grace.
+// Past it the helper has decided, and asking again is noise.
+const confirmFor = 5 * time.Minute
+
+// startedEvent is what app.Run emits once the loopback listener is open,
+// with its address in Data["listen"].
+const startedEvent = "middleware.started"
+
+// ConfirmWhenServing confirms Current to the helper once this supervisor
+// serves: its listener open (startedEvent, emitted after it is), Settle
+// spent running, and a request answered through that listener. It
+// returns at once and does the rest in a goroutine. A release that never
+// gets there never confirms, and the helper puts the previous one back.
+//
+// Every start confirms, not only the one after an update: the supervisor
+// cannot know whether it is on trial (the helper's record is root's), and
+// with nothing on trial a confirmation only fetches what is skipped.
+func (u *Updater) ConfirmWhenServing(ctx context.Context) {
+	if u.opts.Confirm == nil || !release.Valid(u.opts.Current) {
+		return
+	}
+	// Subscribed before Recent is read, so the event cannot fall between
+	// the two: it was emitted already, or it is coming down ch.
+	ch, stop := u.opts.Bus.Subscribe()
+	go func() {
+		defer stop()
+		listen, ok := "", false
+		for _, e := range u.opts.Bus.Recent() {
+			if l, is := started(e); is {
+				listen, ok = l, true
+			}
+		}
+		for !ok {
+			select {
+			case <-ctx.Done():
+				return
+			case e := <-ch:
+				listen, ok = started(e)
+			}
+		}
+		stop()
+		if !sleep(ctx, u.settle()) {
+			return
+		}
+		probe := u.opts.Probe
+		if probe == nil {
+			probe = probeListener
+		}
+		// Retried: the helper restarts itself right after an install and
+		// may not be back yet, and a request that failed once may not
+		// fail twice. Neither is a reason to let a good release go.
+		until := u.opts.Now().Add(confirmFor)
+		var err error
+		for {
+			if err = probe(ctx, listen); err == nil {
+				var c Confirmation
+				if c, err = u.opts.Confirm(ctx, u.opts.Current); err == nil {
+					u.confirmed(c)
+					return
+				}
+			}
+			if !u.opts.Now().Before(until) || !sleep(ctx, 5*time.Second) {
+				break
+			}
+		}
+		if ctx.Err() == nil && (u.opts.Helper == nil || u.opts.Helper()) {
+			u.opts.Bus.Emit(events.Event{Type: "update.unconfirmed", Actor: "engine", Level: "warn", Message: u.opts.Current + " could not tell the helper it is serving: " + err.Error()})
+		}
+	}()
+}
+
+func started(e events.Event) (string, bool) {
+	if e.Type != startedEvent {
+		return "", false
+	}
+	l, _ := e.Data["listen"].(string)
+	return l, true
+}
+
+func (u *Updater) settle() time.Duration {
+	if u.opts.Settle > 0 {
+		return u.opts.Settle
+	}
+	return DefaultSettle
+}
+
+func (u *Updater) confirmed(c Confirmation) {
+	u.mu.Lock()
+	u.st.Skipped = c.Skipped
+	if u.st.Latest != "" {
+		u.st.Available = u.offered(u.st.Latest)
+	}
+	u.mu.Unlock()
+	if c.Confirmed {
+		u.opts.Bus.Emit(events.Event{Type: "update.confirmed", Actor: "engine", Message: u.opts.Current + " is serving; the release before it is kept until the next update"})
+	}
+	if c.RolledBack != "" {
+		u.opts.Bus.Emit(events.Event{Type: "update.rolled_back", Actor: "engine", Level: "error", Message: c.RolledBack + " was rolled back to " + u.opts.Current + ": " + c.Why + "; it is skipped until a newer release is out"})
+	}
+}
+
+// probeHTTP has no proxy on purpose: MIDDLEWARE_LISTEN may be 0.0.0.0,
+// which is not loopback to ProxyFromEnvironment, and a proxy answering
+// would prove the proxy serves, not this process.
+var probeHTTP = &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: nil}}
+
+// probeListener sends one request through the listener. Any answer will
+// do, a 404 for an unknown name included: it went through the whole chain
+// (WAF, router, proxy) and came back.
+func probeListener(ctx context.Context, listen string) error {
+	if listen == "" {
+		return errors.New("the listener's address is not known")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+listen+"/", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "middleware-update-confirm")
+	resp, err := probeHTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
+// sleep waits d, or reports false when ctx ends first.
+func sleep(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
 	}
 }

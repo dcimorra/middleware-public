@@ -533,6 +533,9 @@ func (w *wireHook) Run(ctx context.Context, a *app.App) error {
 		go w.fixer.Run(ctx)
 	}
 	if w.updater != nil {
+		// Here, before app.Run opens the listener, so the confirmation
+		// is waiting for it to be open and cannot miss it.
+		w.updater.ConfirmWhenServing(ctx)
 		go w.updater.Run(ctx)
 	}
 	// The VPN's interface, held up while the module is enabled (the CLI
@@ -771,6 +774,14 @@ func buildUpdater(a *app.App) *update.Updater {
 			return err
 		},
 		Restart: func() { _ = syscall.Kill(os.Getpid(), syscall.SIGTERM) },
+		Confirm: func(ctx context.Context, version string) (update.Confirmation, error) {
+			r, err := hc.UpdateConfirm(ctx, version)
+			c := update.Confirmation{Confirmed: r.Confirmed, Skipped: r.Skipped}
+			if r.Rollback != nil {
+				c.RolledBack, c.Why = r.Rollback.From, r.Rollback.Why
+			}
+			return c, err
+		},
 	})
 }
 

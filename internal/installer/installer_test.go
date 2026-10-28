@@ -325,6 +325,12 @@ func TestUninstallRemovesUnitsButKeepsTheRoot(t *testing.T) {
 	if err := os.WriteFile(marker, []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// What an update left next to the binary.
+	for _, p := range []string{in.Params.Binary + ".prev", in.Params.Binary + ".update.json"} {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	rec.Calls = nil
 	out.Reset()
 	if _, err := in.Uninstall(); err != nil {
@@ -346,6 +352,8 @@ func TestUninstallRemovesUnitsButKeepsTheRoot(t *testing.T) {
 		"remove " + filepath.Join(in.Paths.TmpfilesDir, TmpfilesIn),
 		"remove " + filepath.Join(in.Paths.SysctlDir, SysctlIn),
 		"sudo systemctl daemon-reload",
+		"remove " + in.Params.Binary + ".prev",
+		"remove " + in.Params.Binary + ".update.json",
 		"remove " + in.Params.Binary,
 	}
 	got := rec.Mutations()
