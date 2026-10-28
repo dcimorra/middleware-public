@@ -92,7 +92,9 @@ Same handover, same guarantees, backwards. Keep a few builds; a task
   fires requests through a handover and counts.
 - **No request is cut.** The old instance drains before it is signalled.
   Requests longer than `run.drain` are cut; raise it for a site that
-  streams downloads.
+  streams downloads. A supervisor that is itself stopping cuts the drain
+  short and stops the old instance before it exits, so that no generation
+  is left running outside its state file.
 - **One instance receives traffic at any moment.** Two processes exist for
   a few seconds, one receiving, one draining. An in-memory session or a
   file lock held by the old one is released when it exits; code that

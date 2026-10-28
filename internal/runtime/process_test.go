@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -54,6 +56,44 @@ func TestStartWritesOutputToTheLogFileAndStopReachesTheGroup(t *testing.T) {
 	}
 }
 
+// `sh -c "a & b"` ends while a goes on in its group, holding the port.
+// Stop returned at once when the leader was gone, and every restart the
+// backoff made left one more of them.
+func TestStopReachesTheGroupAfterTheLeaderHasExited(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "child.pid")
+	spec := &manifest.Spec{Domain: "a.test", SiteDir: dir, Cwd: dir, Command: []string{"/bin/sh", "-c", "sleep 300 & echo $! > " + pidFile + "; exit 1"}, Env: map[string]string{}, Revision: "r1"}
+	inst, err := Process{}.Start(context.Background(), spec, 45996, filepath.Join(dir, "out.log"), filepath.Join(dir, "home"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-inst.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the shell did not exit")
+	}
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Kill(child, syscall.SIGKILL)
+	if !pidAlive(child) {
+		t.Fatal("the background child is not running, so the test proves nothing")
+	}
+	if err := inst.Stop(context.Background(), 2*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	// pidAlive counts a zombie as dead: an orphan killed here may stay
+	// one where PID 1 does not reap.
+	if pidAlive(child) {
+		t.Fatal("the leader's child survived Stop")
+	}
+}
+
 func TestAdoptRefusesADeadPid(t *testing.T) {
 	_, err := Process{}.Adopt(context.Background(), State{PID: 999999})
 	if err != ErrGone {
@@ -90,6 +130,59 @@ func TestAReusedPidIsNotAdopted(t *testing.T) {
 	st.StartedAt = began.Add(-time.Hour)
 	if _, err := (Process{}).Adopt(context.Background(), st); err != ErrGone {
 		t.Fatalf("a pid started an hour after the recorded start was adopted: %v", err)
+	}
+}
+
+// A clock stepped after the start (NTP's first sync, a VM resumed) moves
+// the boot time /proc/stat reports, and with it every start time computed
+// from it. The kernel's own count does not move: a process recorded by its
+// start tick and boot id is adopted whatever the wall clock says now, and
+// a different tick or boot is still a stranger.
+func TestAdoptionSurvivesAClockStep(t *testing.T) {
+	dir := t.TempDir()
+	spec := &manifest.Spec{Domain: "a.test", SiteDir: dir, Cwd: dir, Command: []string{"/bin/sh", "-c", "exec sleep 300"}, Env: map[string]string{}, Revision: "r1"}
+	inst, err := Process{}.Start(context.Background(), spec, 45997, filepath.Join(dir, "out.log"), filepath.Join(dir, "home"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Stop(context.Background(), time.Second)
+	st := inst.State()
+	if st.StartTicks == 0 || st.BootID == "" {
+		t.Skip("no start ticks or boot id in /proc")
+	}
+	// The clock jumped an hour since the start.
+	st.StartedAt = st.StartedAt.Add(-time.Hour)
+	adopted, err := Process{}.Adopt(context.Background(), st)
+	if err != nil {
+		t.Fatalf("the process that was started was not adopted after a clock step: %v", err)
+	}
+	if got := adopted.State(); got.StartTicks != st.StartTicks || got.BootID != st.BootID {
+		t.Fatalf("the adopted state lost its identity: %+v", got)
+	}
+	other := st
+	other.StartTicks++
+	if _, err := (Process{}).Adopt(context.Background(), other); err != ErrGone {
+		t.Fatalf("a pid with another start tick was adopted: %v", err)
+	}
+	other = st
+	other.BootID = "00000000-0000-0000-0000-000000000000"
+	if _, err := (Process{}).Adopt(context.Background(), other); err != ErrGone {
+		t.Fatalf("a pid from another boot was adopted: %v", err)
+	}
+	// A state from before the identity was recorded keeps the old check,
+	// and learns its identity when it passes.
+	old := st
+	old.StartTicks, old.BootID = 0, ""
+	if _, err := (Process{}).Adopt(context.Background(), old); err != ErrGone {
+		t.Fatalf("an old state an hour off was adopted: %v", err)
+	}
+	old.StartedAt = old.StartedAt.Add(time.Hour)
+	adopted, err = Process{}.Adopt(context.Background(), old)
+	if err != nil {
+		t.Fatalf("an old state that matches was not adopted: %v", err)
+	}
+	if got := adopted.State(); got.StartTicks != st.StartTicks || got.BootID != st.BootID {
+		t.Fatalf("an old state did not learn its identity: %+v", got)
 	}
 }
 

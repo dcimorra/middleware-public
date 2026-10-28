@@ -47,6 +47,18 @@ type State struct {
 	ContainerID string    `json:"container_id,omitempty"`
 	LogFile     string    `json:"log_file,omitempty"`
 	StartedAt   time.Time `json:"started_at"`
+	// StartTicks and BootID say which process PID is, exactly: when it
+	// started in clock ticks since boot (field 22 of /proc/<pid>/stat)
+	// and which boot that was. StartedAt alone was compared with the boot
+	// time in /proc/stat plus those ticks, and that boot time moves when
+	// the clock is stepped (NTP's first sync, a VM resumed, a board with
+	// no RTC): after a step of more than a few seconds every instance and
+	// worker read as gone at the next supervisor restart, its state was
+	// forgotten without stopping it, and a second copy started next to
+	// it. States written before these existed lack them and fall back to
+	// the old comparison.
+	StartTicks uint64 `json:"start_ticks,omitempty"`
+	BootID     string `json:"boot_id,omitempty"`
 }
 
 // StatePath is where the engine keeps an instance's state: key is a

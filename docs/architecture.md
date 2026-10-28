@@ -72,10 +72,22 @@ and `TestHandoverDropsNoRequests` is what keeps it honest.
 
 Sites outlive the supervisor. The unit has `KillMode=process`, so a restart of
 `middleware` leaves every site running. On boot the engine reads
-`data/state/<domain>.json`, checks the pid is alive and the port is listening,
-and adopts the instance without restarting it. After a binary upgrade the
+`data/state/<domain>.json`, checks the pid is alive and is the process that
+was started (the same boot id and the same start tick in `/proc`, which a step
+of the wall clock does not move), checks the port is listening, and adopts the
+instance without restarting it. A pid that is someone else now is forgotten;
+one that is ours but no longer listens is stopped, so the fresh start the next
+tick makes is never a second copy. After a binary upgrade the
 operator is told that adopted instances still carry the environment they were
 born with, and can roll them over with `middleware site restart --all`.
+
+What the supervisor leaves behind when it stops is always in a state file.
+On SIGTERM it stops accepting, gives the requests in flight up to 10s to
+finish (handlers that never end by themselves, such as the panel's event
+stream, are cut after 5s), and ends every handover in flight before it
+exits: one that has not switched yet stops its new generation, so the old one
+is what the next supervisor adopts; one that has switched cuts its drain short
+and stops the old generation.
 
 ## Runtimes
 
@@ -83,7 +95,9 @@ born with, and can roll them over with `middleware site restart --all`.
 
 - **process** (default): `exec.Cmd` with a clean environment (no duplicate
   keys, `PORT` last), a per-site `HOME` under `data/homes/`, output to file,
-  process group of its own so a stop reaches grandchildren.
+  process group of its own so a stop reaches grandchildren, also those a
+  leader that already exited left behind (the group is signalled when the
+  instance exits, before its port is handed out again).
 - **docker**: the same manifest, run as a container. The image is built from
   `docker.build` or pulled from `docker.image`; the site folder is bind-mounted;
   the port is published on loopback only. Handover works the same way: two

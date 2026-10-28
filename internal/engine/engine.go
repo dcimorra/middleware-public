@@ -54,7 +54,11 @@ type Engine struct {
 	aliases        map[string]string
 	aliasConflicts map[string]string // said once, until resolved
 	siteEnv        atomic.Pointer[SiteEnvFunc]
-	wg             sync.WaitGroup
+	// wg counts the work Run waits for on its way out. Every Add happens
+	// under mu, and none once closing is set, so an operator's restart
+	// that arrives during the shutdown cannot Add to a Wait in progress.
+	wg      sync.WaitGroup
+	closing bool
 }
 
 // Site is the engine's view of one folder.
@@ -138,6 +142,15 @@ func (e *Engine) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			// Every handover, start and stop in flight ends before Run
+			// returns, and the app waits for Run before the process exits:
+			// a SIGTERM in a handover's drain otherwise left the old
+			// generation running outside every state file, on its port,
+			// and one in its WaitReady orphaned the new one. Nothing new
+			// is started from here on (closing), so the Wait is final.
+			e.mu.Lock()
+			e.closing = true
+			e.mu.Unlock()
 			e.wg.Wait()
 			return
 		case <-t.C:
@@ -188,6 +201,10 @@ func (e *Engine) Restart(ctx context.Context, domain string) error {
 		e.mu.Unlock()
 		return fmt.Errorf("%s: a handover is already in progress", domain)
 	}
+	if e.closing {
+		e.mu.Unlock()
+		return fmt.Errorf("%s: the supervisor is shutting down", domain)
+	}
 	s.handing = true
 	spec := s.Spec
 	// The engine's own context, not the caller's: the restart was asked
@@ -195,11 +212,11 @@ func (e *Engine) Restart(ctx context.Context, domain string) error {
 	// it was cancelled halfway ("docker run: context canceled", twice in a
 	// row from `middleware site restart`).
 	run := e.runCtx
+	e.wg.Add(1)
 	e.mu.Unlock()
 	if run == nil {
 		run = context.Background()
 	}
-	e.wg.Add(1)
 	go e.handover(run, s, spec, "operator")
 	return nil
 }
@@ -277,13 +294,16 @@ func (e *Engine) tick(ctx context.Context) {
 			e.wg.Add(1)
 			go func() {
 				defer e.wg.Done()
-				_ = inst.Stop(ctx, 8*time.Second)
+				_ = inst.Stop(context.WithoutCancel(ctx), 8*time.Second)
 				e.opts.Ports.Release(inst.Port())
 			}()
 		}
+		// Stopped outside the lock, as the instance is: under it, every
+		// request to every site waited for these graces. A busy one finds
+		// its site gone when its start ends and stops what it started.
 		for _, w := range s.Workers {
-			if w.inst != nil {
-				_ = w.inst.Stop(ctx, 8*time.Second)
+			if !w.busy {
+				e.retireWorkerLocked(ctx, domain, w, 8*time.Second)
 			}
 		}
 		e.clearState(domain)
@@ -337,7 +357,7 @@ func (e *Engine) reconcile(ctx context.Context, domain, dir string) {
 			if spec != nil {
 				drain = spec.Drain.Or(drain)
 			}
-			_ = inst.Stop(ctx, drain)
+			_ = inst.Stop(context.WithoutCancel(ctx), drain)
 			e.opts.Ports.Release(inst.Port())
 			e.clearState(domain)
 		}
@@ -362,25 +382,47 @@ func (e *Engine) reconcile(ctx context.Context, domain, dir string) {
 	}
 
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	if s.handing {
+		e.mu.Unlock()
 		return
 	}
 	// A dead instance: forget it, with backoff so a crash loop does not
 	// burn the port range and the log file.
+	var exited runtime.Instance
 	if s.Instance != nil {
 		select {
 		case err := <-s.Instance.Done():
-			e.opts.Ports.Release(s.Instance.Port())
+			exited = s.Instance
 			s.Instance = nil
 			s.failures++
-			wait := backoff(s.failures, s.Spec.Restart.MaxBackoff.Or(60*time.Second))
+			// An adopted instance has no Spec until a reconcile gives it
+			// one, and one that exits before that took the supervisor down
+			// here with a nil dereference. The spec just resolved is the
+			// policy the restart will run under anyway.
+			policy := spec
+			if s.Spec != nil {
+				policy = s.Spec
+			}
+			wait := backoff(s.failures, policy.Restart.MaxBackoff.Or(60*time.Second))
 			s.nextStart = time.Now().Add(wait)
 			e.emit("instance.exited", domain, "error", fmt.Sprintf("%v; restart in %s", err, wait), map[string]any{"failures": s.failures})
 			e.clearState(domain)
 		default:
 		}
 	}
+	if exited != nil {
+		e.mu.Unlock()
+		// The leader is gone, not necessarily its group: what `sh -c "a &
+		// b"` left behind went on holding the port, and every restart the
+		// backoff made added another set. Stopped before the port goes
+		// back to the allocator, and outside the lock, since a container
+		// takes a docker call or two. Nothing starts this tick anyway: the
+		// backoff is a second at least.
+		_ = exited.Stop(context.WithoutCancel(ctx), 2*time.Second)
+		e.opts.Ports.Release(exited.Port())
+		return
+	}
+	defer e.mu.Unlock()
 	if s.Instance != nil && s.Instance.Revision() == spec.Revision {
 		s.Spec = spec
 		return
@@ -404,6 +446,13 @@ func (e *Engine) reconcile(ctx context.Context, domain, dir string) {
 func (e *Engine) handover(ctx context.Context, s *Site, spec *manifest.Spec, actor string) {
 	defer e.wg.Done()
 	domain := s.Domain
+	// A shutdown cancels ctx, and the handover then ends one way or the
+	// other before Run returns: before the swap the new generation is
+	// stopped and the old one, still in its state file, is adopted by the
+	// next supervisor; after it the drain is cut short and the old one is
+	// stopped. Stops keep their grace either way: under ctx they would be
+	// a straight SIGKILL.
+	stopCtx := context.WithoutCancel(ctx)
 	rt, ok := e.opts.Runtimes[spec.Runtime]
 	if !ok {
 		e.fail(s, fmt.Errorf("runtime %q is not available", spec.Runtime))
@@ -423,7 +472,7 @@ func (e *Engine) handover(ctx context.Context, s *Site, spec *manifest.Spec, act
 		e.mu.Unlock()
 		if old != nil {
 			e.emit("instance.stopping", domain, "", "written port: stopping before starting the new generation", nil)
-			_ = old.Stop(ctx, 5*time.Second)
+			_ = old.Stop(stopCtx, 5*time.Second)
 			e.clearState(domain)
 		}
 	} else {
@@ -445,29 +494,58 @@ func (e *Engine) handover(ctx context.Context, s *Site, spec *manifest.Spec, act
 	}
 	timeout := spec.Health.Timeout.Or(60 * time.Second)
 	if err := runtime.WaitReady(ctx, inst, spec.Health, timeout); err != nil {
-		_ = inst.Stop(ctx, 2*time.Second)
+		_ = inst.Stop(stopCtx, 2*time.Second)
 		e.opts.Ports.Release(port)
+		if ctx.Err() != nil {
+			// Not the site's failure: nothing to count or back off from.
+			e.mu.Lock()
+			s.handing = false
+			e.mu.Unlock()
+			e.emit("handover.cancelled", domain, "", "the supervisor is stopping; the new generation was stopped before the switch", map[string]any{"revision": spec.Revision})
+			return
+		}
 		e.fail(s, fmt.Errorf("%w (last lines of the log: %s)", err, tail(logFile, 5)))
 		return
 	}
 	e.mu.Lock()
+	if e.sites[domain] != s || s.Mode != manifest.ModeRun {
+		// The folder went, or stopped saying run, while this generation
+		// started. The tick already stopped what the site ran and cleared
+		// its state; installed on the detached site it kept running, on
+		// its port, with nothing left that would ever stop it.
+		s.handing = false
+		e.mu.Unlock()
+		_ = inst.Stop(stopCtx, 5*time.Second)
+		e.opts.Ports.Release(port)
+		e.emit("instance.discarded", domain, "", "the site was removed or stopped while its new generation started; stopped it", map[string]any{"port": port, "revision": spec.Revision})
+		return
+	}
 	old := s.Instance
 	s.Instance = inst
 	s.failures = 0
 	s.lastErr = ""
 	s.handing = false
-	e.mu.Unlock()
+	// Under the lock, so a tick that removes the site in between cannot
+	// clear the state before it is written and leave it behind.
 	e.saveState(inst.State())
+	e.mu.Unlock()
 	if old == nil {
 		e.opts.Bus.Emit(events.Event{Type: "instance.started", Subject: domain, Actor: actor, Data: map[string]any{"port": port, "revision": spec.Revision}})
 		return
 	}
 	e.opts.Bus.Emit(events.Event{Type: "handover.switched", Subject: domain, Actor: actor, Data: map[string]any{"from": old.Port(), "to": port, "revision": spec.Revision}})
 	drain := spec.Drain.Or(8 * time.Second)
-	time.Sleep(drain)
-	_ = old.Stop(ctx, 5*time.Second)
+	began := time.Now()
+	select {
+	case <-time.After(drain):
+	case <-ctx.Done():
+		// The supervisor's own server is draining its requests too, and a
+		// long drain would outlast what systemd waits for a stop, which
+		// then kills the supervisor with the old generation still running.
+	}
+	_ = old.Stop(stopCtx, 5*time.Second)
 	e.opts.Ports.Release(old.Port())
-	e.opts.Bus.Emit(events.Event{Type: "handover.done", Subject: domain, Actor: actor, Data: map[string]any{"drained": drain.String()}})
+	e.opts.Bus.Emit(events.Event{Type: "handover.done", Subject: domain, Actor: actor, Data: map[string]any{"drained": time.Since(began).Round(time.Millisecond).String()}})
 }
 
 func (e *Engine) fail(s *Site, err error) {
@@ -533,8 +611,10 @@ func (e *Engine) adoptAll(ctx context.Context) {
 		}
 		// Written again: the adopted state may know more than the file did
 		// (a container's id, recorded since the guard measures containers
-		// by it), and a state left as it was would never learn it.
-		if fresh := inst.State(); fresh.ContainerID != st.ContainerID {
+		// by it; a process's start tick and boot, recorded since a clock
+		// step made every adoption fail), and a state left as it was would
+		// never learn it.
+		if fresh := inst.State(); fresh.ContainerID != st.ContainerID || fresh.StartTicks != st.StartTicks || fresh.BootID != st.BootID {
 			e.saveState(fresh)
 		}
 		if strings.Contains(st.Domain, "/") {
@@ -547,8 +627,14 @@ func (e *Engine) adoptAll(ctx context.Context) {
 			continue
 		}
 		if err := runtime.WaitReady(ctx, inst, manifest.Health{}, 3*time.Second); err != nil {
-			// Alive but not listening: a zombie or something else on that pid.
+			// The runtime has confirmed it is the process that was started,
+			// so alive but not listening is ours and broken (hung, or it
+			// closed its socket). It used to be forgotten and left running:
+			// the next tick started a second copy, and the first one held
+			// whatever it held for good, outside every state file.
+			_ = inst.Stop(ctx, 5*time.Second)
 			e.clearState(st.Domain)
+			e.emit("instance.stopped", st.Domain, "warn", "still running from a previous supervisor but not listening; stopped", map[string]any{"pid": st.PID, "port": st.Port})
 			continue
 		}
 		e.opts.Ports.Reserve(st.Port, st.Domain)
