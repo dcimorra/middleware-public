@@ -108,6 +108,12 @@ type Needs struct {
 	Docker bool `json:"docker,omitempty"`
 	// Tasks are the names of its task files: none may be taken there.
 	Tasks []string `json:"tasks,omitempty"`
+	// Volumes are the docker volumes its move fills there (MoveVolumes):
+	// none may be there already.
+	Volumes []string `json:"volumes,omitempty"`
+	// Ports are the ones its workers have written (FixedPorts): each must
+	// be free there.
+	Ports []int `json:"ports,omitempty"`
 }
 
 // Steps of a move, in order.
@@ -405,14 +411,28 @@ func (m *Mover) settle(ctx context.Context, domain string, t Target, original []
 		cancel()
 	}
 	progress(StepCleanup, "archiving the copy that stays here")
+	mf, _ := manifest.Parse(original)
+	dumped := dumpsThere(m.dir(domain), mf)
 	// Unbounded: packing a site of gigabytes takes what it takes, and
 	// cutting it leaves the folder here instead of in the archive.
 	path, err := m.Source.Archive(own, domain, original)
+	if err != nil {
+		path = ""
+	}
+	m.sourceVolumes(own, domain, mf, path, dumped)
 	if err != nil {
 		return fmt.Errorf("moved and running on %s, but the copy here could not be archived: %w", t.Name(), err)
 	}
 	rep.Archive = path
 	return nil
+}
+
+// dir is the site's folder here.
+func (m *Mover) dir(domain string) string {
+	if m.Dir != "" {
+		return m.Dir
+	}
+	return filepath.Join(m.Root, "sites", domain)
 }
 
 // Budget is the time a move of domain is given in all, for a caller that
@@ -473,10 +493,21 @@ func (m *Mover) PartsFor(domain string) []archive.Part {
 // Nothing changes on either side, so an import's --dry-run asks it too. It
 // returns the workers whose data moves by command.
 func (m *Mover) Check(ctx context.Context, domain string, t Target) ([]string, error) {
-	dir := filepath.Join(m.Root, "sites", domain)
-	if m.Dir != "" {
-		dir = m.Dir
+	need, moving, err := m.NeedsFor(domain, t)
+	if err != nil {
+		return nil, err
 	}
+	if err := t.Check(ctx, domain, need); err != nil {
+		return nil, err
+	}
+	return moving, nil
+}
+
+// NeedsFor is what a move of domain to t asks of t (Needs), and the
+// workers whose data moves by command; an error when this source or t
+// cannot move that data.
+func (m *Mover) NeedsFor(domain string, t Target) (Needs, []string, error) {
+	dir := m.dir(domain)
 	need := NeedsOf(m.Root, domain, m.Source)
 	if n, ok := m.Source.(Needer); ok {
 		need = n.Needs(domain)
@@ -489,22 +520,22 @@ func (m *Mover) Check(ctx context.Context, domain string, t Target) ([]string, e
 	_, exports := m.Source.(Exporter)
 	_, migrates := t.(Migrator)
 	if len(moving) > 0 && (!exports || !migrates) {
-		return nil, fmt.Errorf("the data of %s moves by command (move in its manifest), which only an import from V1 runs yet: move it by hand", strings.Join(moving, ", "))
+		return need, nil, fmt.Errorf("the data of %s moves by command (move in its manifest), which this move cannot run on one side or the other: move it by hand", strings.Join(moving, ", "))
 	}
 	if UsesDocker(planned) {
 		need.Docker = true
 	}
+	// Found at the check, not at the import: there, the site was already
+	// stopped here and its last copy sent.
+	need.Volumes, need.Ports = MoveVolumes(domain, planned, moving), FixedPorts(planned)
 	if tasker, ok := m.Source.(Tasker); ok {
 		ts, err := tasker.Tasks(domain)
 		if err != nil {
-			return nil, fmt.Errorf("its tasks: %w", err)
+			return need, nil, fmt.Errorf("its tasks: %w", err)
 		}
 		need.Tasks = SortedNames(ts)
 	}
-	if err := t.Check(ctx, domain, need); err != nil {
-		return nil, err
-	}
-	return moving, nil
+	return need, moving, nil
 }
 
 // plannedManifest is the manifest the site will be committed with, read

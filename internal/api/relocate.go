@@ -72,6 +72,9 @@ func (s *Server) registerRelocateTarget() {
 				return nil, Errorf(http.StatusConflict, "this node has no working docker (%v) and the site runs in a container: install docker here (run middleware install again), or take the site out of its container before moving it", err)
 			}
 		}
+		if err := rc.CheckNeeds(r.Context(), body); err != nil {
+			return nil, Errorf(http.StatusConflict, "%v", err)
+		}
 		if len(body.Names) == 0 {
 			return OK, nil
 		}
@@ -413,7 +416,7 @@ func (s *Server) registerRelocateSource(m *nodes.Mesh) {
 		// take it is said in the answer, not in an event a minute later.
 		src := siteSource{s: s, mgr: mgr}
 		cctx, ccancel := context.WithTimeout(r.Context(), 30*time.Second)
-		err = (meshTarget{m: m, x: x}).Check(cctx, domain, relocate.NeedsOf(s.opts.Root, domain, src))
+		_, err = (&relocate.Mover{Root: s.opts.Root, Source: src}).Check(cctx, domain, meshTarget{m: m, x: x})
 		ccancel()
 		if err != nil {
 			return nil, Errorf(http.StatusConflict, "%s cannot take %s: %v", x.Name, domain, err)
@@ -504,7 +507,7 @@ func (s *Server) registerRelocateSource(m *nodes.Mesh) {
 			out["node"] = x.Name
 			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 			defer cancel()
-			if err := (meshTarget{m: m, x: x}).Check(ctx, domain, relocate.NeedsOf(s.opts.Root, domain, src)); err != nil {
+			if _, err := (&relocate.Mover{Root: s.opts.Root, Source: src}).Check(ctx, domain, meshTarget{m: m, x: x}); err != nil {
 				out["check_error"] = err.Error()
 			}
 		}
@@ -617,6 +620,12 @@ func (src siteSource) ReleaseTasks(names []string) error {
 
 func (src siteSource) Archive(ctx context.Context, domain string, m []byte) (string, error) {
 	return src.mgr.ArchiveMoved(ctx, domain, m)
+}
+
+// RemoveVolumes implements relocate.Volumer: the volumes of a site that
+// moved away, once its archive keeps their dumps.
+func (src siteSource) RemoveVolumes(ctx context.Context, vols []string) error {
+	return relocate.DockerVolumes{}.RemoveVolumes(ctx, vols)
 }
 
 // meshTarget is a node of the network as a move's target.

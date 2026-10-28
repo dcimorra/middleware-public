@@ -1,6 +1,7 @@
 package relocate
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -8,14 +9,16 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/dcimorra/middleware-public/internal/runtime"
 )
 
 // What moves leave behind on a node, to be seen and collected from the
 // panel: receptions that never finished (the moving node died, or its
 // undo did not reach here), copies of a site's data that a commit set
 // aside to make room for what arrived (".before-…", one per retry, each a
-// whole HOME), and the records of sites placed here whose move never said
-// how it ended. Nothing here is removed without the operator: an earlier
+// whole HOME), the records of sites placed here whose move never said how
+// it ended, and the docker volumes of sites that moved away. Nothing here is removed without the operator: an earlier
 // life set aside may be the only copy of something.
 
 // stagingIdle is how long a reception must have been still to count as
@@ -24,12 +27,14 @@ const stagingIdle = time.Hour
 
 // Leftover is one thing a move left on this node.
 type Leftover struct {
-	// Path is relative to the root, and is what Clean takes.
+	// Path is relative to the root, and is what Clean takes; a volume's
+	// is "docker-volume:" and its name.
 	Path string `json:"path"`
 	// Kind: staging (a reception that never finished), aside (an earlier
 	// copy a commit set aside), placed (a site placed here that did not
 	// come up and was not taken out), record (a site that came up, whose
-	// move never said it ended).
+	// move never said it ended), volume (a docker volume a site that moved
+	// away left here).
 	Kind     string    `json:"kind"`
 	Domain   string    `json:"domain"`
 	Bytes    int64     `json:"bytes"`
@@ -55,7 +60,8 @@ func Leftovers(root string, now time.Time) []Leftover {
 	entries, _ := os.ReadDir(relocate)
 	for _, e := range entries {
 		name := e.Name()
-		if !e.IsDir() || name == "placed" {
+		// Dot names are the house's own records (no site is named so).
+		if !e.IsDir() || name == "placed" || strings.HasPrefix(name, ".") {
 			continue
 		}
 		rel := "data/relocate/" + name
@@ -86,9 +92,24 @@ func Leftovers(root string, now time.Time) []Leftover {
 			add(parent+"/"+e.Name(), "aside", strings.TrimSuffix(base, ".json"))
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Bytes > out[j].Bytes })
+	// The docker volumes moves left (sourceVolumes), by their name: their
+	// size would be docker's to say, and asking it here is a call per
+	// volume on every listing.
+	for vol, lv := range leftVolumes(root) {
+		out = append(out, Leftover{Path: volumePrefix + vol, Kind: "volume", Domain: lv.Domain, Modified: lv.At})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Bytes != out[j].Bytes {
+			return out[i].Bytes > out[j].Bytes
+		}
+		return out[i].Path < out[j].Path
+	})
 	return out
 }
+
+// cleanDocker is the docker Clean removes volumes with; the tests give it
+// a docker of their own.
+var cleanDocker = runtime.Docker{}
 
 // ErrNotALeftover is a path Clean was given that Leftovers does not list.
 var ErrNotALeftover = errors.New("not a leftover of a move")
@@ -102,8 +123,17 @@ func Clean(root, path string, now time.Time) error {
 		if l.Path != path {
 			continue
 		}
-		if l.Kind == "placed" {
+		switch l.Kind {
+		case "placed":
 			return Receiver{Root: root}.Unplace(l.Domain)
+		case "volume":
+			vol := strings.TrimPrefix(l.Path, volumePrefix)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			if err := cleanDocker.RemoveVolume(ctx, vol); err != nil {
+				return err
+			}
+			return forgetVolume(root, vol)
 		}
 		return os.RemoveAll(filepath.Join(root, filepath.FromSlash(l.Path)))
 	}

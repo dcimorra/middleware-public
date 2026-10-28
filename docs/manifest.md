@@ -487,6 +487,16 @@ to clean. `timeout` bounds each (30m). A move that fails
 removes the volumes it created and starts the site again where it was, whose
 database has only been read.
 
+A target that already has one of the volumes the move would fill, or on
+which a worker's written `port` is taken, refuses the move at its check,
+before anything stops. Once the site runs there and the copy where it was
+is archived with the dump inside, the volumes of the workers exported with
+the site stopped are removed where it was: they hold nothing that is not
+in the database there and in the archive. A live worker's volume stays,
+listed among the leftovers of moves (what the site wrote after its export
+is only there), and so do all of them when the archive could not be
+written.
+
 Where the site is a site of a V2 house, the move holds it (its maintenance
 page, its other workers stopped) and keeps the workers whose data moves up
 for their `export`, which runs inside the worker's container. `"live": true`
