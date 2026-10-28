@@ -26,7 +26,7 @@ has. If the supervisor is compromised, the attacker is your user, not root.
 It listens on `/run/middleware/helper.sock` (`root:middleware`, `0660`) and
 answers a **closed list of operations**: `firewall.apply`, `firewall.block`,
 `firewall.unblock`, `vpn.apply`, `vpn.up`, `vpn.down`, `sysctl.reserve_ports`,
-`update.install`, `requirements.install`. `requirements.install` takes one
+`update.install`, `update.confirm`, `requirements.install`. `requirements.install` takes one
 boolean (add a headless Chromium) and nothing else: what runs is the
 helper's own binary's `install --requirements`, for the user, root and
 binary the installed `middleware.service` names (written by root; a unit
@@ -37,6 +37,11 @@ downloads that release from this repository only, checks the published
 sha256, runs the binary to see it is that version, and refuses anything
 not newer than what runs, so a supervisor that was broken into can neither
 install a binary of its own as root nor go back to an older one.
+`update.confirm` takes the version the supervisor runs and only ends the
+trial of that version; the rollback to `middleware.prev` when no
+confirmation comes is the helper's own decision from its own record
+(root's, next to the binary), so the most a broken-into supervisor gets
+by withholding it is the release that ran minutes before.
 Each validates its input (addresses parse, keys are base64 of the right
 length, names match `^[a-z0-9-]+$`) and none takes a free-form string that
 reaches a shell. Its unit has `ProtectSystem=strict` with exactly three

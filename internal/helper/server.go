@@ -58,6 +58,11 @@ type Server struct {
 	Binary string
 	Arch   string
 	Exit   func()
+	// UpdateGrace is how long a new supervisor has to confirm an update
+	// before it is rolled back, and WatchEvery how often the trial looks
+	// at the supervisor; zero is the default (tests shorten both).
+	UpdateGrace time.Duration
+	WatchEvery  time.Duration
 	// SystemdDir is where the installed units are (install.run reads the
 	// service's); empty is /etc/systemd/system.
 	SystemdDir string
@@ -67,6 +72,9 @@ type Server struct {
 
 	ops  map[string]func(context.Context, json.RawMessage) (any, error)
 	once sync.Once
+	// updMu orders the update record's readers and writers: an install,
+	// a confirmation and a rollback each read it and write it back.
+	updMu sync.Mutex
 }
 
 var (
@@ -111,6 +119,7 @@ func (s *Server) init() {
 			OpVPNStatus:       s.vpnStatus,
 			OpSysctlReserve:   s.sysctlReservePorts,
 			OpUpdateInstall:   s.updateInstall,
+			OpUpdateConfirm:   s.updateConfirm,
 			OpMeshFirewall:    s.meshFirewall,
 			OpInstallRun:      s.installRun,
 		}

@@ -234,7 +234,9 @@ RestartSec=2
 
 # Strict by default; the places the operations write are listed and
 # nothing else on the filesystem is reachable for writing. The binary's
-# folder is for update.install, which replaces it with a newer release.
+# folder is for update.install, which replaces it with a newer release
+# and keeps there the one it replaced (middleware.prev) and the record
+# of the update on trial (middleware.update.json) that a rollback reads.
 ProtectSystem=strict
 ReadWritePaths=/etc/wireguard /etc/sysctl.d {{.RunDir}} {{.BinaryDir}}
 ProtectHome=yes

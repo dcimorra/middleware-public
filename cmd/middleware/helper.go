@@ -102,6 +102,9 @@ func helperCommand(args []string) error {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "helper: listening on %s (uid %d, gid %d)\n", *socket, uid, gid)
+	// After Listen: the supervisor on trial confirms through the socket,
+	// so it must be open before the trial's clock is looked at.
+	go srv.WatchUpdate(ctx)
 	return srv.Serve(ctx, ln)
 }
 

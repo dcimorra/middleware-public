@@ -15,6 +15,41 @@ An installation running a pre-release is offered pre-releases; one on a
 stable release, stable ones only. Without the helper (`--no-helper`, a
 container) the panel says to use the procedure below.
 
+### An update is on trial until it serves
+
+The helper keeps the binary it replaced as `/usr/local/bin/middleware.prev`
+and writes a record, `/usr/local/bin/middleware.update.json`, with the
+release it came from, the one it installed and a deadline five minutes
+away. The new supervisor confirms (`update.confirm`) once its listener is
+open, it has run for half a minute, and a request through that listener
+came back. If the deadline passes without it, if the supervisor restarted
+three times meanwhile, or if systemd gave up restarting it, the helper
+puts `middleware.prev` back by itself, restarts `middleware.service` and
+ends so systemd starts it on the old binary too. Event `update.rolled_back`
+says so at the first start after.
+
+The release rolled back from is **skipped**: the panel shows it
+(`skipped` in `GET /system/update`), it is not offered, and the helper
+refuses to install it, by hand as well, until a newer one is out. That
+keeps automatic updates from installing it again at the next check. Both
+files are root's, written with `fsync` of the files and of the folder,
+and the supervisor cannot write either.
+
+A machine rebooted while an update is on trial and back after the
+deadline rolls back at once: a good release skipped costs a release
+cycle, a bad one kept costs every site. The install script below goes
+around all of this; an operator who installed a binary by hand is not
+second-guessed.
+
+### Not in the middle of a move
+
+An automatic install ends in a restart of the supervisor, and a site
+moving between nodes is the supervisor copying it: restarted then, the
+move is cut. So an automatic install waits while a move runs (event
+`update.deferred`, once), and is looked at again a minute later rather
+than at the next interval. **Update now** does not wait: the operator
+chose.
+
 ## The procedure
 
 ```sh
@@ -78,7 +113,15 @@ The panel shows the same as a banner after an upgrade until it is done.
 
 ## Rolling back
 
-Install the previous binary the same way; the state files are forward and
+The release before the last update is at `/usr/local/bin/middleware.prev`
+until the next one:
+
+```sh
+sudo install -m 0755 /usr/local/bin/middleware.prev /usr/local/bin/middleware
+sudo systemctl restart middleware-helper middleware
+```
+
+Any other release: install the previous binary the same way; the state files are forward and
 backward compatible within a major version. Releases are at
 `https://github.com/dcimorra/middleware-public/releases`; each has its
 `.sha256`.

@@ -253,7 +253,7 @@ device is gone (404, 410) gets it forgotten.
 | PUT | `/domains/prices` | `{usd: {ending: price}}` → the table, dated today |
 | GET | `/system/vitals` | → `{now, history: [{at, cpu, cores, iowait, load1, mem_used, mem_total, mem_pct, swap_used, swap_total, disk_used, disk_total, disk_pct}], episodes: [{from, to, reason, peak_cpu, avg_cpu, peak_mem, iowait_max, blamed: [{cmd, site, times, cpu}], shots}], lines}`; a sample every 5 s, an hour kept; `?history=0` leaves the hour out |
 | POST | `/system/restart` | → `{ok}` (SIGTERM to self; systemd restarts) |
-| GET | `/system/update` | → `{current, latest, available, checked_at, next_check, every_minutes, error, auto, installing, can_install, why}` (`why`: `not_release` or `no_helper`); `?check=1` asks GitHub (an answer under an hour old is reused) |
+| GET | `/system/update` | → `{current, latest, available, checked_at, next_check, every_minutes, error, auto, installing, skipped, can_install, why}` (`why`: `not_release` or `no_helper`; `skipped`: a release this machine rolled back from, not offered until a newer one is out, see [upgrade.md](upgrade.md#an-update-is-on-trial-until-it-serves)); `?check=1` asks GitHub (an answer under an hour old is reused) |
 | POST | `/system/update/check` | → the same, asking GitHub now |
 | GET | `/system/doctor` | → `{ok, checks: [{name, ok, detail}]}`: what `middleware doctor` says of this machine (binary, units, loopback socket, helper, root, reserved ports, docker, fail2ban, Node, wireguard, disk); it only reads |
 | GET | `/system/requirements` | → `{state, log, error?, updated?}`: the house's requirements installed from the panel, read from `/run/middleware/requirements.log`; `state` is `none`, `running`, `finished`, `restart` (finished, with the operator just added to docker's group: the supervisor sees it once restarted), `failed` or `interrupted` (the log went quiet for 30 minutes without its last line) |
@@ -283,7 +283,9 @@ The settings object (`data/settings.json`):
 `update` is the self-update: `every_minutes` (1 to 10080, an hour when
 absent) is how often a new release is looked for, and `auto` whether one
 found installs itself; off, it is announced once (`update.available`) and
-waits for `POST /system/update/install`.
+waits for `POST /system/update/install`. On, it waits while a site is
+moving between nodes (`update.deferred`, once) and is tried again a
+minute later; the `POST` does not wait.
 
 `agents` caps the conversations: `max_concurrent` turns at once across
 every conversation (1..64), of which `reserved_for_house` (fewer than the

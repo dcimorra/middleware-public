@@ -349,6 +349,16 @@ func (in *Installer) Uninstall() (Report, error) {
 			if in.KeepBinary || !fsx.Exists(in.Params.Binary) {
 				return false, "kept", nil
 			}
+			// What update.install keeps next to it goes with it: the binary
+			// it replaced and the record of the update on trial
+			// (helper.PrevSuffix, helper.StateSuffix).
+			for _, extra := range []string{in.Params.Binary + ".prev", in.Params.Binary + ".update.json"} {
+				if fsx.Exists(extra) {
+					if err := in.Exec.RemoveRoot(extra); err != nil {
+						return true, "", err
+					}
+				}
+			}
 			return true, "removed " + in.Params.Binary, in.Exec.RemoveRoot(in.Params.Binary)
 		}},
 	}
