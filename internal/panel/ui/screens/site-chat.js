@@ -24,22 +24,26 @@ import { usageLine } from "../components/usage.js";
 export function chatTab(domain) {
   const house = domain === "middleware";
   const turns = h("div", { class: "chat-turns", "aria-live": "polite" });
-  const text = h("textarea", { rows: 1, placeholder: t("chat.placeholder"), "aria-label": t("chat.message") });
-  const provider = h("select", { "aria-label": t("chat.provider") });
+  const text = h("textarea", { rows: 1, placeholder: t(house ? "chat.placeholderHouse" : "chat.placeholder"), "aria-label": t("chat.message") });
+  const provider = h("select", { class: "chat-pill", "aria-label": t("chat.provider"), title: t("chat.provider") });
   // The model: a list while it is short, a box that searches as you type
   // once a provider brings hundreds (OpenCode with OpenRouter connected).
-  const modelSel = h("select", { "aria-label": t("chat.model") });
+  const modelSel = h("select", { class: "chat-pill", "aria-label": t("chat.model"), title: t("chat.model") });
   const modelListID = "chat-models-" + Math.random().toString(36).slice(2, 8);
-  const modelIn = h("input", { type: "text", list: modelListID, class: "model-input", placeholder: t("chat.defaultModel"), "aria-label": t("chat.model"), autocomplete: "off", spellcheck: "false", hidden: true });
+  const modelIn = h("input", { type: "text", list: modelListID, class: "model-input chat-pill", placeholder: t("chat.defaultModel"), "aria-label": t("chat.model"), autocomplete: "off", spellcheck: "false", hidden: true });
   const modelList = h("datalist", { id: modelListID });
   let manyModels = false;
   const model = {
     get value() { return manyModels ? modelIn.value.trim() : modelSel.value; },
     set value(v) { modelSel.value = v; modelIn.value = v; },
   };
-  const send = h("button", { type: "submit", class: "btn primary" }, icon("send"), t("chat.send"));
-  const stop = h("button", { type: "button", class: "btn danger", hidden: true }, icon("stop"), t("chat.stop"));
-  const reset = h("button", { type: "button", class: "btn ghost sm" }, icon("sparkles"), t("chat.new"));
+  // Send and stop are round icon buttons at the end of the box, as in
+  // Claude's own app: the arrow goes out, the square stops the turn. While
+  // a turn runs the arrow comes back only once something is written, and
+  // then it queues the message for when the turn ends.
+  const send = h("button", { type: "submit", class: "chat-round send", "aria-label": t("chat.send"), title: t("chat.send") }, icon("arrowUp", { stroke: 2.25 }));
+  const stop = h("button", { type: "button", class: "chat-round stop", hidden: true, "aria-label": t("chat.stop"), title: t("chat.stop") }, icon("stop", { stroke: 2.5 }));
+  const reset = h("button", { type: "button", class: "btn ghost sm" }, icon("refresh"), t("chat.new"));
   // What the conversation left running, setsid escapes included: listed
   // from the environment mark every turn carries, and killed one by one or
   // all at once. Otherwise they live for days and nobody sees them.
@@ -53,17 +57,21 @@ export function chatTab(domain) {
   // file input sometimes opens nothing, and nothing says so (V1).
   const fileID = "chat-file-" + Math.random().toString(36).slice(2, 8);
   const fileInput = h("input", { type: "file", multiple: true, id: fileID, class: "sr-only", tabindex: "-1" });
-  const attachBtn = h("label", { for: fileID, class: "btn ghost chat-attach", title: t("chat.attachHint"), "aria-label": t("chat.attach") }, icon("plus"));
+  const attachBtn = h("label", { for: fileID, class: "chat-round ghost chat-attach", title: t("chat.attachHint"), "aria-label": t("chat.attach") }, icon("plus"));
   const chips = h("div", { class: "chat-chips row" });
   // The usage windows of the agent picked, under the box.
   let usageEl = usageLine(null);
-  // One row, as in V1: the paperclip, the box, send (and stop while a
-  // turn runs). Everything else lives in the bar above or its menu: a
-  // row of eight controls wrapped into three on a phone and pushed the
-  // conversation out of the screen.
-  const form = h("form", { class: "chat-form" }, chips,
-    h("div", { class: "chat-compose" }, attachBtn, fileInput, text, stop, send),
-    h("div", { class: "chat-meta" }, status, usageEl));
+  // The box is one card, as in Claude's own app: what is attached, the
+  // words, and under them one row with the paperclip, the agent and its
+  // model, and send. The agent and the model used to sit in the bar above
+  // with the conversation's picker, four selects in a row that wrapped
+  // into three on a phone; here they are where the message is, which is
+  // what they apply to.
+  const composer = h("div", { class: "chat-composer" }, chips, text,
+    h("div", { class: "chat-composer-bar" }, attachBtn, fileInput, provider, modelSel, modelIn, modelList,
+      h("span", { class: "grow" }), stop, send));
+  const form = h("form", { class: "chat-form" }, composer,
+    h("div", { class: "chat-meta" }, status, capacity, usageEl));
   // Which conversation is open: the site's first one, another of the
   // panel's, or one the site's code opened through the site door (read
   // and stopped from here, never written into: a program is on the other
@@ -77,10 +85,10 @@ export function chatTab(domain) {
   // it has no name to list yet, and the title comes from that message.
   const draftConv = () => ({ draft: true, name: null, path: null, origin: "panel" });
   let cur = mainConv();
-  const picker = h("select", { "aria-label": t("chat.conversation") });
-  const newConv = h("button", { type: "button", class: "btn ghost sm" }, icon("plus"), t("chat.newConversation"));
+  const picker = h("select", { class: "chat-title", "aria-label": t("chat.conversation"), title: t("chat.conversation") });
+  const newConv = h("button", { type: "button", class: "chat-round ghost", "aria-label": t("chat.newConversation"), title: t("chat.newConversation") }, icon("compose"));
   const purge = h("button", { type: "button", class: "btn ghost sm", title: t("chat.purgeHint") }, icon("trash"), t("chat.purge"));
-  const readonlyNote = h("div", { class: "small muted", hidden: true }, t("chat.siteDoorNote"));
+  const readonlyNote = h("div", { class: "chat-readonly", hidden: true }, icon("lock"), h("span", null, t("chat.siteDoorNote")));
   const idOf = (c) => (c.draft ? "__draft" : c.name === domain ? "" : c.name.split("#")[1]);
   // The list, the last used first; the first time, the last used one is
   // what opens.
@@ -154,12 +162,17 @@ export function chatTab(domain) {
   // deleting them all) goes in a menu, not in the bar: used once in a
   // while, it was stealing the room of what is used every message.
   const more = h("details", { class: "chat-menu" },
-    h("summary", { class: "btn ghost sm", "aria-label": t("chat.more"), title: t("chat.more") }, icon("more", { stroke: 3 })),
+    h("summary", { class: "chat-round ghost", "aria-label": t("chat.more"), title: t("chat.more") }, icon("more", { stroke: 3 })),
     h("div", { class: "chat-menu-list", role: "menu" }, procsBtn, reset, purge));
   more.addEventListener("click", (e) => { if (e.target.closest(".chat-menu-list button")) more.open = false; });
   const closeMenu = (e) => { if (more.open && !more.contains(e.target)) more.open = false; };
   document.addEventListener("click", closeMenu);
-  const el = h("div", { class: "chat" }, h("div", { class: "chat-head" }, picker, h("div", { class: "chat-head-tools" }, provider, modelSel, modelIn, modelList, newConv, more, capacity)), readonlyNote, tabs, views, form);
+  // Scrolled up to read, a round arrow over the end of the conversation
+  // takes the reader back down, as in Claude's app; at the end it hides.
+  const toEnd = h("button", { type: "button", class: "chat-round chat-to-end", hidden: true, "aria-label": t("chat.toEnd"), title: t("chat.toEnd") }, icon("arrowDown"));
+  const el = h("div", { class: "chat" + (house ? " house" : "") },
+    h("div", { class: "chat-head" }, h("div", { class: "chat-title-wrap" }, picker, icon("chevronDown", { class: "chat-title-chev" })), h("div", { class: "chat-head-tools" }, newConv, more)),
+    readonlyNote, tabs, h("div", { class: "chat-stage" }, views, toEnd), form);
   let agents = [];
   let running = null; // {turnEl, textEl, textBuf}
   const subs = [() => document.removeEventListener("click", closeMenu)];
@@ -313,11 +326,60 @@ export function chatTab(domain) {
     row.out.classList.toggle("err", Boolean(d.error));
     row.state.className = "tool-state " + (d.error ? "err" : "ok");
     if (d.run && row.badge) { row.badge.className = "badge run " + runClass(d.run); row.badge.textContent = runLabel(d.run); }
+    const g = row.det.closest(".chat-steps-group");
+    if (g) refreshGroup(g);
+  }
+
+  // Tools used one after another are one fold, as in Claude's app: a
+  // single quiet line that says what the agent is doing now (or did
+  // last) and how many steps it took, open to see each one. Ten rows of
+  // monospace between two sentences buried the answer they led to.
+  const groups = new WeakMap();
+  function groupIn(box) {
+    const last = box.lastElementChild;
+    if (last && groups.has(last)) return groups.get(last);
+    const dot = h("span", { class: "tool-state live", "aria-hidden": "true" });
+    const what = h("span", { class: "grp-what" });
+    const count = h("span", { class: "grp-count" });
+    const list = h("div", { class: "grp-list" });
+    const el = h("details", { class: "chat-steps-group" }, h("summary", null, dot, what, count, icon("chevronRight", { class: "grp-chev", size: 16 })), list);
+    const g = { el, dot, what, count, list };
+    groups.set(el, g);
+    box.append(el);
+    return g;
+  }
+  function refreshGroup(el) {
+    const g = groups.get(el);
+    if (!g) return;
+    const rows = [...g.list.children];
+    const states = rows.map((r) => r.querySelector(".tool-state"));
+    const live = states.some((x) => x && x.classList.contains("live"));
+    const bad = states.some((x) => x && x.classList.contains("err"));
+    g.dot.className = "tool-state " + (live ? "live" : bad ? "err" : "ok");
+    const lastWhat = rows.length ? rows[rows.length - 1].querySelector(".tool-what") : null;
+    g.what.textContent = lastWhat ? lastWhat.textContent : "";
+    g.count.textContent = rows.length > 1 ? t("chat.stepsN", { n: rows.length }) : "";
+  }
+  function addTool(box, tool, threadData) {
+    const g = groupIn(box);
+    const det = toolStepEl(tool, threadData);
+    g.list.append(det);
+    refreshGroup(g.el);
+    return det;
   }
 
   function textStepEl(text) {
     const md = renderMd(stripQuestions(text || ""), { breaks: true }).el;
     md.classList.add("chat-md");
+    // Every code block gets a bar with its language and a copy button,
+    // the one thing done with a block more than reading it.
+    for (const pre of md.querySelectorAll("pre")) {
+      pre.classList.remove("log");
+      const bar = h("div", { class: "code-bar" }, h("span", null, pre.dataset.lang || t("chat.code")), copyButton(() => pre.textContent, true));
+      const box = h("div", { class: "code-block" });
+      pre.replaceWith(box);
+      box.append(bar, pre);
+    }
     return md;
   }
 
@@ -343,7 +405,7 @@ export function chatTab(domain) {
     const byId = new Map((threads || []).map((th) => [th.id, th]));
     for (const st of steps || []) {
       if (st.kind === "text") box.append(textStepEl(st.text));
-      else if (st.tool) box.append(toolStepEl(st.tool, byId.get(st.tool.id)));
+      else if (st.tool) addTool(box, st.tool, byId.get(st.tool.id));
     }
     return box;
   }
@@ -367,7 +429,7 @@ export function chatTab(domain) {
       h("div", { class: "row" }, title, badge),
       th.prompt ? h("details", { class: "chat-tool brief" }, h("summary", null, t("chat.brief")), textStepEl(th.prompt)) : null,
       body, foot].filter(Boolean));
-    if (th.steps) for (const st of th.steps) body.append(st.kind === "text" ? textStepEl(st.text) : toolStepEl(st.tool));
+    if (th.steps) for (const st of th.steps) { if (st.kind === "text") body.append(textStepEl(st.text)); else if (st.tool) addTool(body, st.tool); }
     views.append(view);
     a = { id: th.id, description: th.description, run: th.run || "running", view, body, badge, title, foot };
     agentsUI.set(th.id, a);
@@ -402,6 +464,9 @@ export function chatTab(domain) {
     turns.hidden = id !== "";
     for (const a of agentsUI.values()) a.view.hidden = a.id !== id;
     renderTabs();
+    // Another tab is another length: whether the arrow to the end is
+    // wanted is asked again once it is laid out.
+    requestAnimationFrame(() => { following = atEnd(); toEnd.hidden = following; });
   }
   function resetAgents() {
     for (const a of agentsUI.values()) a.view.remove();
@@ -409,12 +474,51 @@ export function chatTab(domain) {
     toolEls = new Map();
   }
 
-  function turnEl(role, body, cost, at) {
-    const who = h("div", { class: "who" }, role === "user" ? t("chat.you") : t("chat.agent"), at ? h("span", { class: "muted" }, new Date(at).toLocaleTimeString()) : null, cost ? h("span", { class: "cost" }, fmtCost(cost)) : null);
-    const textEl = role === "user" ? h("div", { class: "text" }, body || "") : h("div", { class: "steps" });
-    if (role !== "user" && body) textEl.append(textStepEl(body));
-    const el = h("div", { class: "turn " + role }, who, textEl);
-    return { el, textEl, who };
+  // A turn as Claude's app draws one: what was written in a soft bubble
+  // on the right, the agent's answer with no bubble at all, as prose
+  // across the column. Who said it, when and what it cost go in a quiet
+  // row under it with a copy button, instead of a header over every turn
+  // ("Tú 9:15:02", "Agente 9:15:20 $0.0312") that made the conversation
+  // read like a log. who is that row; the name of the speaker stays for
+  // screen readers.
+  function turnEl(role, body, cost, at, raw) {
+    const user = role === "user";
+    const words = { text: raw !== undefined ? raw : body || "" };
+    const who = h("div", { class: "turn-actions" },
+      h("span", { class: "sr-only" }, user ? t("chat.you") : t("chat.agent")),
+      copyButton(() => words.text),
+      at ? h("time", { class: "turn-time", datetime: at, title: new Date(at).toLocaleString() }, new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })) : null,
+      cost ? h("span", { class: "cost" }, fmtCost(cost)) : null);
+    const textEl = user ? h("div", { class: "bubble" }, body || "") : h("div", { class: "steps" });
+    if (!user && body) textEl.append(textStepEl(body));
+    const el = h("div", { class: "turn " + role }, textEl, who);
+    return { el, textEl, who, words };
+  }
+
+  // copyButton copies what text() gives when it is pressed, and says so
+  // for a moment. The clipboard API needs a secure page; the panel on a
+  // plain loopback address falls back to a selection copied the old way.
+  function copyButton(text, labelled) {
+    const label = h("span", null, t("chat.copy"));
+    const b = h("button", { type: "button", class: "chat-copy" + (labelled ? " labelled" : ""), "aria-label": t("chat.copy"), title: t("chat.copy") }, icon("copy", { size: 15 }), labelled ? label : null);
+    b.addEventListener("click", async (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const s = String(text() || "");
+      try {
+        if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(s);
+        else {
+          const ta = h("textarea", { class: "sr-only", readOnly: true }, s);
+          document.body.append(ta);
+          ta.select();
+          document.execCommand("copy");
+          ta.remove();
+        }
+        b.classList.add("done");
+        clear(b).append(icon("check", { size: 15 }), labelled ? h("span", null, t("chat.copied")) : null);
+        setTimeout(() => { b.classList.remove("done"); clear(b).append(icon("copy", { size: 15 }), labelled ? label : null); }, 1500);
+      } catch { toast(t("chat.copyFailed"), "bad"); }
+    });
+    return b;
   }
 
   // A question block is shown as its buttons, not as the JSON the agent
@@ -493,18 +597,18 @@ export function chatTab(domain) {
         const role = tn.role === "user" ? "user" : "agent";
         // Turns from before steps were kept show their words alone.
         const hasSteps = role !== "user" && (tn.steps || []).length;
-        const tu = turnEl(role, hasSteps ? "" : tn.text, tn.cost, tn.at);
+        const tu = turnEl(role, hasSteps ? "" : tn.text, tn.cost, tn.at, role === "user" ? tn.text : stripQuestions(tn.text || ""));
         if (hasSteps) tu.textEl.replaceWith(stepsEl(tn.steps, tn.threads));
-        if (tn.role === "error" && hasSteps) tu.el.append(h("div", { class: "level-error" }, tn.text.split("\n\n").pop()));
+        if (tn.role === "error" && hasSteps) tu.el.insertBefore(h("div", { class: "level-error" }, tn.text.split("\n\n").pop()), tu.who);
         // The last turn's subagents get their tabs at once; older ones open
         // from their row.
         if (role !== "user" && i >= list.length - 2) for (const th of tn.threads || []) if (th.run) agentView(th);
         // Only the last turn's questions are still open; earlier ones
         // were answered by whatever came after them.
-        if (i === list.length - 1 && tn.role !== "user" && !conv.running) for (const q of tn.questions || []) tu.el.append(questionEl(q));
+        if (i === list.length - 1 && tn.role !== "user" && !conv.running) for (const q of tn.questions || []) tu.el.insertBefore(questionEl(q), tu.who);
         turns.append(tu.el);
       });
-      if (!(conv.turns || []).length) turns.append(h("div", { class: "empty" }, h("strong", null, t("chat.emptyTitle")), t(house ? "chat.emptyHintHouse" : "chat.emptyHint")));
+      if (!(conv.turns || []).length) turns.append(welcome());
       // A turn still running (it does not depend on this tab: it goes on
       // with the tab closed) is drawn where it is, then followed live.
       running = null;
@@ -515,8 +619,7 @@ export function chatTab(domain) {
         for (const lv of conv.live || []) handle({ type: lv.type, subject: cur.name, data: lv.data });
       } else {
         followUsage(false);
-        stop.hidden = true;
-        send.textContent = t("chat.send");
+        syncButtons();
         status.textContent = "";
       }
       loadUsage();
@@ -541,11 +644,13 @@ export function chatTab(domain) {
   // has just sent something); scrolled up to read, it stays put.
   let following = true;
   const atEnd = () => views.scrollHeight - views.scrollTop - views.clientHeight < 160;
-  views.addEventListener("scroll", () => { following = atEnd(); }, { passive: true });
+  views.addEventListener("scroll", () => { following = atEnd(); toEnd.hidden = following; }, { passive: true });
+  toEnd.addEventListener("click", () => { views.scrollTo({ top: views.scrollHeight, behavior: "smooth" }); following = true; toEnd.hidden = true; });
   document.body.classList.add("chat-fit");
   subs.push(() => document.body.classList.remove("chat-fit"));
   function scroll(force) {
     if (force) following = true;
+    if (following) toEnd.hidden = true;
     if (!following || !el.isConnected) return;
     // After the layout of what was just appended.
     requestAnimationFrame(() => { views.scrollTop = views.scrollHeight; });
@@ -553,26 +658,28 @@ export function chatTab(domain) {
 
   function begin() {
     const tu = turnEl("agent", "");
-    const working = h("div", { class: "small muted working typing" }, t("chat.working"));
-    tu.el.append(working);
+    // The spark turns while the agent works, as Claude's does; the words
+    // shimmer. A blinking "working…" said the same with less to look at.
+    const working = h("div", { class: "chat-thinking", role: "status" }, icon("sparkles", { class: "spin", size: 18 }), h("span", { class: "shimmer" }, t("chat.thinking")));
+    tu.el.classList.add("running");
+    tu.el.insertBefore(working, tu.who);
     turns.append(tu.el);
     running = { ...tu, working };
     followUsage(true);
-    stop.hidden = false;
-    send.textContent = t("chat.queue");
-    status.textContent = t("chat.working");
+    syncButtons();
+    status.textContent = "";
     scroll();
   }
   function end(ev) {
     if (!running) return;
     running.working.remove();
+    running.el.classList.remove("running");
     const cost = ev && ev.data && (ev.data.cost ?? ev.data.cost_usd ?? ev.data.usd);
     if (cost !== undefined) running.who.append(h("span", { class: "cost" }, fmtCost(cost)));
     running = null;
     followUsage(false);
     loadUsage();
-    stop.hidden = true;
-    send.textContent = t("chat.send");
+    syncButtons();
     status.textContent = "";
   }
 
@@ -617,7 +724,7 @@ export function chatTab(domain) {
       scroll();
     } else if (ev.type === "agent.tool") {
       const tool = { id: d.id, name: d.tool || d.name || "tool", input: d.input, run: d.run };
-      into().append(toolStepEl(tool));
+      addTool(into(), tool);
       if (d.run) {
         const inp = d.input || {};
         agentView({ id: d.id, description: inp.description, prompt: inp.prompt, run: d.run });
@@ -641,7 +748,7 @@ export function chatTab(domain) {
       // The saved turn has every subagent's last state.
       loadTurns(true);
     } else if (ev.type === "agent.error") {
-      running.el.append(h("div", { class: "level-error" }, ev.message || d.error || t("chat.failed")));
+      running.el.insertBefore(h("div", { class: "level-error" }, ev.message || d.error || t("chat.failed")), running.who);
       end(null);
       if (d.turn_id) loadTurns(true);
     }
@@ -651,14 +758,41 @@ export function chatTab(domain) {
   // uploading holds the message while a file it should carry is not up.
   let sending = false;
   let uploading = 0;
-  function holdSend() { send.disabled = uploading > 0; send.title = uploading > 0 ? t("chat.waitUpload") : ""; }
+  function holdSend() { send.disabled = uploading > 0; send.title = uploading > 0 ? t("chat.waitUpload") : running ? t("chat.queue") : t("chat.send"); }
+  // While a turn runs the square stops it, and the arrow appears beside
+  // it only when there is something to queue; otherwise the arrow alone,
+  // dimmed until there is something to send.
+  function syncButtons() {
+    const written = text.value.trim() !== "";
+    stop.hidden = !running;
+    send.hidden = Boolean(running) && !written;
+    send.classList.toggle("empty", !written);
+    const label = running ? t("chat.queue") : t("chat.send");
+    send.setAttribute("aria-label", label);
+    if (!uploading) send.title = label;
+  }
+  // An empty conversation opens on a greeting and a few things to ask,
+  // as Claude's app does, instead of a line saying there is nothing.
+  function welcome() {
+    const keys = house ? ["chat.suggest.house1", "chat.suggest.house2", "chat.suggest.house3"] : ["chat.suggest.site1", "chat.suggest.site2", "chat.suggest.site3"];
+    const chips = keys.map((k) => {
+      const b = h("button", { type: "button", class: "chat-suggestion" }, t(k));
+      b.addEventListener("click", () => { text.value = t(k); fit(); syncButtons(); text.focus(); });
+      return b;
+    });
+    return h("div", { class: "chat-welcome" },
+      icon("sparkles", { size: 30, class: "chat-welcome-mark" }),
+      h("h2", null, house ? t("chat.helloHouse") : t("chat.hello", { name: domain })),
+      h("p", null, t(house ? "chat.emptyHintHouse" : "chat.emptyHint")),
+      cur.origin === "site" ? null : h("div", { class: "chat-suggestions" }, ...chips));
+  }
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const msg = text.value.trim();
     if (!msg || sending || uploading > 0) return;
     sending = true;
     const whileRunning = Boolean(running);
-    turns.querySelector(".empty")?.remove();
+    turns.querySelector(".chat-welcome")?.remove();
     turns.querySelector(".chat-notice")?.remove();
     const mine = turnEl("user", msg).el;
     // What is written goes to the main conversation: shown there, not
@@ -668,6 +802,7 @@ export function chatTab(domain) {
     scroll(true);
     text.value = "";
     fit();
+    syncButtons();
     send.classList.add("busy");
     // Gives the message back when it did not go: the bubble stays, dimmed,
     // and the words return to the box unless something new was typed
@@ -691,7 +826,7 @@ export function chatTab(domain) {
       if (r && r.queued) {
         // Kept for when the running turn ends; it goes out with any other
         // queued message as the next one.
-        mine.querySelector(".who").append(h("span", { class: "muted" }, t("chat.queued")));
+        mine.querySelector(".turn-actions").append(h("span", { class: "queued" }, t("chat.queued")));
       } else if (!running && !whileRunning) begin();
     } catch (err) {
       if (err.status === 429) {
@@ -729,7 +864,7 @@ export function chatTab(domain) {
     // A taller box leaves less of the conversation: its end stays in view.
     scroll();
   }
-  text.addEventListener("input", fit);
+  text.addEventListener("input", () => { fit(); syncButtons(); });
   // Focus on deliberate gestures only, and never on a touch screen: there
   // it opens the keyboard over half the conversation (V1).
   function focusBox() { if (!touch.matches) text.focus(); }

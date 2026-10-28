@@ -509,7 +509,19 @@ dialog form.dlg { display: flex; flex-direction: column; max-height: calc(100vh 
 .path { font-family: var(--mono); font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; }
 
 /* ---------- chat ---------- */
-.chat { display: flex; flex-direction: column; gap: 12px; min-height: 60vh; }
+/* Drawn after Claude's own app, which the operator finds the pleasant
+   one to read: one centred column, the agent's answer as prose with no
+   bubble, what was written in a soft bubble on the right, the box a
+   rounded card with its controls inside and a round send button. The
+   colours stay the panel's own tokens, so dark mode and the accent
+   follow the rest of the panel. */
+.chat {
+  --chat-col: 780px;
+  /* The answer reads in a book face where the device has one, as
+     Claude's does; the interface around it stays in the panel's. */
+  --prose: "Iowan Old Style", "Charter", "Bitstream Charter", "Sitka Text", Cambria, Georgia, "Noto Serif", "Source Serif 4", serif;
+  display: flex; flex-direction: column; gap: 8px; min-height: 60vh;
+}
 /* A screen with a chat is as tall as the window and no taller (V1's
    layout): the page stops scrolling, every box from .main down to the
    chat passes the height on, and only .chat-views scrolls. The topbar and
@@ -526,9 +538,10 @@ body.chat-fit .page-body > :last-child { flex: 1; min-height: 0; display: flex; 
 body.chat-fit .page-head { margin-bottom: 12px; }
 body.chat-fit .tabs { margin-bottom: 0; flex: none; }
 body.chat-fit .page-body > * { flex: none; }
-body.chat-fit .chat { flex: 1; min-height: 0; gap: 8px; }
-body.chat-fit .chat-views { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
-body.chat-fit .chat-form { position: static; flex: none; }
+body.chat-fit .chat { flex: 1; min-height: 0; gap: 6px; }
+body.chat-fit .chat-stage { flex: 1; min-height: 0; }
+body.chat-fit .chat-views { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+body.chat-fit .chat-form { flex: none; }
 /* The house's list of turns at work sits above its chat: kept short so
    the conversation keeps most of the screen. */
 body.chat-fit .page-body > .card { max-height: 28vh; overflow-y: auto; }
@@ -537,26 +550,56 @@ body.chat-fit .page-body > .card { max-height: 28vh; overflow-y: auto; }
   body.chat-fit .page-head { margin-bottom: 8px; }
   body.chat-fit .page-head .sub { display: none; }
 }
-.chat-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 1em; }
-/* The conversation's title is what tells them apart: as wide as it can be,
-   and a line of its own on a phone. The agent and model sit beside it, as
-   in V1: they belong to the conversation, not to each message. */
-.chat-head > select { flex: 1 1 260px; min-width: 0; max-width: 520px; }
-.chat-head-tools { display: flex; align-items: center; gap: 6px; margin-left: auto; min-width: 0; }
-.chat-head-tools select, .chat-head-tools .model-input { width: auto; max-width: 180px; min-width: 0; padding-top: 4px; padding-bottom: 4px; font-size: 12.5px; }
-@media (max-width: 640px) {
-  .chat-head > select { flex-basis: 100%; max-width: none; }
-  .chat-head-tools { flex: 1 1 100%; margin-left: 0; }
-  .chat-head-tools select, .chat-head-tools .model-input { flex: 1 1 0; max-width: none; }
-  .chat-head-tools .chat-capacity { display: none; }
+.chat-stage { position: relative; display: flex; flex-direction: column; }
+.chat-views { display: flex; flex-direction: column; scrollbar-gutter: stable both-edges; }
+.chat-head, .chat-readonly, .chat-tabs, .chat-turns, .chat-agent, .chat-form { width: 100%; max-width: var(--chat-col); margin-left: auto; margin-right: auto; }
+
+/* The bar: the conversation's title, which opens the list of them, and
+   two round buttons, a new conversation and the rest. */
+.chat-head { display: flex; align-items: center; gap: 4px; min-height: 40px; }
+.chat-title-wrap { position: relative; display: inline-flex; align-items: center; flex: 0 1 auto; min-width: 0; }
+.chat-title {
+  appearance: none; -webkit-appearance: none; width: auto; max-width: 100%; min-width: 0;
+  padding: 7px 32px 7px 10px; border: 0; border-radius: 10px; background: transparent; box-shadow: none;
+  color: var(--text); font-size: 15px; font-weight: 600; text-overflow: ellipsis; cursor: pointer;
+  field-sizing: content;
 }
+.chat-title:hover { background: var(--surface-2); }
+.chat-title:focus-visible { box-shadow: var(--focus); }
+.chat-title-chev { position: absolute; right: 9px; width: 16px; height: 16px; color: var(--text-3); pointer-events: none; }
+.chat-head-tools { display: flex; align-items: center; gap: 2px; margin-left: auto; flex: none; }
+
+/* Round icon buttons: send, stop, attach, new conversation, the menu. */
+.chat-round {
+  display: inline-grid; place-items: center; flex: none; width: 34px; height: 34px; padding: 0;
+  border: 0; border-radius: 50%; background: transparent; color: var(--text-2); cursor: pointer; list-style: none;
+  transition: background var(--dur), color var(--dur), opacity var(--dur), transform var(--dur);
+}
+.chat-round[hidden] { display: none; }
+.chat-round::-webkit-details-marker { display: none; }
+.chat-round:hover { background: var(--surface-2); color: var(--text); }
+.chat-round:focus-visible { box-shadow: var(--focus); border-radius: 50%; }
+.chat-round .ico { width: 18px; height: 18px; }
+.chat-round.send { background: var(--accent); color: var(--on-accent); }
+.chat-round.send:hover { background: var(--accent-strong); }
+.chat-round.send:active { transform: scale(.94); }
+.chat-round.send.empty { background: var(--surface-3); color: var(--text-3); }
+.chat-round.send.busy { opacity: .6; }
+.chat-round.send:disabled { background: var(--surface-3); color: var(--text-3); cursor: not-allowed; }
+.chat-round.stop { background: var(--text); color: var(--surface); }
+.chat-round.stop:hover { background: var(--text-2); color: var(--surface); }
+.chat-round.stop .ico { width: 14px; height: 14px; }
 /* The conversation's seldom-used actions, folded under "…". */
 .chat-menu { position: relative; flex: none; }
 .chat-menu > summary { list-style: none; }
 .chat-menu > summary::-webkit-details-marker { display: none; }
-.chat-menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 15; min-width: 210px; display: flex; flex-direction: column; padding: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); }
+.chat-menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 15; min-width: 210px; display: flex; flex-direction: column; padding: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg); }
 .chat-menu-list .btn { justify-content: flex-start; width: 100%; }
+.chat-capacity:empty { display: none; }
 .chat-capacity.full { color: var(--warn); font-weight: 600; }
+.chat-readonly { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px; background: var(--surface-2); color: var(--text-2); font-size: 13px; }
+.chat-readonly[hidden] { display: none; }
+.chat-readonly .ico { width: 16px; height: 16px; flex: none; }
 /* The gateway's permissions, a box each on one line when they fit. */
 .door-perms { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 4px 0 2px; }
 /* The agent's usage windows under the message box: a thin bar each. */
@@ -566,59 +609,115 @@ body.chat-fit .page-body > .card { max-height: 28vh; overflow-y: auto; }
 .chat-usage-src { margin-left: auto; }
 @media (max-width: 640px) { .chat-usage-src { margin-left: 0; flex-basis: 100%; } }
 .chat-notice { margin: 0; }
-.chat-question { margin: 8px 0 4px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
-.chat-question .q { font-weight: 600; margin-bottom: 6px; }
-.chat-question .row { display: flex; gap: 6px; flex-wrap: wrap; }
-.chat-turns { flex: 1; display: flex; flex-direction: column; gap: 10px; }
-.turn { max-width: 100%; padding: 10px 12px; border-radius: var(--radius-lg); background: var(--surface-2); overflow-wrap: anywhere; }
-.turn.user { background: var(--accent-soft); align-self: flex-end; max-width: 85%; }
-.turn .who { font-size: 11.5px; color: var(--text-3); margin-bottom: 4px; display: flex; gap: 8px; }
-.turn .who .cost { margin-left: auto; font-variant-numeric: tabular-nums; }
-.turn .text { white-space: pre-wrap; }
-.turn details, .chat-agent details { margin: 6px 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
-.turn summary, .chat-agent summary { padding: 6px 10px; cursor: pointer; font-family: var(--mono); font-size: 12px; color: var(--text-2); }
-.turn details pre, .chat-agent details pre { margin: 0; padding: 8px 10px; border-top: 1px solid var(--border); max-height: 300px; overflow: auto; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
-/* minmax(0, 1fr), not 1fr: a track of 1fr never shrinks below its widest
-   item, and a model select with a long label made the form wider than the
-   phone. */
-.chat-form { display: grid; gap: 6px; grid-template-columns: minmax(0, 1fr); position: sticky; bottom: 0; background: var(--bg); padding-top: 8px; }
-/* The paperclip, the box and send on one line; the box grows with what is
-   written (site-chat.js fit) up to twelve lines' worth, then scrolls. */
-.chat-compose { display: flex; align-items: flex-end; gap: 6px; }
-.chat-compose textarea { flex: 1; min-width: 0; min-height: 40px; max-height: 192px; resize: none; overflow-y: auto; }
-.chat-compose .btn { flex: none; height: 40px; }
-.chat-compose textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.chat-attach { cursor: pointer; padding-left: 10px; padding-right: 10px; }
+
+/* The box: a card with what is attached, the words, and one row under
+   them with the paperclip, the agent, its model and send. */
+.chat-form { display: grid; gap: 6px; grid-template-columns: minmax(0, 1fr); padding-top: 4px; }
+.chat-composer {
+  display: flex; flex-direction: column; gap: 4px; padding: 10px 10px 8px 14px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 22px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 4px 18px rgba(16, 24, 40, .06);
+  transition: border-color var(--dur), box-shadow var(--dur);
+}
+.chat-composer:focus-within { border-color: var(--border-strong); box-shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 8px 28px rgba(16, 24, 40, .10); }
+.chat-composer textarea {
+  width: 100%; min-height: 28px; max-height: 240px; padding: 4px 2px; resize: none; overflow-y: auto;
+  border: 0; background: transparent; box-shadow: none; font-size: 15px; line-height: 1.5; color: var(--text);
+}
+.chat-composer textarea:focus, .chat-composer textarea:focus-visible { border: 0; box-shadow: none; }
+.chat-composer textarea::placeholder { color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-composer-bar { display: flex; align-items: center; gap: 2px; min-width: 0; margin-left: -6px; }
+.chat-composer-bar .grow { flex: 1; }
+.chat-attach { cursor: pointer; }
+.chat-pill {
+  width: auto; min-width: 0; max-width: 190px; padding: 5px 26px 5px 10px; border: 0; border-radius: 999px;
+  background-color: transparent; box-shadow: none; color: var(--text-2); font-size: 12.5px; cursor: pointer; text-overflow: ellipsis;
+  /* As wide as what it says, where the browser can: a select is otherwise
+     as wide as its longest option, and "claude" sat in a box for a
+     model's full name. */
+  field-sizing: content;
+}
+.chat-pill:hover { background-color: var(--surface-2); color: var(--text); }
+.chat-pill:focus-visible { box-shadow: var(--focus); }
+.chat-pill.model-input { padding-right: 10px; border: 1px solid var(--border); cursor: text; }
+.chat-pill[hidden] { display: none; }
+.chat-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chat-chips:empty { display: none; }
-.chat-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-height: 0; }
+.chat-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-height: 0; padding: 0 12px; font-size: 12px; color: var(--text-3); }
 .chat-meta:empty, .chat-meta > [role="status"]:empty { display: none; }
 .chat-meta .chat-usage { margin-top: 0; flex: 1; }
-@media (max-width: 640px) {
-  /* Send says it with its icon on a phone: the box keeps the width. */
-  .chat-compose .btn.primary { padding-left: 12px; padding-right: 12px; }
-}
-/* A message that did not go: kept in sight, dimmed and outlined, so
-   nobody believes it was sent (its words went back to the box). */
-.turn.user.failed { opacity: .65; outline: 1px dashed var(--bad); outline-offset: -1px; }
-.turn.failed .level-error { margin-top: 6px; }
 /* Files dragged over the conversation: the whole chat takes the drop. */
 .chat.dropping { outline: 2px dashed var(--accent); outline-offset: -4px; border-radius: var(--radius-lg); }
 .typing::after { content: "▍"; animation: blink 1s steps(2) infinite; color: var(--text-3); }
-/* The turn as it happened: words rendered, each tool a row whose dot
-   says running, done or failed, with its input and answer folded. */
+
+/* The conversation. */
+.chat-turns { flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 14px 4px 28px; }
+.turn { position: relative; display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.turn.user { align-items: flex-end; }
+.turn.user .bubble { max-width: 85%; padding: 10px 16px; border-radius: 20px; background: var(--surface-3); color: var(--text); white-space: pre-wrap; font-size: 15px; line-height: 1.55; }
+/* A message that did not go: kept in sight, dimmed and outlined, so
+   nobody believes it was sent (its words went back to the box). */
+.turn.user.failed .bubble { opacity: .65; outline: 1px dashed var(--bad); outline-offset: -1px; }
+.turn.failed .level-error { margin-top: 6px; }
 .turn .steps { display: flex; flex-direction: column; gap: 4px; }
-.chat-md { max-width: none; line-height: 1.5; }
+.turn.agent > .level-error { margin-top: 8px; }
+/* Under each turn: copy, the time, the cost. Quiet until the turn is
+   pointed at (always there on a touch screen, and on the last turn). */
+.turn-actions { display: flex; align-items: center; gap: 6px; min-height: 26px; margin-top: 2px; font-size: 12px; color: var(--text-3); opacity: 0; transition: opacity var(--dur); }
+.turn:hover .turn-actions, .turn:focus-within .turn-actions, .turn:last-child .turn-actions { opacity: 1; }
+@media (hover: none) { .turn-actions { opacity: 1; } }
+.turn.user .turn-actions { justify-content: flex-end; }
+.turn.running .turn-actions { display: none; }
+.turn-actions .cost { font-variant-numeric: tabular-nums; }
+.turn-actions .queued { color: var(--warn); }
+.chat-copy { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 26px; height: 26px; padding: 0 6px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); font-size: 12px; cursor: pointer; }
+.chat-copy:hover { background: var(--surface-2); color: var(--text); }
+.chat-copy.done { color: var(--ok); }
+.chat-copy .ico { width: 15px; height: 15px; }
+
+/* The answer, as prose. */
+.chat-md { max-width: none; font-family: var(--prose); font-size: 16px; line-height: 1.65; color: var(--text); }
 .chat-md > :last-child { margin-bottom: 0; }
-.chat-md p, .chat-md ul, .chat-md ol { margin: 0 0 8px; }
-.chat-md ul, .chat-md ol { padding-left: 22px; }
-.chat-md h2, .chat-md h3, .chat-md h4, .chat-md h5 { font-size: 15px; margin: 10px 0 6px; }
-.chat-md pre { margin: 0 0 8px; max-height: 360px; overflow: auto; }
-.chat-md blockquote { margin: 0 0 8px; padding-left: 10px; border-left: 3px solid var(--border); color: var(--text-2); }
-.chat-tool { margin: 2px 0 !important; }
-.chat-tool > summary { display: flex; align-items: center; gap: 8px; list-style: none; }
+.chat-md p, .chat-md ul, .chat-md ol { margin: 0 0 12px; }
+.chat-md ul, .chat-md ol { padding-left: 24px; }
+.chat-md li { margin: 2px 0; }
+.chat-md li::marker { color: var(--text-3); }
+.chat-md h2, .chat-md h3, .chat-md h4, .chat-md h5 { margin: 18px 0 8px; font-family: var(--prose); font-size: 18px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--text); }
+.chat-md h4, .chat-md h5 { font-size: 16px; }
+.chat-md strong { font-weight: 650; }
+.chat-md a { color: var(--accent); text-underline-offset: 2px; }
+.chat-md :not(pre) > code { padding: .1em .35em; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-2); font-size: .82em; }
+.chat-md blockquote { margin: 0 0 12px; padding: 2px 0 2px 14px; border-left: 3px solid var(--border-strong); color: var(--text-2); }
+.chat-md .table-wrap { margin: 4px 0 14px; border: 1px solid var(--border); border-radius: 12px; overflow: auto; }
+.chat-md .table { font-family: var(--font); font-size: 13.5px; margin: 0; }
+.chat-md hr { border: 0; border-top: 1px solid var(--border); margin: 18px 0; }
+.code-block { margin: 4px 0 14px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--surface-2); }
+.code-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 4px 3px 12px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--surface-3) 45%, var(--surface-2)); font-family: var(--font); font-size: 12px; color: var(--text-3); }
+.code-block pre { margin: 0; padding: 12px 14px; max-height: 440px; min-height: 0; overflow: auto; border: 0; border-radius: 0; background: transparent; font-family: var(--mono); font-size: 13px; line-height: 1.55; white-space: pre; color: var(--text); }
+
+/* Tools one after another are one quiet fold: what the agent is doing
+   now (or did last) and how many steps it took. */
+.chat-steps-group { margin: 2px 0 8px; font-family: var(--font); }
+.chat-steps-group > summary { display: flex; align-items: center; gap: 8px; width: fit-content; max-width: 100%; padding: 6px 10px; margin-left: -10px; border-radius: 10px; list-style: none; cursor: pointer; color: var(--text-2); font-size: 13.5px; }
+.chat-steps-group > summary::-webkit-details-marker { display: none; }
+.chat-steps-group > summary:hover { background: var(--surface-2); color: var(--text); }
+.grp-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grp-count { flex: none; color: var(--text-3); white-space: nowrap; }
+.grp-count:not(:empty)::before { content: "· "; }
+.grp-chev { flex: none; width: 16px; height: 16px; color: var(--text-3); transition: transform var(--dur); }
+.chat-steps-group[open] .grp-chev { transform: rotate(90deg); }
+.grp-list { display: flex; flex-direction: column; gap: 1px; margin: 4px 0 4px 3px; padding-left: 12px; border-left: 2px solid var(--border); }
+.chat-tool { margin: 0; border: 0; background: transparent; }
+.chat-tool > summary { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 8px; list-style: none; cursor: pointer; font-family: var(--mono); font-size: 12px; color: var(--text-2); }
 .chat-tool > summary::-webkit-details-marker { display: none; }
+.chat-tool > summary:hover { background: var(--surface-2); color: var(--text); }
 .chat-tool .tool-what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-tool[open] .tool-what { white-space: normal; }
+.chat-tool pre { margin: 4px 0 6px 16px; padding: 8px 10px; max-height: 300px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-tool pre[hidden] { display: none; }
+.chat-tool.brief { margin-bottom: 6px; }
+.chat-tool.brief > summary { font-family: var(--font); }
+.chat-tool.brief .chat-md { margin: 4px 0 6px 16px; font-size: 14.5px; }
 .tool-state { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--text-3); }
 .tool-state.ok { background: var(--ok); }
 .tool-state.err { background: var(--bad); }
@@ -628,24 +727,69 @@ body.chat-fit .page-body > .card { max-height: 28vh; overflow-y: auto; }
 .chat-tool pre.out.err { color: var(--bad); }
 .chat-tool pre.diff .del { color: var(--bad); }
 .chat-tool pre.diff .add { color: var(--ok); }
-.chat-tool ul.todos { margin: 0; padding: 8px 12px; list-style: none; border-top: 1px solid var(--border); font-size: 13px; }
+.chat-tool ul.todos { margin: 4px 0 6px 16px; padding: 8px 12px; list-style: none; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); font-size: 13px; }
 .chat-tool ul.todos li.completed { color: var(--text-3); text-decoration: line-through; }
 .badge.run.live { background: var(--accent-soft); }
 .badge.run.ok { background: var(--ok-soft); color: var(--ok); }
 .badge.run.bad { color: var(--bad); }
-.turn .working { margin-top: 4px; }
-.chat-tabs { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-bottom: 8px; }
-.chat-tab { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); font-size: 12.5px; cursor: pointer; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
-.chat-tab.on { background: var(--accent-soft); color: var(--text); border-color: var(--accent); }
-.chat-tab .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+
+/* While the agent works: its spark turns and the word shimmers. */
+.chat-thinking { display: flex; align-items: center; gap: 8px; margin-top: 6px; color: var(--text-2); font-size: 14px; }
+.chat-thinking .ico { color: var(--accent); }
+.spin { animation: chat-spin 2.4s linear infinite; }
+@keyframes chat-spin { to { transform: rotate(360deg); } }
+.shimmer { background: linear-gradient(90deg, var(--text-3) 0%, var(--text) 45%, var(--text-3) 90%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: chat-shimmer 1.8s linear infinite; }
+@keyframes chat-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .spin, .shimmer, .tool-state.live { animation: none; }
+  .shimmer { background: none; color: var(--text-2); }
+}
+
+/* An empty conversation: a greeting and a few things to ask. */
+.chat-welcome { display: flex; flex-direction: column; align-items: center; gap: 10px; margin: auto 0; padding: 40px 8px 24px; text-align: center; }
+.chat-welcome-mark { width: 30px; height: 30px; color: var(--accent); }
+.chat-welcome h2 { margin: 4px 0 0; font-family: var(--prose); font-size: 28px; font-weight: 500; letter-spacing: -.01em; text-transform: none; color: var(--text); }
+.chat-welcome p { max-width: 520px; margin: 0; color: var(--text-2); }
+.chat-suggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 14px; }
+.chat-suggestion { padding: 7px 14px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text-2); font-size: 13px; cursor: pointer; transition: background var(--dur), color var(--dur), border-color var(--dur); }
+.chat-suggestion:hover { border-color: var(--border-strong); background: var(--surface-2); color: var(--text); }
+
+/* Scrolled up: a round arrow over the end of the conversation. */
+.chat-to-end { position: absolute; left: 50%; bottom: 12px; z-index: 5; transform: translateX(-50%); border: 1px solid var(--border); background: var(--surface); color: var(--text); box-shadow: var(--shadow-lg); }
+.chat-to-end:hover { background: var(--surface-2); }
+
+/* A question the agent asked: its options as buttons. */
+.chat-question { margin: 10px 0 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); font-family: var(--font); }
+.chat-question .q { margin-bottom: 10px; font-weight: 600; }
+.chat-question .row { display: flex; flex-wrap: wrap; gap: 8px; }
+.chat-question .btn { border-radius: 999px; }
+
+/* Subagents: a tab each beside the main conversation. */
+.chat-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.chat-tabs[hidden] { display: none; }
+.chat-tab { display: inline-flex; align-items: center; gap: 6px; max-width: 260px; padding: 4px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text-2); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.chat-tab.on { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.chat-tab .dot { width: 8px; height: 8px; flex: none; border-radius: 50%; }
 .chat-tab .dot.live { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
 .chat-tab .dot.ok { background: var(--ok); }
 .chat-tab .dot.bad { background: var(--bad); }
 .chat-tabs .live-count { margin-left: auto; }
-.chat-views { flex: 1; display: flex; flex-direction: column; }
-.chat-agent { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: var(--radius-lg); background: var(--surface-2); }
+.chat-agent { display: flex; flex-direction: column; gap: 8px; padding: 14px 4px 24px; }
+.chat-agent[hidden] { display: none; }
 .chat-agent .steps { display: flex; flex-direction: column; gap: 4px; }
+.chat-agent .agent-foot { margin-top: 4px; }
 @keyframes blink { 50% { opacity: 0; } }
+
+@media (max-width: 640px) {
+  .chat-title { font-size: 14px; }
+  .chat-pill { max-width: 120px; }
+  .chat-composer { border-radius: 20px; padding: 8px 8px 6px 12px; }
+  .chat-turns { gap: 10px; padding: 10px 2px 20px; }
+  .chat-md { font-size: 15.5px; }
+  .turn.user .bubble { max-width: 90%; }
+  .chat-welcome h2 { font-size: 23px; }
+  .chat-meta .chat-capacity { display: none; }
+}
 
 /* ---------- events ---------- */
 .events { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
@@ -962,3 +1106,10 @@ svg.dash-spark .mem { stroke: var(--warn); stroke-dasharray: 3 2; }
 .specs-files { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
 .specs-file { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; background: var(--surface); }
 .specs-file > .mono { margin-bottom: 6px; }
+
+/* ---------- house ---------- */
+/* The house's agents at work, over its conversation: one line when idle. */
+.house-live.idle { display: flex; align-items: center; gap: 8px; width: 100%; max-width: 780px; margin: 0 auto; padding: 2px 4px; font-size: 13px; color: var(--text-2); }
+.house-live.idle > .muted { margin-left: auto; font-size: 12px; }
+.house-live.idle .asking { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.house-live.idle .asking a { padding: 1px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--text); text-decoration: none; font-size: 12.5px; }

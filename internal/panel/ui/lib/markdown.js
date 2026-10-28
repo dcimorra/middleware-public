@@ -47,10 +47,13 @@ export function render(md, { breaks = false } = {}) {
   while (i < lines.length) {
     const l = lines[i];
     if (/^```/.test(l)) {
+      // The fence's word, when it has one, is kept so a chat can say
+      // which language a block is in.
+      const lang = (/^```\s*([\w+#.-]+)/.exec(l) || [])[1];
       const body = [];
       for (i++; i < lines.length && !/^```/.test(lines[i]); i++) body.push(lines[i]);
       i++;
-      root.append(h("pre", { class: "log" }, h("code", null, body.join("\n"))));
+      root.append(h("pre", { class: "log", "data-lang": lang }, h("code", null, body.join("\n"))));
       continue;
     }
     const head = /^(#{1,4})\s+(.*)$/.exec(l);

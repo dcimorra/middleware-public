@@ -16,7 +16,10 @@ export function houseScreen() {
   // Every agent turn at work in the house, and every conversation waiting
   // for the operator: the one place to see, and stop, what the agents of
   // every site are doing.
-  const live = h("div", { class: "card pad0" });
+  // With nothing at work and nobody waiting it is one quiet line over
+  // the conversation; a card with an empty table took a third of the
+  // screen from the chat it sits on.
+  const live = h("div", { class: "house-live" });
   p.body.append(live, chat.el);
   // The paths of a conversation, by its name: the house's, a site's
   // first, or another of a site's.
@@ -43,6 +46,16 @@ export function houseScreen() {
         cell(stop, null, "right"));
     });
     const asking = (w.asking || []).map((a) => h("li", null, h("a", { href: convPath(a.name).href }, a.name)));
+    if (!rows.length) {
+      // Who waits for an answer goes on the same line, a link each.
+      const waiting = (w.asking || []).map((a) => h("a", { href: convPath(a.name).href }, a.name));
+      live.className = "house-live idle";
+      clear(live).append(...[h("span", { class: "tool-state ok", "aria-hidden": "true" }), h("span", null, t("house.noneRunning")),
+        waiting.length ? h("span", { class: "asking" }, h("span", { class: "muted" }, t("house.waiting", { n: waiting.length })), ...waiting) : null,
+        h("span", { class: "muted" }, t("house.liveCount", { used: cap.used, max: cap.max }))].filter(Boolean));
+      return;
+    }
+    live.className = "house-live card pad0";
     clear(live).append(...[
       h("div", { class: "log-bar card-pad" }, h("h2", { class: "grow" }, t("house.live")), h("span", { class: "small muted" }, t("house.liveCount", { used: cap.used, max: cap.max }))),
       rows.length ? table([{ label: t("house.col.conversation") }, { label: t("house.col.provider") }, { label: t("house.col.since") }, { label: "" }], rows, { responsive: true }).el
