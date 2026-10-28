@@ -159,6 +159,10 @@ type Mover struct {
 	// dependencies there after the first copy; Parts must then leave
 	// node_modules behind (MoveParts).
 	Install bool
+	// Journal, when set, has the move keep a journal from just before it
+	// stops the site until it ends (JournalPath), for Recover after a
+	// restart; its Target and ID are the caller's to fill.
+	Journal *Journal
 	// NoTrial has Check look for each export's program without running
 	// the export (Rehearser): a check answered inside a request (the
 	// panel's plan, the answer to the move's POST) has seconds, and a
@@ -289,20 +293,47 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	var taskFiles map[string][]byte
 	var held []string
 	if tasker != nil {
-		if taskFiles, err = tasker.Tasks(domain); err == nil {
-			held, err = tasker.HoldTasks(domain)
+		if taskFiles, err = tasker.Tasks(domain); err != nil {
+			return rep, undone(fmt.Errorf("its tasks here: %w", err), m.undo(t, domain, false))
+		}
+	}
+	// The journal before anything stops: a restart from here on finds it,
+	// and the site back as it was (Recover).
+	var jr *Journal
+	if m.Journal != nil {
+		j := *m.Journal
+		j.Domain, j.Step, j.Started, j.Held = domain, JournalStop, time.Now().UTC(), enabledTasks(taskFiles)
+		j.Manifest, err = os.ReadFile(filepath.Join(dir, manifest.FileName))
+		if err == nil {
+			err = j.write(m.Root)
 		}
 		if err != nil {
+			return rep, undone(fmt.Errorf("writing down the move before stopping the site: %w", err), m.undo(t, domain, false))
+		}
+		jr = &j
+		defer removeJournal(m.Root, domain)
+	}
+	if tasker != nil {
+		if held, err = tasker.HoldTasks(domain); err != nil {
 			_ = tasker.ReleaseTasks(held)
 			return rep, undone(fmt.Errorf("turning its tasks off here: %w", err), m.undo(t, domain, false))
 		}
 	}
 	original, err := m.Source.Stop(ctx, domain)
 	if err != nil {
+		if jr != nil {
+			// A stop that failed halfway has written hold or disabled: the
+			// manifest it had goes back, or the site stays down.
+			_ = m.Source.Start(domain, jr.Manifest)
+		}
 		if tasker != nil {
 			_ = tasker.ReleaseTasks(held)
 		}
 		return rep, undone(fmt.Errorf("stop: %w", err), m.undo(t, domain, false))
+	}
+	if jr != nil {
+		jr.Manifest = original
+		_ = jr.write(m.Root)
 	}
 	stopped := time.Now()
 	// From here every failure before the target answers puts the source
@@ -350,6 +381,15 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	}
 
 	progress(StepCommit, "putting it in place on "+t.Name())
+	if jr != nil {
+		// Before the commit is asked for, not after it answered: a restart
+		// in between must ask the target, not start the site here again
+		// while it may run there.
+		jr.Step = JournalCommit
+		if err := jr.write(m.Root); err != nil {
+			return restore(undone(fmt.Errorf("writing down the move before its commit: %w", err), m.undo(t, domain, false)))
+		}
+	}
 	if err := t.Commit(ctx, domain, original, taskFiles); err != nil {
 		return restore(undone(fmt.Errorf("commit: %w", err), m.undo(t, domain, false)))
 	}
@@ -381,6 +421,10 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 		return restore(undone(err, m.undo(t, domain, true)))
 	}
 	rep.Down = time.Since(stopped).Round(time.Second)
+	if jr != nil {
+		jr.Step = JournalReady
+		_ = jr.write(m.Root)
+	}
 
 	if err := m.settle(ctx, domain, t, original, &rep, progress); err != nil {
 		return rep, err

@@ -61,6 +61,9 @@ type moveJob struct {
 type moves struct {
 	mu   sync.Mutex
 	jobs map[string]*moveJob
+	// receiving counts the requests of a move into this node in progress
+	// (a copy arriving, a commit): MovesRunning.
+	receiving int
 }
 
 // movesKept is how many finished moves stay on disk.

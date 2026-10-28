@@ -91,6 +91,7 @@ func (s *Server) registerRelocateTarget() {
 		return OK, nil
 	})
 	s.Handle("PUT", Prefix+"/relocate/{domain}", "Receive a site moving in from another node: its bundle (.tar.gz) as the raw body, kept apart until commit", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		defer s.receiving()()
 		rep, err := rc.Receive(r.Context(), r.PathValue("domain"), r.Body)
 		if err != nil {
 			return nil, bad(err)
@@ -98,6 +99,7 @@ func (s *Server) registerRelocateTarget() {
 		return rep, nil
 	})
 	s.Handle("PUT", Prefix+"/relocate/{domain}/delta", "The last copy of a site moving in: what changed since the first, and the index of what is there", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		defer s.receiving()()
 		rep, err := rc.ReceiveDelta(r.Context(), r.PathValue("domain"), r.Body)
 		if err != nil {
 			return nil, bad(err)
@@ -117,6 +119,7 @@ func (s *Server) registerRelocateTarget() {
 			// here from the moment it is in place.
 			Tasks map[string]string `json:"tasks"`
 		}
+		defer s.receiving()()
 		if err := ReadJSON(r, &body); err != nil {
 			return nil, err
 		}
@@ -387,6 +390,10 @@ func fileThere(p string) bool {
 
 // registerRelocateSource mounts the operator's move: it needs the mesh.
 func (s *Server) registerRelocateSource(m *nodes.Mesh) {
+	s.recoverMoves(func(id string) (relocate.Target, bool) {
+		x, ok := m.Member(id)
+		return meshTarget{m: m, x: x}, ok
+	})
 	s.Handle("POST", Prefix+"/sites/{domain}/move", "Move the site to another node of the network (body: node): copied while it serves, stopped for the last copy, started there, names pointed there, archived here", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		domain, err := domainOf(r)
 		if err != nil {
@@ -444,7 +451,7 @@ func (s *Server) registerRelocateSource(m *nodes.Mesh) {
 		if busy != nil {
 			return nil, Errorf(http.StatusConflict, "%s is already moving to %s (%s)", domain, busy.Node, busy.Step)
 		}
-		mover := &relocate.Mover{Root: s.opts.Root, Source: src}
+		mover := &relocate.Mover{Root: s.opts.Root, Source: src, Journal: &relocate.Journal{Target: x.ID, ID: job.ID}}
 		if install {
 			mover.Install, mover.Parts = true, relocate.MoveParts
 		}
@@ -807,6 +814,12 @@ func (t meshTarget) Check(ctx context.Context, domain string, need relocate.Need
 func (t meshTarget) Ready(ctx context.Context, domain string) (bool, string, error) {
 	var site sites.Site
 	if err := t.do(ctx, "GET", "/sites/"+domain, nil, &site); err != nil {
+		// Said apart from a node that does not answer: a move put right
+		// after a restart undoes itself on the first and waits on the other.
+		var re *nodes.RemoteError
+		if errors.As(err, &re) && re.Status == http.StatusNotFound && !strings.Contains(re.Message, "no such route") {
+			return false, "", fmt.Errorf("%w: %s", relocate.ErrNotThere, re.Message)
+		}
 		return false, "", err
 	}
 	ok, why := SiteReady(site)

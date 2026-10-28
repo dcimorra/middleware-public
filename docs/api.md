@@ -586,6 +586,18 @@ A target that cannot publish every name the site has published here (no
 DNS provider for their zone there), or a site in a container and a target
 without a docker that answers, is refused before anything moves.
 
+From just before the stop until it ends, a move keeps a journal in
+`data/relocate/.moving/<site>.json`: the manifest the site had, the tasks
+it turned off, the target and how far it got. A restart of the house in
+the middle (an automatic update, a crash) is put right when it starts
+again, as a `recover` step of the same move: before the commit the site
+starts here again as it was, its tasks on, and the target throws away what
+it received; after it the target is asked whether the site answers there,
+and the move is finished (names, archive) or undone. A target that does
+not answer is asked again for an hour, the site staying stopped here
+(starting it without the target's word could run it on both nodes), and
+then the journal waits for the next start.
+
 | method | path | body / result |
 | --- | --- | --- |
 | POST | `/relocate/import-token` | the operator only: `{domain, base?}` → `{token, expires, domain, command}`; `base` is the address the V1 machine reaches this node at, by default this node's panel domain (400 when it has none: a node opened through another node's panel is reached through the mesh, which the V1 machine is not in; import into a node that has a domain and move the site afterwards); a token for importing that one site from a V1 house, valid two hours, and the command to run on the V1 machine (`middleware import`, downloaded at this house's version). The import packs the folder without `node_modules` and the site's HOME, stops the site in V1 (writing `disabled` into its V1 manifest), converts the manifest, commits it here with `install: true` (dependencies installed for this machine, with the Node the site asks for), and leaves V1 stopped; if it does not come up here, V1 is started again. Once it answers here its names are published on this node's door for new sites over what pointed at the old server (`POST /sites/{domain}/publish` with `over`, which the import token may ask for its own site), as a move between nodes does; without a DNS provider they stay `manual` |
@@ -594,7 +606,7 @@ without a docker that answers, is refused before anything moves.
 | POST | `/sites/{domain}/move` | `{node}` → the move (as `GET /sites/{domain}/move` says it); it goes on in the background, each step an event `relocate.<step>` |
 | GET | `/sites/{domain}/move/plan` | `?node=` → `{analysis: {bytes, files, installs: [{dir, command, lockfile}], node?, docker?, names?, outside_links?: [{path, target}], warnings}, node_pinned?, node?, check_error?, exports?}`: what moving the site would do, before it does it. Dependencies are found as `node_modules` beside a `package.json` in any folder; links that leave the site's folder are listed (they point at whatever is there on the target). `check_error` is the target saying it cannot take it, or an export that waits for the stop whose program is not where it runs; `exports` says of each such export whether it has worked here before or will be tried, at the move, while the site still serves (see the manifest's workers) |
 | GET | `/sites/{domain}/move` | → the site's last move from this node: `{id, domain, node, step, done, started, ended?, error?, steps: [{step, message, state, started, ended?, error?}], report?: {archive, down, first_bytes, last_bytes, dns}}`; `state` is `running`, `ok`, `failed` or `warn` (the names did not follow), and a failure's way back is its own step, `restore` |
-| GET | `/moves` | → every move from this node kept on disk (the last 50), the newest first; `?domain=` one site's. A move a restart cut is said as failed at the step it was in |
+| GET | `/moves` | → every move from this node kept on disk (the last 50), the newest first; `?domain=` one site's. A move a restart cut is put right when the house starts again (its journal, a `recover` step); one without a journal is said as failed at the step it was in |
 | POST | `/relocate/{domain}/check` | the receiving node, before anything moves: `{names, docker, tasks, volumes, ports}` (the names published where the site is; whether it runs in a container; its task files; the docker volumes its move fills here; its workers' written ports) → `{ok}`, or 409 when the name is a site here, this node cannot publish every one of those names, or the site runs in a container and this node has no docker that answers, a task name or one of those volumes is already here, or one of those ports is taken |
 | PUT | `/relocate/{domain}` | the receiving node: a site's bundle (`.tar.gz`) as the raw body → `{files, dirs, links, bytes}`; 409 when the name is a site here |
 | PUT | `/relocate/{domain}/delta` | the last copy: changed files and the index, laid over what was received |
