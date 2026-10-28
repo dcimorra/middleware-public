@@ -77,7 +77,11 @@ func (a *App) Run(ctx context.Context) error {
 	h = recoverer(a.Bus, h)
 	a.Handler = h
 	a.watchDiag(ctx)
-	go a.Engine.Run(ctx)
+	engineDone := make(chan struct{})
+	go func() {
+		defer close(engineDone)
+		a.Engine.Run(ctx)
+	}()
 	for _, hook := range a.Hooks {
 		if err := hook.Run(ctx, a); err != nil {
 			return err
@@ -87,16 +91,40 @@ func (a *App) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	srv := &http.Server{Handler: h, ReadHeaderTimeout: 15 * time.Second}
+	// Requests live under base, not under ctx: ctx ends with the SIGTERM,
+	// and every request in flight would be cut at that moment instead of
+	// drained. base ends StreamsCutAfter into the shutdown, so a handler
+	// that never returns by itself (the panel's event stream, a long
+	// poll) ends there and does not hold the shutdown for its whole
+	// timeout.
+	base, cancelBase := context.WithCancel(context.Background())
+	defer cancelBase()
+	srv := &http.Server{Handler: h, ReadHeaderTimeout: 15 * time.Second,
+		BaseContext: func(net.Listener) context.Context { return base }}
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdown, cancel := context.WithTimeout(context.Background(), ShutdownTimeout)
 		defer cancel()
+		cut := time.AfterFunc(StreamsCutAfter, cancelBase)
+		defer cut.Stop()
 		_ = srv.Shutdown(shutdown)
 	}()
 	a.Bus.Emit(events.Event{Type: "middleware.started", Actor: "engine", Data: map[string]any{"listen": ln.Addr().String()}})
 	log.Printf("listening on %s, root %s", ln.Addr(), a.Root)
 	err = srv.Serve(ln)
+	if errors.Is(err, http.ErrServerClosed) {
+		// Serve returns as soon as Shutdown is called, not when it is done.
+		// Returning then let main exit before a single request drained,
+		// with the engine halfway through a handover: a SIGTERM in its
+		// drain left the old generation running outside every state file
+		// (the unit's KillMode=process spares it), and one in its
+		// WaitReady orphaned the new one. Both are waited for now, and
+		// only then do the hooks write what they keep.
+		<-shutdownDone
+		<-engineDone
+	}
 	// Hooks that keep something in memory write it now, before Run
 	// returns: a goroutine left to do it on ctx.Done raced the process's
 	// exit (and a test's cleanup of its root).
@@ -110,6 +138,14 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	return nil
 }
+
+// The loopback server's shutdown: requests in flight get ShutdownTimeout to
+// finish, and those still running StreamsCutAfter into it see their
+// context end. Variables so a test need not wait them out.
+var (
+	ShutdownTimeout = 10 * time.Second
+	StreamsCutAfter = 5 * time.Second
+)
 
 // Stopper is a hook with something to write when the process stops.
 type Stopper interface{ Stop() }

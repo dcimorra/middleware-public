@@ -79,6 +79,14 @@ tick makes is never a second copy. After a binary upgrade the
 operator is told that adopted instances still carry the environment they were
 born with, and can roll them over with `middleware site restart --all`.
 
+What the supervisor leaves behind when it stops is always in a state file.
+On SIGTERM it stops accepting, gives the requests in flight up to 10s to
+finish (handlers that never end by themselves, such as the panel's event
+stream, are cut after 5s), and ends every handover in flight before it
+exits: one that has not switched yet stops its new generation, so the old one
+is what the next supervisor adopts; one that has switched cuts its drain short
+and stops the old generation.
+
 ## Runtimes
 
 `runtime.Runtime` is the interface; two implementations ship.

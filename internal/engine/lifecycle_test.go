@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -152,6 +153,104 @@ func TestASlowWorkerStartDoesNotStallLookups(t *testing.T) {
 	sn := waitFor(t, e, "slow.test", func(s Snapshot) bool { return s.Workers["api"].Alive })
 	if body, err := get(sn.Workers["api"].Port); err != nil || body != "w" {
 		t.Fatalf("the worker does not answer: %q %v", body, err)
+	}
+}
+
+// runEngine runs e until the returned stop is called, which returns once
+// Run has.
+func runEngine(e *Engine) (stop func() time.Duration) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { e.Run(ctx); close(done) }()
+	return func() time.Duration {
+		began := time.Now()
+		cancel()
+		<-done
+		return time.Since(began)
+	}
+}
+
+func readState(t *testing.T, e *Engine, key string) (runtime.State, bool) {
+	t.Helper()
+	data, err := os.ReadFile(e.statePath(key))
+	if err != nil {
+		return runtime.State{}, false
+	}
+	var st runtime.State
+	if err := json.Unmarshal(data, &st); err != nil {
+		t.Fatal(err)
+	}
+	return st, true
+}
+
+// A SIGTERM during a handover's drain, after the new generation's state was
+// written: Run returned at once and the process exited, and the old
+// generation went on running outside every state file, holding its port.
+// Run now ends the handover first: the drain is cut short and the old one
+// stopped.
+func TestAShutdownDuringTheDrainStopsTheOldGeneration(t *testing.T) {
+	g := &gatedRuntime{}
+	e, sites := newGatedEngine(t, g)
+	dir := filepath.Join(sites, "drain.test")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, ".current"), []byte("one\n"), 0o644)
+	m := fmt.Sprintf(`{"version":2,"run":{"command":[%q],"env":{"MW_TEST_SERVER":"1"},"env_from_file":{"BUILD":".current"},"drain":"60s","health":{"timeout":"10s"}}}`, os.Args[0])
+	os.WriteFile(filepath.Join(dir, "site.json"), []byte(m), 0o644)
+	stop := runEngine(e)
+	first := waitFor(t, e, "drain.test", func(s Snapshot) bool { return s.Alive })
+	os.WriteFile(filepath.Join(dir, ".current"), []byte("two\n"), 0o644)
+	waitFor(t, e, "drain.test", func(s Snapshot) bool { return s.Alive && s.Port != first.Port })
+	insts := g.instances()
+	if len(insts) != 2 {
+		t.Fatalf("%d instances started", len(insts))
+	}
+	old, next := insts[0], insts[1]
+	if d := stop(); d > 15*time.Second {
+		t.Fatalf("Run took %s to return: the drain was not cut short", d)
+	}
+	if !dead(old.State().PID) {
+		t.Fatal("Run returned with the old generation still running")
+	}
+	if !next.Alive() {
+		t.Fatal("the new generation did not outlive the supervisor")
+	}
+	if st, ok := readState(t, e, "drain.test"); !ok || st.PID != next.State().PID {
+		t.Fatalf("the state is not the new generation's: %+v %v", st, ok)
+	}
+}
+
+// A SIGTERM while the new generation is still getting ready: Run returned
+// at once and it was orphaned, running with no state file. Now it is
+// stopped, and the old one, still the one in the state file, is what the
+// next supervisor adopts.
+func TestAShutdownBeforeTheSwitchStopsTheNewGeneration(t *testing.T) {
+	g := &gatedRuntime{}
+	e, sites := newGatedEngine(t, g)
+	writeSite(t, sites, "ready.test", "one", "")
+	stop := runEngine(e)
+	waitFor(t, e, "ready.test", func(s Snapshot) bool { return s.Alive })
+	// The next generation takes its time to listen.
+	writeSite(t, sites, "ready.test", "two", `,"MW_TEST_SLOW_START":"30s"`)
+	deadline := time.Now().Add(10 * time.Second)
+	for len(g.instances()) < 2 && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	insts := g.instances()
+	if len(insts) != 2 {
+		t.Fatalf("%d instances started", len(insts))
+	}
+	old, next := insts[0], insts[1]
+	if d := stop(); d > 15*time.Second {
+		t.Fatalf("Run took %s to return", d)
+	}
+	if !dead(next.State().PID) {
+		t.Fatal("Run returned with the new generation running and in no state file")
+	}
+	if !old.Alive() {
+		t.Fatal("the old generation did not outlive the supervisor")
+	}
+	if st, ok := readState(t, e, "ready.test"); !ok || st.PID != old.State().PID {
+		t.Fatalf("the state is not the old generation's: %+v %v", st, ok)
 	}
 }
 

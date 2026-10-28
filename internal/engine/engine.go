@@ -54,7 +54,11 @@ type Engine struct {
 	aliases        map[string]string
 	aliasConflicts map[string]string // said once, until resolved
 	siteEnv        atomic.Pointer[SiteEnvFunc]
-	wg             sync.WaitGroup
+	// wg counts the work Run waits for on its way out. Every Add happens
+	// under mu, and none once closing is set, so an operator's restart
+	// that arrives during the shutdown cannot Add to a Wait in progress.
+	wg      sync.WaitGroup
+	closing bool
 }
 
 // Site is the engine's view of one folder.
@@ -138,6 +142,15 @@ func (e *Engine) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			// Every handover, start and stop in flight ends before Run
+			// returns, and the app waits for Run before the process exits:
+			// a SIGTERM in a handover's drain otherwise left the old
+			// generation running outside every state file, on its port,
+			// and one in its WaitReady orphaned the new one. Nothing new
+			// is started from here on (closing), so the Wait is final.
+			e.mu.Lock()
+			e.closing = true
+			e.mu.Unlock()
 			e.wg.Wait()
 			return
 		case <-t.C:
@@ -188,6 +201,10 @@ func (e *Engine) Restart(ctx context.Context, domain string) error {
 		e.mu.Unlock()
 		return fmt.Errorf("%s: a handover is already in progress", domain)
 	}
+	if e.closing {
+		e.mu.Unlock()
+		return fmt.Errorf("%s: the supervisor is shutting down", domain)
+	}
 	s.handing = true
 	spec := s.Spec
 	// The engine's own context, not the caller's: the restart was asked
@@ -195,11 +212,11 @@ func (e *Engine) Restart(ctx context.Context, domain string) error {
 	// it was cancelled halfway ("docker run: context canceled", twice in a
 	// row from `middleware site restart`).
 	run := e.runCtx
+	e.wg.Add(1)
 	e.mu.Unlock()
 	if run == nil {
 		run = context.Background()
 	}
-	e.wg.Add(1)
 	go e.handover(run, s, spec, "operator")
 	return nil
 }
@@ -277,7 +294,7 @@ func (e *Engine) tick(ctx context.Context) {
 			e.wg.Add(1)
 			go func() {
 				defer e.wg.Done()
-				_ = inst.Stop(ctx, 8*time.Second)
+				_ = inst.Stop(context.WithoutCancel(ctx), 8*time.Second)
 				e.opts.Ports.Release(inst.Port())
 			}()
 		}
@@ -340,7 +357,7 @@ func (e *Engine) reconcile(ctx context.Context, domain, dir string) {
 			if spec != nil {
 				drain = spec.Drain.Or(drain)
 			}
-			_ = inst.Stop(ctx, drain)
+			_ = inst.Stop(context.WithoutCancel(ctx), drain)
 			e.opts.Ports.Release(inst.Port())
 			e.clearState(domain)
 		}
@@ -401,7 +418,7 @@ func (e *Engine) reconcile(ctx context.Context, domain, dir string) {
 		// back to the allocator, and outside the lock, since a container
 		// takes a docker call or two. Nothing starts this tick anyway: the
 		// backoff is a second at least.
-		_ = exited.Stop(ctx, 2*time.Second)
+		_ = exited.Stop(context.WithoutCancel(ctx), 2*time.Second)
 		e.opts.Ports.Release(exited.Port())
 		return
 	}
@@ -429,6 +446,13 @@ func (e *Engine) reconcile(ctx context.Context, domain, dir string) {
 func (e *Engine) handover(ctx context.Context, s *Site, spec *manifest.Spec, actor string) {
 	defer e.wg.Done()
 	domain := s.Domain
+	// A shutdown cancels ctx, and the handover then ends one way or the
+	// other before Run returns: before the swap the new generation is
+	// stopped and the old one, still in its state file, is adopted by the
+	// next supervisor; after it the drain is cut short and the old one is
+	// stopped. Stops keep their grace either way: under ctx they would be
+	// a straight SIGKILL.
+	stopCtx := context.WithoutCancel(ctx)
 	rt, ok := e.opts.Runtimes[spec.Runtime]
 	if !ok {
 		e.fail(s, fmt.Errorf("runtime %q is not available", spec.Runtime))
@@ -448,7 +472,7 @@ func (e *Engine) handover(ctx context.Context, s *Site, spec *manifest.Spec, act
 		e.mu.Unlock()
 		if old != nil {
 			e.emit("instance.stopping", domain, "", "written port: stopping before starting the new generation", nil)
-			_ = old.Stop(ctx, 5*time.Second)
+			_ = old.Stop(stopCtx, 5*time.Second)
 			e.clearState(domain)
 		}
 	} else {
@@ -470,8 +494,16 @@ func (e *Engine) handover(ctx context.Context, s *Site, spec *manifest.Spec, act
 	}
 	timeout := spec.Health.Timeout.Or(60 * time.Second)
 	if err := runtime.WaitReady(ctx, inst, spec.Health, timeout); err != nil {
-		_ = inst.Stop(ctx, 2*time.Second)
+		_ = inst.Stop(stopCtx, 2*time.Second)
 		e.opts.Ports.Release(port)
+		if ctx.Err() != nil {
+			// Not the site's failure: nothing to count or back off from.
+			e.mu.Lock()
+			s.handing = false
+			e.mu.Unlock()
+			e.emit("handover.cancelled", domain, "", "the supervisor is stopping; the new generation was stopped before the switch", map[string]any{"revision": spec.Revision})
+			return
+		}
 		e.fail(s, fmt.Errorf("%w (last lines of the log: %s)", err, tail(logFile, 5)))
 		return
 	}
@@ -483,7 +515,7 @@ func (e *Engine) handover(ctx context.Context, s *Site, spec *manifest.Spec, act
 		// its port, with nothing left that would ever stop it.
 		s.handing = false
 		e.mu.Unlock()
-		_ = inst.Stop(ctx, 5*time.Second)
+		_ = inst.Stop(stopCtx, 5*time.Second)
 		e.opts.Ports.Release(port)
 		e.emit("instance.discarded", domain, "", "the site was removed or stopped while its new generation started; stopped it", map[string]any{"port": port, "revision": spec.Revision})
 		return
@@ -503,10 +535,17 @@ func (e *Engine) handover(ctx context.Context, s *Site, spec *manifest.Spec, act
 	}
 	e.opts.Bus.Emit(events.Event{Type: "handover.switched", Subject: domain, Actor: actor, Data: map[string]any{"from": old.Port(), "to": port, "revision": spec.Revision}})
 	drain := spec.Drain.Or(8 * time.Second)
-	time.Sleep(drain)
-	_ = old.Stop(ctx, 5*time.Second)
+	began := time.Now()
+	select {
+	case <-time.After(drain):
+	case <-ctx.Done():
+		// The supervisor's own server is draining its requests too, and a
+		// long drain would outlast what systemd waits for a stop, which
+		// then kills the supervisor with the old generation still running.
+	}
+	_ = old.Stop(stopCtx, 5*time.Second)
 	e.opts.Ports.Release(old.Port())
-	e.opts.Bus.Emit(events.Event{Type: "handover.done", Subject: domain, Actor: actor, Data: map[string]any{"drained": drain.String()}})
+	e.opts.Bus.Emit(events.Event{Type: "handover.done", Subject: domain, Actor: actor, Data: map[string]any{"drained": time.Since(began).Round(time.Millisecond).String()}})
 }
 
 func (e *Engine) fail(s *Site, err error) {
