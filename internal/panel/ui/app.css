@@ -1124,3 +1124,316 @@ svg.dash-spark .mem { stroke: var(--warn); stroke-dasharray: 3 2; }
 .house-live.idle > .muted { margin-left: auto; font-size: 12px; }
 .house-live.idle .asking { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .house-live.idle .asking a { padding: 1px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--text); text-decoration: none; font-size: 12.5px; }
+
+/* ---------- network and protection (ux review) ---------- */
+/* The overview, the doors, the WAF, the edge, the guard, dependencies and
+   repositories, drawn with the chat's calm (e93ed0a): soft rounded
+   surfaces, what matters large and what explains it quiet, one obvious
+   thing to press, and the rest folded until asked for. Every rule here
+   is scoped to a class only these screens use (np-), so the shared base
+   stays another screen's business. */
+
+/* On a touch screen nothing on these screens is under 40px to the
+   finger: the panel's small buttons are 26px, made for a mouse, and a
+   row of them in a table was a row of near misses on a phone. A narrow
+   screen counts as touch, as the panel's no-zoom rule does. */
+@media (pointer: coarse), (max-width: 860px) {
+  .np-page .btn, .np-page .btn.sm { min-height: 40px; }
+  .np-page .btn.sm { padding: 0 12px; font-size: 13.5px; }
+  .np-page .icon-btn { width: 40px; height: 40px; }
+  .np-page .switch { min-height: 40px; }
+  .np-page input[type="checkbox"] { width: 20px; height: 20px; }
+}
+
+/* A fold: a quiet line with a chevron that opens what explains or
+   configures what is above it. The browser's triangle is replaced so it
+   reads the same everywhere and can be as tall as a finger. */
+.np-fold > summary, .np-events > summary, .np-more > summary {
+  list-style: none; display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+  min-height: 32px; padding: 4px 8px 4px 2px; border-radius: 8px;
+  color: var(--text-2); font-size: 13px; font-weight: 500;
+}
+.np-fold > summary::-webkit-details-marker, .np-events > summary::-webkit-details-marker, .np-more > summary::-webkit-details-marker { display: none; }
+.np-fold > summary::before, .np-events > summary::before, .np-more > summary::before {
+  content: ""; flex: none; width: 6px; height: 6px; margin: 0 3px 0 2px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg); transition: transform var(--dur) ease;
+}
+.np-fold[open] > summary::before, .np-events[open] > summary::before, .np-more[open] > summary::before { transform: rotate(45deg); }
+.np-fold > summary:hover, .np-events > summary:hover, .np-more > summary:hover { color: var(--text); }
+.np-fold-body { padding: 6px 0 2px 19px; color: var(--text-2); font-size: 13px; max-width: 78ch; }
+.np-fold-body p { margin: 0 0 .7em; }
+.np-fold-body p:last-child { margin-bottom: 0; }
+@media (pointer: coarse), (max-width: 860px) {
+  .np-fold > summary, .np-events > summary, .np-more > summary { min-height: 40px; }
+}
+
+/* A node's seldom-used actions under "…", as the chat's are. */
+.np-menu { position: relative; flex: none; }
+.np-menu > summary { list-style: none; }
+.np-menu > summary::-webkit-details-marker { display: none; }
+.np-menu[open] > summary { background: var(--surface-2); color: var(--text); }
+.np-menu-list {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 15; min-width: 220px;
+  display: flex; flex-direction: column; padding: 4px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg);
+}
+.np-menu-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 0 10px;
+  border: 0; border-radius: 8px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; white-space: nowrap;
+}
+.np-menu-item:hover, .np-menu-item:focus-visible { background: var(--surface-2); }
+.np-menu-item .ico { color: var(--text-3); }
+.np-menu-item.danger, .np-menu-item.danger .ico { color: var(--bad); }
+@media (pointer: coarse), (max-width: 860px) { .np-menu-item { min-height: 44px; } }
+
+/* ---- the dashboard ---- */
+/* Nothing to do: one calm line in green, not an empty card. */
+.np-calm {
+  display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--ok) 7%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--ok) 22%, var(--border));
+}
+.np-calm-mark { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--ok-soft); color: var(--ok); }
+.np-calm > div { display: flex; flex-direction: column; min-width: 0; }
+.np-calm strong { font-size: 15px; font-weight: 600; }
+.np-calm > div > span { color: var(--text-2); font-size: 13px; }
+/* What needs attention: a row per thing, the whole row the way to it. */
+.np-attn { padding: 6px; }
+.np-attn > h2 { display: flex; align-items: center; gap: 8px; margin: 0; padding: 10px 10px 6px; }
+.np-count-pill { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 7px; border-radius: 999px; background: var(--surface-3); color: var(--text-2); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.np-attn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.np-attn-row {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; padding: 8px 10px;
+  border: 0; border-radius: 10px; background: none; color: var(--text); font: inherit; text-align: left;
+}
+button.np-attn-row { cursor: pointer; transition: background var(--dur); }
+button.np-attn-row:hover { background: var(--surface-2); }
+.np-attn-mark { flex: none; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); color: var(--text-2); }
+.np-attn-mark.bad { background: var(--bad-soft); color: var(--bad); }
+.np-attn-mark.warn { background: var(--warn-soft); color: var(--warn); }
+.np-attn-mark.info { background: var(--info-soft); color: var(--info); }
+.np-attn-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.np-attn-text strong { font-weight: 600; overflow-wrap: anywhere; }
+.np-attn-text strong .badge { margin-left: 8px; font-weight: 500; vertical-align: 1px; }
+.np-attn-text span { color: var(--text-2); font-size: 13px; overflow-wrap: anywhere; }
+.np-go { flex: none; color: var(--text-3); }
+/* The nodes: one fills the width, more share it. */
+.np-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 16px; }
+.np-node { gap: 14px; padding: 18px; }
+.np-node .dash-meta, .np-node .dash-tunnel { margin: -8px 0 0; font-size: 12.5px; color: var(--text-3); }
+.np-node .dash-tunnel { margin-top: -10px; }
+.np-node-down { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 10px; background: var(--bad-soft); overflow-wrap: anywhere; }
+.np-node-down > .ico { flex: none; color: var(--bad); margin-top: 1px; }
+.np-node-down .mono { color: var(--text-2); font-size: 12px; }
+.np-vitals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.np-vital { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 12px; background: var(--surface-2); min-width: 0; }
+.np-vital-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--text-2); }
+.np-vital-head strong { font-size: 22px; font-weight: 600; letter-spacing: -.02em; color: var(--text); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.np-vital.warn .np-vital-head strong { color: var(--warn); }
+.np-vital.bad .np-vital-head strong { color: var(--bad); }
+.np-vital .dash-bar { height: 6px; margin: 17px 0; }
+.np-vital-foot { font-size: 12px; color: var(--text-3); overflow-wrap: anywhere; }
+svg.np-spark { display: block; width: 100%; height: 40px; overflow: visible; }
+svg.np-spark .line { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+svg.np-spark .area { fill: var(--accent); fill-opacity: .12; stroke: none; }
+svg.np-spark.warn .line { stroke: var(--warn); }
+svg.np-spark.warn .area { fill: var(--warn); }
+svg.np-spark.bad .line { stroke: var(--bad); }
+svg.np-spark.bad .area { fill: var(--bad); }
+.np-node-sites { display: flex; align-items: center; gap: 10px; min-height: 44px; margin: -4px -8px; padding: 8px; border-radius: 10px; color: var(--text-2); }
+.np-node-sites:hover { background: var(--surface-2); text-decoration: none; }
+.np-node-sites > .ico:first-child { flex: none; color: var(--text-3); }
+.np-counts { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 2px 16px; font-size: 13.5px; }
+.np-count { white-space: nowrap; }
+.np-count b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.np-count.ok b { color: var(--ok); }
+.np-count.bad b { color: var(--bad); }
+.np-count.warn b { color: var(--warn); }
+.np-count.accent b { color: var(--accent); }
+.np-events { border-top: 1px solid var(--border); padding-top: 8px; margin-top: -2px; }
+.np-event-list { list-style: none; margin: 6px 0 2px; padding: 0 0 0 19px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.np-event-list li { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.np-event-list .dot { flex: none; transform: translateY(-1px); }
+.np-event-list .grow { min-width: 0; color: var(--text-2); overflow-wrap: anywhere; }
+.np-event-list strong { color: var(--text); font-weight: 550; }
+/* A node alone: how to link another, quietly, last. */
+.np-link-head { display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
+.np-link-icon { flex: none; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+.np-link-head > .grow { flex: 1 1 260px; min-width: 0; }
+.np-link h2 { margin: 2px 0 2px; }
+.np-link-head p { margin: 0; color: var(--text-2); font-size: 13.5px; }
+.card .np-fold:not(:first-child) { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--border); }
+@media (max-width: 640px) {
+  /* Three tiles side by side left a phone 90px each and cut every detail:
+     one under another, each a row with its line on the right. */
+  .np-vitals { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .np-vital { display: grid; grid-template-columns: minmax(0, 1fr) 40%; grid-template-areas: "head viz" "foot viz"; gap: 2px 14px; align-items: center; padding: 10px 12px; }
+  .np-vital-head { grid-area: head; justify-content: flex-start; gap: 10px; }
+  .np-vital-head strong { font-size: 18px; }
+  .np-vital > svg, .np-vital > .dash-bar { grid-area: viz; }
+  .np-vital .dash-bar { margin: 0; }
+  .np-vital-foot { grid-area: foot; }
+  .np-node { padding: 14px; }
+  .np-page .dash-totals { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .np-page .dash-totals .dash-stat { padding: 10px 12px; }
+  .np-link-head .actions { width: 100%; }
+  .np-link-head .actions .btn { flex: 1; }
+}
+
+/* ---- what these screens share ---- */
+/* More air between cards than the panel's 12px: these screens are long
+   lists of cards, and at 12px they read as one block. */
+.np-page .page-body > * + *, .np-stack > * + * { margin-top: 16px; }
+.np-page .page-body > :empty { margin-top: 0; }
+.np-card-head h2 { display: flex; align-items: center; gap: 8px; margin: 0; }
+.np-quiet { font-size: 13px; font-weight: 500; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.np-lead { margin: 0 0 14px; max-width: 80ch; color: var(--text-2); font-size: 13px; }
+.card.pad0 > .np-lead.card-pad { margin: 0; padding-top: 12px; padding-bottom: 12px; }
+/* Nothing to list: one quiet line, ticked. */
+.np-none { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--text-2); font-size: 13.5px; }
+.np-none > .ico { flex: none; color: var(--ok); }
+.card.pad0 > .np-card-head:has(+ .np-none) { border-bottom: 0; }
+.card.pad0 > .np-none.card-pad { padding-top: 0; padding-bottom: 16px; }
+/* An empty state inside a card, smaller than a page's. */
+.empty.np-empty { padding: 28px 16px 30px; }
+.empty.np-empty > .ico { width: 30px; height: 30px; margin-bottom: 6px; }
+.empty.np-empty > div { max-width: 52ch; margin: 0 auto; font-size: 13.5px; }
+/* The page's empty state sizes every icon in it, the button's too. */
+.empty.np-empty .btn .ico { width: 16px; height: 16px; margin: 0; color: inherit; stroke-width: 1.75; }
+.np-samples { padding: 4px 0 4px 19px; overflow-wrap: anywhere; }
+
+/* ---- inbound ---- */
+.np-doors { gap: 16px; margin-bottom: 0; align-items: start; }
+.np-door { display: flex; flex-direction: column; gap: 10px; padding: 18px; }
+.np-door-head { display: flex; align-items: center; gap: 10px; }
+.np-door-head h2 { flex: 1; min-width: 0; margin: 0; }
+.np-door-icon { flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: var(--surface-2); color: var(--text-3); transition: background var(--dur), color var(--dur); }
+.np-door.on .np-door-icon { background: var(--ok-soft); color: var(--ok); }
+.np-door-text { margin: 0; color: var(--text-2); font-size: 13px; }
+.np-door .checklist { margin: 0; }
+.np-door .np-fold { margin-top: 2px; }
+.np-local .form-row { grid-template-columns: minmax(0, 1fr); }
+.np-local pre.log.help { max-height: 260px; margin-top: 6px; }
+.np-check { display: inline-grid; place-items: center; width: 32px; height: 32px; margin: -6px; border-radius: 8px; cursor: pointer; }
+.np-check:hover { background: var(--surface-3); }
+.table th.np-check-cell, .table td.np-check-cell { width: 44px; }
+.np-move { display: inline-flex; align-items: center; gap: 8px; }
+.np-route { color: var(--text-3); overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  /* A domain on a phone: its box on the left, the name, then door, DNS,
+     publication and certificate flowing on as short chips rather than
+     four labelled lines each. */
+  .np-domains .table.responsive tr { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 12px 14px 12px 56px; }
+  .np-domains .table.responsive td { padding: 0; }
+  .np-domains .table.responsive td.primary { flex: 1 0 100%; padding: 0; }
+  .np-domains .table.responsive td.np-check-cell { position: absolute; left: 10px; top: 6px; width: auto; }
+  .np-domains .table.responsive td.np-check-cell .np-check { width: 40px; height: 40px; margin: 0; }
+  .np-domains .table.responsive td.right { flex: 1 0 100%; text-align: left; }
+  .np-domains .table.responsive td.right:empty { display: none; }
+}
+
+/* ---- the VPN card ---- */
+.np-vpn { display: flex; flex-direction: column; gap: 12px; }
+.np-vpn > .notice { margin: 0; }
+.np-vpn > .np-sub-head { margin: 4px 0 -4px; }
+.np-sub-head h3 { margin: 0; }
+.np-vpn > .table-wrap { border: 1px solid var(--border); border-radius: 10px; }
+.np-vpn > .empty.np-empty { border: 1px dashed var(--border-strong); border-radius: 12px; }
+.np-vpn-only { margin: 0; padding-top: 14px; border-top: 1px solid var(--border); }
+
+/* ---- the WAF ---- */
+.np-attack { padding: 16px 18px; transition: background var(--dur), border-color var(--dur); }
+.np-attack.on { background: color-mix(in srgb, var(--warn) 9%, var(--surface)); border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); }
+.np-attack.on .np-link-icon { background: var(--warn-soft); color: var(--warn); }
+.np-attack-switch { align-self: center; }
+.np-figures { display: flex; flex-wrap: wrap; gap: 8px 36px; margin: 4px 0 14px; }
+.np-figure { display: flex; flex-direction: column; min-width: 0; }
+.np-figure strong { font-size: 24px; font-weight: 600; letter-spacing: -.02em; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.np-figure span { font-size: 12.5px; color: var(--text-3); }
+/* The busiest second is a figure above the chart; the chart's own peak
+   label sat on top of the line it labelled. */
+.np-page .spark-wrap .peak { display: none; }
+.np-traffic-split { gap: 24px; margin-top: 4px; }
+.np-traffic-split h3 { margin: 6px 0 8px; }
+.np-row-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.np-row-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+@media (max-width: 1180px) { .np-row-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.np-row-hint { margin: -4px 0 12px; max-width: 80ch; }
+.np-fold-form { font-size: 14px; color: var(--text); max-width: none; }
+.np-fold-body.np-fold-form { padding-top: 12px; }
+.card > .np-h3, .np-h3 { margin: 20px 0 8px; }
+.card.pad0 > .np-sub-card-head { border-top: 1px solid var(--border); }
+/* ---- the edge ---- */
+.np-search { display: flex; gap: 8px; align-items: stretch; }
+.np-search input { flex: 1; min-height: 40px; border-radius: 10px; padding-left: 12px; }
+.np-search .btn { min-height: 40px; border-radius: 10px; }
+.np-results:not(:empty) { margin-top: 14px; }
+.np-results .table-wrap { border: 1px solid var(--border); border-radius: 10px; }
+.np-zone { width: auto; max-width: 260px; }
+.np-row-actions { display: inline-flex; gap: 2px; }
+.icon-btn.np-danger { color: var(--bad); }
+.icon-btn.np-danger:hover { background: var(--bad-soft); color: var(--bad); }
+.np-wrap { overflow-wrap: anywhere; }
+.np-perms { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 12px; }
+.np-perms-label { font-weight: 600; margin-right: 4px; }
+/* A card that is all fold: its title is the summary. */
+.np-fold-card > summary { display: flex; width: 100%; gap: 10px; padding: 0; min-height: 40px; margin: -8px 0; color: var(--text); }
+.np-fold-title { font-size: 15px; font-weight: 600; }
+.np-fold-card > summary .np-quiet { margin-left: auto; }
+.np-fold-card .np-fold-body { padding-left: 0; padding-top: 10px; }
+.np-prices-foot { margin-top: 10px; }
+
+@media (max-width: 760px) {
+  .np-row-4, .np-row-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .np-zone { flex: 1 1 100%; max-width: none; order: 3; }
+  .np-figures { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .np-figure strong { font-size: 20px; }
+  .np-figure span { font-size: 12px; }
+}
+
+/* ---- lists of sentences: incidents, repositories ---- */
+.np-list { list-style: none; margin: 0; padding: 0; }
+.np-list > li { display: flex; gap: 14px; align-items: flex-start; padding: 14px 16px; }
+.np-list > li + li { border-top: 1px solid var(--border); }
+.np-inc-main, .np-repo-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.np-inc-title, .np-repo-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.np-inc-title a, .np-repo-title a { font-weight: 600; }
+.np-inc-title code { font-size: 12.5px; color: var(--text-2); }
+.np-inc-where { align-self: flex-start; max-width: 100%; padding: 6px 10px; border-radius: 8px; background: var(--surface-2); color: var(--text-2); font-size: 12.5px; overflow-wrap: anywhere; }
+.np-inc-action { font-size: 13px; color: var(--text-2); }
+.np-inc-side, .np-repo-side { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.card > h2 > .np-quiet { margin-left: 8px; }
+/* The rules, grouped by what happens when one fires. */
+.np-rule-group + .np-rule-group { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+.card .np-rule-group h3 { display: flex; align-items: center; gap: 10px; margin: 6px 0 4px; font-size: 14px; color: var(--text); text-transform: none; letter-spacing: 0; }
+.np-rule-group .np-lead { margin-bottom: 10px; }
+.np-rules { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 20px; font-size: 13.5px; }
+.np-rules li { display: contents; }
+.np-rules code { padding-top: 1px; color: var(--text-2); }
+/* Dependencies. */
+.np-verdict { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: var(--radius-lg); font-weight: 550;
+  background: color-mix(in srgb, var(--bad) 7%, var(--surface)); border: 1px solid color-mix(in srgb, var(--bad) 30%, var(--border)); }
+.np-clean { color: var(--ok); }
+.status.np-clean { font-size: 13px; }
+.np-advisories, .np-commits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.np-advisories li, .np-commits li { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }
+.np-advisories li > div { min-width: 0; overflow-wrap: anywhere; }
+.np-commits { gap: 8px; font-size: 13px; }
+.np-commits li { align-items: baseline; }
+.np-commits li > span { min-width: 0; overflow-wrap: anywhere; }
+/* Repositories. */
+.np-repo.failing { box-shadow: inset 3px 0 0 var(--bad); }
+.np-branch { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2); font-family: var(--mono); font-size: 12px; }
+.np-repo-commit { font-size: 13.5px; overflow-wrap: anywhere; }
+.np-repo-commit code { color: var(--text-2); }
+.np-repo-remote { font-size: 12px; color: var(--text-3); overflow-wrap: anywhere; }
+.np-repo-line { font-size: 12.5px; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .np-inc { flex-wrap: wrap; }
+  .np-inc-side { flex-direction: row; align-items: center; justify-content: space-between; width: 100%; padding-left: 46px; }
+  .np-rules { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .np-rules span { margin-bottom: 10px; }
+  .np-repo { flex-direction: column; gap: 12px; }
+  .np-repo-side { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; width: 100%; }
+}

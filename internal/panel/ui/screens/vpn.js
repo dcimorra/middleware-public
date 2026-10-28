@@ -31,20 +31,28 @@ function download(name, text) {
 
 // vpnCard is the Inbound screen's VPN card.
 export function vpnCard() {
-  const el = h("div", { class: "card" });
+  const el = h("div", { class: "card np-vpn" });
+  // The head reads like the doors' above it: a mark, the name, and what
+  // it is in a line; off, the way to turn it on sits right beside.
+  const head = (text, ...side) => h("div", { class: "np-link-head" },
+    h("span", { class: "np-link-icon" }, icon("lock")),
+    h("div", { class: "grow" }, h("h2", null, t("vpn.title")), h("p", null, text)),
+    side.length ? h("div", { class: "actions" }, ...side) : null);
   async function load() {
     const st = await vpnStatus();
-    clear(el).append(h("h2", null, t("vpn.title")));
+    clear(el);
     if (!st || !st.enabled) {
-      el.append(h("p", { class: "small muted" }, t("vpn.off")), h("a", { class: "btn", href: "#/modules" }, t("vpn.enableIt")));
+      el.classList.add("off");
+      el.append(head(t("vpn.off"), h("a", { class: "btn", href: "#/modules" }, t("vpn.enableIt"))));
       return;
     }
-    el.append(h("p", { class: "small muted" }, t("vpn.on", { endpoint: st.endpoint || "—", address: st.address || "—" })));
+    el.classList.remove("off");
+    el.append(head(t("vpn.on", { endpoint: st.endpoint || "—", address: st.address || "—" })));
     if (st.error) el.append(notice("bad", st.error));
     if (!st.helper) el.append(notice("warn", t("vpn.noHelper")));
     else if (!st.up) el.append(notice("bad", t("vpn.down")));
 
-    const add = h("button", { type: "button", class: "btn primary" }, icon("plus"), t("vpn.addDevice"));
+    const add = h("button", { type: "button", class: "btn" }, icon("plus"), t("vpn.addDevice"));
     add.addEventListener("click", addDevice);
     const peers = st.peers || [];
     const rows = peers.map((p) => {
@@ -60,10 +68,18 @@ export function vpnCard() {
         cell(`${fmtBytes(p.rx || 0)} / ${fmtBytes(p.tx || 0)}`, t("vpn.traffic"), "num mono"),
         cell(del, null, "right"));
     });
+    let devices;
+    if (rows.length) devices = table([{ label: t("vpn.device") }, { label: t("vpn.address") }, { label: t("vpn.seen") }, { label: t("vpn.traffic"), class: "num" }, { label: "" }], rows, { responsive: true }).el;
+    else {
+      // With no device the VPN reaches nobody: adding one is the thing to
+      // do here, and the empty state says so with the button in it.
+      add.classList.add("primary");
+      devices = empty(t("vpn.noDevices"), t("vpn.noDevicesHint"), add, "lock");
+      devices.classList.add("np-empty");
+    }
     el.append(
-      h("div", { class: "log-bar" }, h("h3", { class: "grow" }, t("vpn.devices")), add),
-      rows.length ? table([{ label: t("vpn.device") }, { label: t("vpn.address") }, { label: t("vpn.seen") }, { label: t("vpn.traffic"), class: "num" }, { label: "" }], rows, { responsive: true }).el
-        : empty(t("vpn.noDevices"), t("vpn.noDevicesHint")));
+      h("div", { class: "log-bar np-sub-head" }, h("h3", { class: "grow" }, t("vpn.devices")), rows.length ? add : null),
+      devices);
 
     // The panel inside the VPN. Refused with no device: nobody could
     // reach it then. SSH to the machine stays the way back.
@@ -79,8 +95,8 @@ export function vpnCard() {
     // In a network the switch is the network's: it closes or opens every
     // node's panel, and says so.
     const net = store.get("nodes");
-    el.append(h("hr"), h("div", { class: "field" }, only.el, h("p", { class: "small muted" }, t("vpn.panelOnlyHint")),
-      net && net.network ? h("p", { class: "small" }, t("vpn.panelOnlyNetwork")) : null));
+    el.append(h("div", { class: "field np-vpn-only" }, only.el, h("p", { class: "hint" }, t("vpn.panelOnlyHint")),
+      net && net.network ? h("p", { class: "hint" }, t("vpn.panelOnlyNetwork")) : null));
   }
 
   async function addDevice() {
