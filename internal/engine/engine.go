@@ -533,8 +533,10 @@ func (e *Engine) adoptAll(ctx context.Context) {
 		}
 		// Written again: the adopted state may know more than the file did
 		// (a container's id, recorded since the guard measures containers
-		// by it), and a state left as it was would never learn it.
-		if fresh := inst.State(); fresh.ContainerID != st.ContainerID {
+		// by it; a process's start tick and boot, recorded since a clock
+		// step made every adoption fail), and a state left as it was would
+		// never learn it.
+		if fresh := inst.State(); fresh.ContainerID != st.ContainerID || fresh.StartTicks != st.StartTicks || fresh.BootID != st.BootID {
 			e.saveState(fresh)
 		}
 		if strings.Contains(st.Domain, "/") {
@@ -547,8 +549,14 @@ func (e *Engine) adoptAll(ctx context.Context) {
 			continue
 		}
 		if err := runtime.WaitReady(ctx, inst, manifest.Health{}, 3*time.Second); err != nil {
-			// Alive but not listening: a zombie or something else on that pid.
+			// The runtime has confirmed it is the process that was started,
+			// so alive but not listening is ours and broken (hung, or it
+			// closed its socket). It used to be forgotten and left running:
+			// the next tick started a second copy, and the first one held
+			// whatever it held for good, outside every state file.
+			_ = inst.Stop(ctx, 5*time.Second)
 			e.clearState(st.Domain)
+			e.emit("instance.stopped", st.Domain, "warn", "still running from a previous supervisor but not listening; stopped", map[string]any{"pid": st.PID, "port": st.Port})
 			continue
 		}
 		e.opts.Ports.Reserve(st.Port, st.Domain)

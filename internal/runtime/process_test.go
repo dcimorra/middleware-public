@@ -93,6 +93,59 @@ func TestAReusedPidIsNotAdopted(t *testing.T) {
 	}
 }
 
+// A clock stepped after the start (NTP's first sync, a VM resumed) moves
+// the boot time /proc/stat reports, and with it every start time computed
+// from it. The kernel's own count does not move: a process recorded by its
+// start tick and boot id is adopted whatever the wall clock says now, and
+// a different tick or boot is still a stranger.
+func TestAdoptionSurvivesAClockStep(t *testing.T) {
+	dir := t.TempDir()
+	spec := &manifest.Spec{Domain: "a.test", SiteDir: dir, Cwd: dir, Command: []string{"/bin/sh", "-c", "exec sleep 300"}, Env: map[string]string{}, Revision: "r1"}
+	inst, err := Process{}.Start(context.Background(), spec, 45997, filepath.Join(dir, "out.log"), filepath.Join(dir, "home"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Stop(context.Background(), time.Second)
+	st := inst.State()
+	if st.StartTicks == 0 || st.BootID == "" {
+		t.Skip("no start ticks or boot id in /proc")
+	}
+	// The clock jumped an hour since the start.
+	st.StartedAt = st.StartedAt.Add(-time.Hour)
+	adopted, err := Process{}.Adopt(context.Background(), st)
+	if err != nil {
+		t.Fatalf("the process that was started was not adopted after a clock step: %v", err)
+	}
+	if got := adopted.State(); got.StartTicks != st.StartTicks || got.BootID != st.BootID {
+		t.Fatalf("the adopted state lost its identity: %+v", got)
+	}
+	other := st
+	other.StartTicks++
+	if _, err := (Process{}).Adopt(context.Background(), other); err != ErrGone {
+		t.Fatalf("a pid with another start tick was adopted: %v", err)
+	}
+	other = st
+	other.BootID = "00000000-0000-0000-0000-000000000000"
+	if _, err := (Process{}).Adopt(context.Background(), other); err != ErrGone {
+		t.Fatalf("a pid from another boot was adopted: %v", err)
+	}
+	// A state from before the identity was recorded keeps the old check,
+	// and learns its identity when it passes.
+	old := st
+	old.StartTicks, old.BootID = 0, ""
+	if _, err := (Process{}).Adopt(context.Background(), old); err != ErrGone {
+		t.Fatalf("an old state an hour off was adopted: %v", err)
+	}
+	old.StartedAt = old.StartedAt.Add(time.Hour)
+	adopted, err = Process{}.Adopt(context.Background(), old)
+	if err != nil {
+		t.Fatalf("an old state that matches was not adopted: %v", err)
+	}
+	if got := adopted.State(); got.StartTicks != st.StartTicks || got.BootID != st.BootID {
+		t.Fatalf("an old state did not learn its identity: %+v", got)
+	}
+}
+
 // A site whose command is `node` starts with the Node it was given, found
 // by the child's PATH and not the supervisor's.
 func TestASiteThatSaysNodeRunsWithTheNodeItWasGiven(t *testing.T) {

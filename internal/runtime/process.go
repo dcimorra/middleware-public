@@ -30,9 +30,13 @@ type procInstance struct {
 	domain   string
 	logFile  string
 	started  time.Time
-	adopted  bool
-	done     chan error
-	once     sync.Once
+	// ticks and boot are the process's identity (State.StartTicks and
+	// State.BootID): what a later supervisor compares before adopting.
+	ticks   uint64
+	boot    string
+	adopted bool
+	done    chan error
+	once    sync.Once
 }
 
 // Start implements Runtime. The child gets its own process group so Stop
@@ -77,6 +81,10 @@ func (Process) Start(ctx context.Context, spec *manifest.Spec, port int, logFile
 		return nil, err
 	}
 	p := &procInstance{cmd: cmd, pid: cmd.Process.Pid, port: port, revision: spec.Revision, domain: spec.Domain, logFile: logFile, started: time.Now(), done: make(chan error, 1)}
+	// Read before Wait can reap the child: its stat stays until then,
+	// even if it has already exited.
+	p.ticks, _ = startTicks(p.pid)
+	p.boot = bootID()
 	go func() {
 		err := cmd.Wait()
 		p.done <- err
@@ -93,16 +101,34 @@ func (Process) Adopt(ctx context.Context, st State) (Instance, error) {
 		return nil, ErrGone
 	}
 	// A pid is reused after a reboot or a long uptime. Adopting a stranger
-	// would mean killing it on the next restart, so the process's start
-	// time must match the one recorded when it was started.
-	if !st.StartedAt.IsZero() {
+	// would mean killing it on the next restart, so the process must be
+	// the one recorded when it was started: the same boot and the same
+	// start tick, both counted by the kernel and untouched by the wall
+	// clock. Only a state written before those were recorded is checked
+	// by wall-clock time, which a clock step defeats (see State).
+	ticks, haveTicks := startTicks(st.PID)
+	boot := bootID()
+	if st.StartTicks != 0 && st.BootID != "" {
+		if boot != "" && boot != st.BootID {
+			return nil, ErrGone
+		}
+		if haveTicks && ticks != st.StartTicks {
+			return nil, ErrGone
+		}
+	} else if !st.StartedAt.IsZero() {
 		if began, ok := processStart(st.PID); ok {
 			if d := began.Sub(st.StartedAt); d > 10*time.Second || d < -10*time.Second {
 				return nil, ErrGone
 			}
 		}
 	}
-	p := &procInstance{pid: st.PID, port: st.Port, revision: st.Revision, domain: st.Domain, logFile: st.LogFile, started: st.StartedAt, adopted: true, done: make(chan error, 1)}
+	p := &procInstance{pid: st.PID, port: st.Port, revision: st.Revision, domain: st.Domain, logFile: st.LogFile, started: st.StartedAt, adopted: true, done: make(chan error, 1),
+		ticks: st.StartTicks, boot: st.BootID}
+	if p.ticks == 0 || p.boot == "" {
+		// An older state that passed the old check learns its identity
+		// here, so its next adoption no longer depends on the clock.
+		p.ticks, p.boot = ticks, boot
+	}
 	go func() {
 		for pidAlive(p.pid) {
 			time.Sleep(time.Second)
@@ -122,7 +148,8 @@ func (p *procInstance) Done() <-chan error { return p.done }
 func (p *procInstance) Alive() bool        { return pidAlive(p.pid) }
 
 func (p *procInstance) State() State {
-	return State{Domain: p.domain, Runtime: "process", Port: p.port, Revision: p.revision, PID: p.pid, LogFile: p.logFile, StartedAt: p.started}
+	return State{Domain: p.domain, Runtime: "process", Port: p.port, Revision: p.revision, PID: p.pid, LogFile: p.logFile, StartedAt: p.started,
+		StartTicks: p.ticks, BootID: p.boot}
 }
 
 // Stop sends SIGTERM to the whole group, waits up to grace, then SIGKILL.
@@ -179,25 +206,53 @@ func isZombie(pid int) bool {
 	return data[i+2] == 'Z'
 }
 
-// processStart is when pid started, from /proc/<pid>/stat field 22 (clock
-// ticks since boot) and the boot time in /proc/stat. USER_HZ is 100 on
-// every Linux the house runs on; the 10 s tolerance above absorbs the rest.
-func processStart(pid int) (time.Time, bool) {
+// statFields is /proc/<pid>/stat from field 3 (the state) on. What comes
+// before is the command name in parentheses, which may hold spaces and
+// parentheses of its own, so the split starts after the last ')'.
+func statFields(pid int) ([]string, bool) {
 	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
 	if err != nil {
-		return time.Time{}, false
+		return nil, false
 	}
 	i := strings.LastIndexByte(string(data), ')')
 	if i < 0 {
-		return time.Time{}, false
+		return nil, false
 	}
-	fields := strings.Fields(string(data[i+1:]))
-	// fields[0] is the state (field 3), so starttime (field 22) is [19].
-	if len(fields) < 20 {
-		return time.Time{}, false
+	return strings.Fields(string(data[i+1:])), true
+}
+
+// startTicks is when pid started, in clock ticks since boot: field 22 of
+// /proc/<pid>/stat, and fields[0] is field 3, so it is [19].
+func startTicks(pid int) (uint64, bool) {
+	fields, ok := statFields(pid)
+	if !ok || len(fields) < 20 {
+		return 0, false
 	}
-	ticks, err := strconv.ParseInt(fields[19], 10, 64)
+	ticks, err := strconv.ParseUint(fields[19], 10, 64)
 	if err != nil {
+		return 0, false
+	}
+	return ticks, true
+}
+
+// bootID is the kernel's id for this boot: new at every boot and never
+// moved by the clock. "" where it cannot be read.
+func bootID() string {
+	data, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// processStart is when pid started, from its start ticks and the boot time
+// in /proc/stat. USER_HZ is 100 on every Linux the house runs on; the 10 s
+// tolerance in Adopt absorbs the rest. Only states written before
+// StartTicks existed are checked with it, because that boot time moves
+// with the clock.
+func processStart(pid int) (time.Time, bool) {
+	ticks, ok := startTicks(pid)
+	if !ok {
 		return time.Time{}, false
 	}
 	stat, err := os.ReadFile("/proc/stat")

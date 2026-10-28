@@ -70,8 +70,12 @@ and `TestHandoverDropsNoRequests` is what keeps it honest.
 
 Sites outlive the supervisor. The unit has `KillMode=process`, so a restart of
 `middleware` leaves every site running. On boot the engine reads
-`data/state/<domain>.json`, checks the pid is alive and the port is listening,
-and adopts the instance without restarting it. After a binary upgrade the
+`data/state/<domain>.json`, checks the pid is alive and is the process that
+was started (the same boot id and the same start tick in `/proc`, which a step
+of the wall clock does not move), checks the port is listening, and adopts the
+instance without restarting it. A pid that is someone else now is forgotten;
+one that is ours but no longer listens is stopped, so the fresh start the next
+tick makes is never a second copy. After a binary upgrade the
 operator is told that adopted instances still carry the environment they were
 born with, and can roll them over with `middleware site restart --all`.
 
