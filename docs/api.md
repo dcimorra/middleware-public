@@ -570,6 +570,10 @@ as it was. Only once it answers there are its names published on that
 node over the records that pointed here (`over`, which only a node may
 ask), and only then does this node take its own route down. The copy here
 is archived, not deleted (`data/archive/`), so going back is a restore.
+A move is given in all what its steps may take by the site's manifest
+(each `move` command's `timeout`, the install there, the wait for the
+site) and an hour for the copies; once the site answers there, pointing
+its names and archiving the copy here have their own time.
 Each step is a `relocate.*` event (`copy`, `stop`, `final`, `commit`,
 `start`, `dns`, `cleanup`, `done`, or `failed` with the step it failed at).
 What does not go: its logs (this machine's), the tasks under `tasks/` that

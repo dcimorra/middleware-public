@@ -444,9 +444,10 @@ func (s *Server) registerRelocateSource(m *nodes.Mesh) {
 			mover.Install, mover.Parts = true, relocate.MoveParts
 		}
 		go func() {
-			// A move outlives the request that asked for it: an hour for a
-			// big site over a slow link.
-			ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+			// A move outlives the request that asked for it, for as long as
+			// its steps may take by the site's manifest (Budget): a fixed
+			// hour was less than its own export and import allowed.
+			ctx, cancel := context.WithTimeout(context.Background(), mover.Budget(domain))
 			defer cancel()
 			rep, err := mover.Move(ctx, domain, meshTarget{m: m, x: x}, func(step, msg string) {
 				s.advance(job, step, msg)

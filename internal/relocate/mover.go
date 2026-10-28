@@ -360,36 +360,91 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	}
 	rep.Down = time.Since(stopped).Round(time.Second)
 
-	// The site answers there. Its names move now, and only then does
-	// this node take its own route down: the other order would leave the
-	// names pointing at nothing.
+	if err := m.settle(ctx, domain, t, original, &rep, progress); err != nil {
+		return rep, err
+	}
+	progress(StepDone, fmt.Sprintf("%s runs on %s; it was down %s", domain, t.Name(), rep.Down))
+	return rep, nil
+}
+
+// settle ends a move whose site answers there: its names follow, the
+// target forgets how to take it out, and the copy here is archived. Each
+// on its own time, not the move's: the site already runs there, and a
+// move whose time ran out in these last steps left its names pointing
+// here and its folder half packed.
+func (m *Mover) settle(ctx context.Context, domain string, t Target, original []byte, rep *Report, progress func(step, msg string)) error {
+	own := context.WithoutCancel(ctx)
+	// Its names move now, and only then does this node take its own route
+	// down: the other order would leave the names pointing at nothing.
 	if door, ok := m.Source.Published(domain); ok {
 		progress(StepDNS, "pointing its names at "+t.Name())
-		if err := t.Publish(ctx, domain, door); err != nil {
+		pctx, cancel := context.WithTimeout(own, 5*time.Minute)
+		if err := t.Publish(pctx, domain, door); err != nil {
 			// It runs there; the names did not follow. Said, not undone:
 			// the target's own loop keeps trying, and this node keeps its
 			// records until it does.
 			rep.DNS = "the names were not moved: " + err.Error()
 		} else {
-			m.Source.Unpublish(ctx, domain)
+			m.Source.Unpublish(pctx, domain)
 			rep.DNS = "moved"
 		}
+		cancel()
 	}
 
 	if f, ok := t.(Finisher); ok {
 		// It stays there: the target forgets how to take it out. A target
 		// that does not answer keeps the record, which takes nothing out
 		// while the site is there.
-		_ = f.Finish(ctx, domain)
+		fctx, cancel := context.WithTimeout(own, time.Minute)
+		_ = f.Finish(fctx, domain)
+		cancel()
 	}
 	progress(StepCleanup, "archiving the copy that stays here")
-	path, err := m.Source.Archive(ctx, domain, original)
+	// Unbounded: packing a site of gigabytes takes what it takes, and
+	// cutting it leaves the folder here instead of in the archive.
+	path, err := m.Source.Archive(own, domain, original)
 	if err != nil {
-		return rep, fmt.Errorf("moved and running on %s, but the copy here could not be archived: %w", t.Name(), err)
+		return fmt.Errorf("moved and running on %s, but the copy here could not be archived: %w", t.Name(), err)
 	}
 	rep.Archive = path
-	progress(StepDone, fmt.Sprintf("%s runs on %s; it was down %s", domain, t.Name(), rep.Down))
-	return rep, nil
+	return nil
+}
+
+// Budget is the time a move of domain is given in all, for a caller that
+// runs it in the background: what its steps are each bounded by, added
+// up, and an hour for the copies, which nothing else bounds. A fixed hour
+// for all of it was less than what a site with a database may take by
+// its own manifest (an export of 30 minutes, then an import of as much
+// there, the worker's start and the wait for the site), and a move cut
+// there is undone after the site was stopped for nothing.
+func (m *Mover) Budget(domain string) time.Duration {
+	ready := m.ReadyWait
+	if ready == 0 {
+		ready = 3 * time.Minute
+	}
+	// The copies and the questions; the wait for the site, before and
+	// after the target's AI looks at it (ten minutes at most).
+	b := time.Hour + 2*ready + 10*time.Minute
+	if m.Install {
+		// The install there (30 minutes at most), and the one at the
+		// commit an older house does instead (15).
+		b += 45 * time.Minute
+	}
+	dir := filepath.Join(m.Root, "sites", domain)
+	if m.Dir != "" {
+		dir = m.Dir
+	}
+	planned := m.plannedManifest(domain, dir)
+	if planned == nil {
+		return b
+	}
+	for _, name := range MovingWorkers(planned) {
+		t := moveTimeout(planned.Workers[name].Move)
+		// Its export tried before the stop and run for the move, its
+		// import there, the wait for it to be ready, and its start.
+		b += 3*t + readyTime + 5*time.Minute
+	}
+	return b
 }
 
 // PartsFor is what a move of domain copies: the source's parts, less what
