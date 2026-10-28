@@ -226,6 +226,95 @@ func TestDeploysOfOneSiteRunOneAtATime(t *testing.T) {
 	}
 }
 
+// makeRepoWithManifest builds a bare repo whose main branch ships its own
+// site.json (and a trivial build.sh), standing for a repository that would
+// replace the local manifest on checkout.
+func makeRepoWithManifest(t *testing.T, shipped *manifest.Manifest) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	base := t.TempDir()
+	// A domain-named folder so manifest.Save's CheckInside is happy with a
+	// run/workers manifest.
+	work := filepath.Join(base, "app.test")
+	bare := filepath.Join(base, "origin.git")
+	os.MkdirAll(work, 0o755)
+	git(t, base, "init", "-q", "--bare", bare)
+	git(t, work, "init", "-q")
+	if err := manifest.Save(work, shipped); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(work, "build.sh"), []byte("#!/bin/sh\ntrue\n"), 0o755)
+	git(t, work, "add", ".")
+	git(t, work, "commit", "-q", "-m", "first")
+	git(t, work, "remote", "add", "origin", bare)
+	git(t, work, "push", "-q", "origin", "main")
+	return bare
+}
+
+// A disabled site is a decision; a push must not revive it. The deploy is
+// skipped before anything is fetched or built.
+func TestADeployOfADisabledSiteIsSkipped(t *testing.T) {
+	bare := makeRepo(t, "#!/bin/sh\ntrue\n")
+	m := &manifest.Manifest{Version: 2, Disabled: true,
+		Run:    &manifest.Run{Command: []string{"./server"}},
+		Deploy: &manifest.Deploy{GitHub: &manifest.GitHubDeploy{Repository: "acme/app", Build: [][]string{{"./build.sh"}}}}}
+	root, dir := makeSite(t, m)
+	r, bus := newRunner(root, bare, nil)
+	st, err := r.Run(context.Background(), "app.test", dir, m, "github:someone", FromGitHub)
+	if err != nil {
+		t.Fatalf("a skip is not an error: %v", err)
+	}
+	if st.Status != "skipped" {
+		t.Fatalf("status: %+v", st)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+		t.Fatal("a disabled site was fetched")
+	}
+	if got := eventTypes(bus); got != "deploy.skipped" {
+		t.Fatalf("events: %s", got)
+	}
+}
+
+// A checkout that ships the repository's own site.json must not drop the
+// operator's and the guard's decisions: a hold, a stopped worker and
+// under-attack mode survive the deploy even though the repository's
+// manifest has none of them.
+func TestACheckoutKeepsTheSiteDecisions(t *testing.T) {
+	shipped := &manifest.Manifest{Version: 2,
+		Run:     &manifest.Run{Command: []string{"./server"}},
+		Workers: map[string]*manifest.Worker{"db": {Command: []string{"./db"}}},
+		Deploy:  &manifest.Deploy{GitHub: &manifest.GitHubDeploy{Repository: "acme/app", Build: [][]string{{"./build.sh"}}}}}
+	bare := makeRepoWithManifest(t, shipped)
+
+	local := &manifest.Manifest{Version: 2,
+		Run:     &manifest.Run{Command: []string{"./server"}},
+		Workers: map[string]*manifest.Worker{"db": {Command: []string{"./db"}, Disabled: true}},
+		Hold:    &manifest.Hold{Enabled: true, Mode: "maintenance"},
+		Deploy:  &manifest.Deploy{GitHub: &manifest.GitHubDeploy{Repository: "acme/app", Build: [][]string{{"./build.sh"}}}}}
+	root, dir := makeSite(t, local)
+	r, _ := newRunner(root, bare, nil)
+	if _, err := r.Run(context.Background(), "app.test", dir, local, "github:someone", FromGitHub); err != nil {
+		log, _ := os.ReadFile(filepath.Join(root, "data", "logs", "app.test", "deploy.log"))
+		t.Fatalf("%v\n%s", err, log)
+	}
+	after, err := manifest.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Hold == nil || !after.Hold.Enabled {
+		t.Fatalf("the hold was dropped: %+v", after.Hold)
+	}
+	if w := after.Workers["db"]; w == nil || !w.Disabled {
+		t.Fatalf("the stopped worker was started: %+v", w)
+	}
+	// The repository's own content still arrived.
+	if _, err := os.Stat(filepath.Join(dir, "build.sh")); err != nil {
+		t.Fatal("the checkout did not bring the repository's files")
+	}
+}
+
 // A push that lands while the operator's Deploy is building must still get
 // built: Start and Trigger share one "run again" loop. Without it the
 // trigger set a flag only Trigger watched, and the newest commit waited for

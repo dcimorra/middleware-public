@@ -65,6 +65,15 @@ nothing and emits `deploy.failed`; the running instance is untouched.
 `middleware site deploy example.com` does the same by hand, and
 `POST /api/v1/sites/{domain}/deploy` from anywhere with a token.
 
+A deploy does not override a decision the house wrote into the manifest. A
+**disabled** site is not deployed at all (the push is noted as
+`deploy.skipped`; switch the site back on first), because building it would
+start it again. And when the checkout ships the repository's own
+`site.json`, the local `disabled`, `hold`, stopped workers
+(`workers.*.disabled`) and under-attack (`attack`) are carried onto it, so a
+push cannot revive a site the guard switched off, lift a hold or start a
+stopped worker. Everything else is the repository's to set.
+
 ## Rollback
 
 The previous build is still on disk. Write its name:
