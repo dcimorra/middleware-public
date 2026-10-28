@@ -31,11 +31,11 @@ export function specsTab(domain) {
     if (!d.initialized) { el.append(setUp(d)); return; }
 
     el.append(h("h3", { class: "specs-h" }, t("specs.changes"), " ", h("span", { class: "badge" }, String(d.changes.length))));
-    if (!d.changes.length) el.append(h("p", { class: "small muted" }, t("specs.noChanges")));
+    if (!d.changes.length) el.append(h("p", { class: "site-none" }, t("specs.noChanges")));
     for (const c of d.changes) el.append(changeCard(c));
 
     el.append(h("h3", { class: "specs-h" }, t("specs.specs"), " ", h("span", { class: "badge" }, String(d.specs.length))));
-    if (!d.specs.length) el.append(h("p", { class: "small muted" }, t("specs.noSpecs")));
+    if (!d.specs.length) el.append(h("p", { class: "site-none" }, t("specs.noSpecs")));
     else el.append(h("div", { class: "card pad0" }, ...d.specs.map(specRow)));
 
     if (d.archived.length) {
@@ -76,11 +76,15 @@ export function specsTab(domain) {
       arch.addEventListener("click", () => ask(c, "archive", arch));
       acts.append(arch);
     }
+    // The width through CSSOM: as a style attribute (what h() writes) the
+    // CSP blocked it and every change showed an empty bar.
+    const fill = h("div", { class: "fill" });
+    fill.style.width = pct + "%";
     return h("div", { class: "card specs-change" },
       h("div", { class: "row" }, h("strong", { class: "grow" }, c.title), h("code", { class: "small muted" }, c.id)),
       c.why ? h("p", { class: "small dim" }, c.why) : null,
       c.total ? h("div", null,
-        h("div", { class: "meter", role: "progressbar", "aria-valuenow": String(pct), "aria-valuemin": "0", "aria-valuemax": "100" }, h("div", { class: "fill", style: `width:${pct}%` })),
+        h("div", { class: "meter", role: "progressbar", "aria-valuenow": String(pct), "aria-valuemin": "0", "aria-valuemax": "100" }, fill),
         h("div", { class: "small muted" }, t("specs.tasks", { done: c.done, total: c.total })))
         : h("div", { class: "small muted" }, t("specs.noTasks")),
       acts, body);
