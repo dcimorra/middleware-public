@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/pages"
 	"github.com/dcimorra/middleware-public/internal/settings"
 )
@@ -61,12 +63,27 @@ func (s *Server) settingsPut(w http.ResponseWriter, r *http.Request) (any, error
 			return nil, Errorf(http.StatusBadRequest, "ports: want 1024 <= from < to <= 65535")
 		}
 	}
-	if st.PanelDomain != "" && strings.ContainsAny(st.PanelDomain, "/ :") {
-		return nil, Errorf(http.StatusBadRequest, "panel_domain: not a host name")
+	// The proxy lowercases the request's host and compares it whole, so a
+	// name saved as typed, "Panel.example.com" or with its root dot, was
+	// a panel no request matched: the operator was locked out the moment
+	// it was saved. The CLI's `domain` already normalises it this way.
+	if st.PanelDomain != "" {
+		d := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(st.PanelDomain), "."))
+		if !manifest.ValidDomain(d) {
+			return nil, Errorf(http.StatusBadRequest, "panel_domain: %q is not a domain name", st.PanelDomain)
+		}
+		st.PanelDomain = d
 	}
 	// A body without the agents section (an older client) keeps the
 	// defaults; one with it is held to the rules before anything is saved.
 	st.Fill()
+	st.Listen = strings.TrimSpace(st.Listen)
+	if err := settings.ValidListen(st.Listen); err != nil {
+		return nil, Errorf(http.StatusBadRequest, "%s", err.Error())
+	}
+	if err := s.canListen(st.Listen); err != nil {
+		return nil, Errorf(http.StatusBadRequest, "listen: %s cannot be bound now: %v", st.Listen, err)
+	}
 	if !pages.IsTheme(st.VisitorTheme) {
 		return nil, Errorf(http.StatusBadRequest, "visitor_theme: %q is not one of the designs", st.VisitorTheme)
 	}
@@ -88,6 +105,30 @@ func (s *Server) settingsPut(w http.ResponseWriter, r *http.Request) (any, error
 	}
 	s.opts.Bus.Emit(events.Event{Type: "settings.updated", Actor: "operator", Message: "settings replaced"})
 	return s.opts.Settings(), nil
+}
+
+// canListen binds addr and lets it go, when addr is a change: a port
+// another program holds, or an address this machine does not have, is
+// found while the operator is looking at the form rather than at the next
+// restart, when the supervisor would fail to start in a loop. The address
+// in force is not tried, since this process holds it and the answer would
+// always be no; neither is the one already saved, waiting for a restart.
+func (s *Server) canListen(addr string) error {
+	if addr == s.opts.Listen {
+		return nil
+	}
+	if s.opts.Settings != nil {
+		cur := s.opts.Settings()
+		cur.Fill()
+		if addr == cur.Listen {
+			return nil
+		}
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	return ln.Close()
 }
 
 func (s *Server) systemRestart(w http.ResponseWriter, r *http.Request) (any, error) {

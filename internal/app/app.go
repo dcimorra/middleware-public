@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/engine"
@@ -21,15 +22,38 @@ import (
 
 // App is the process.
 type App struct {
-	Root     string
-	Settings settings.Settings
-	Bus      *events.Bus
-	Engine   *engine.Engine
-	Proxy    *proxy.Handler
+	Root string
+	// Settings is what was loaded at start. It is read directly only
+	// while the app is wired, before Run: from then on PUT /settings
+	// replaces it from a request's goroutine while the agents' daily
+	// budget, the doors and the listener read it from theirs; assigned
+	// bare, that was a data race. Readers then go through CurrentSettings
+	// and the one writer through SetSettings.
+	Settings   settings.Settings
+	settingsMu sync.RWMutex
+	Bus        *events.Bus
+	Engine     *engine.Engine
+	Proxy      *proxy.Handler
 	// Handler is the full request chain; hooks wrap Proxy in order.
 	Handler http.Handler
 	// Hooks let other packages wrap the handler and run alongside.
 	Hooks []Hook
+}
+
+// CurrentSettings is the settings as last saved.
+func (a *App) CurrentSettings() settings.Settings {
+	a.settingsMu.RLock()
+	defer a.settingsMu.RUnlock()
+	return a.Settings
+}
+
+// SetSettings replaces the settings everyone reads. The value is replaced
+// whole, never changed in place, so the maps and pointers a reader's copy
+// shares with it stay as they were for that reader.
+func (a *App) SetSettings(s settings.Settings) {
+	a.settingsMu.Lock()
+	a.Settings = s
+	a.settingsMu.Unlock()
 }
 
 // Hook is something that plugs into the app at start.
@@ -122,7 +146,7 @@ func (a *App) listener() (net.Listener, error) {
 			return ln, nil
 		}
 	}
-	return net.Listen("tcp", ListenAddr(a.Settings.Listen))
+	return net.Listen("tcp", ListenAddr(a.CurrentSettings().Listen))
 }
 
 // ListenAddr is where the loopback listener binds: MIDDLEWARE_LISTEN when

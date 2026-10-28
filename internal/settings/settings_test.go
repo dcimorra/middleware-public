@@ -25,6 +25,19 @@ func TestAFileWithoutTheAgentsSectionLoadsWithItsDefaults(t *testing.T) {
 	}
 }
 
+func TestAListenAddressNeedsANumericPortInRange(t *testing.T) {
+	for _, ok := range []string{"127.0.0.1:46100", ":8080", "[::1]:1", "localhost:65535"} {
+		if err := ValidListen(ok); err != nil {
+			t.Errorf("%q: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"127.0.0.1", "", "127.0.0.1:", "127.0.0.1:http", "127.0.0.1:0", "127.0.0.1:65536", "127.0.0.1:-1", "::1:80"} {
+		if err := ValidListen(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
 func TestTheAgentsSectionIsValidatedAsAWhole(t *testing.T) {
 	ok := DefaultAgents()
 	if err := ok.Validate(); err != nil {

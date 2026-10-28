@@ -56,7 +56,7 @@ var (
 // at the loopback listener.
 func modulesFor(a *app.App) (*moduleSet, error) {
 	modulesOnce.Do(func() {
-		modulesCur, modulesErr = buildModules(a.Root, a.Bus, a.Engine.Restart, "http://"+a.Settings.Listen)
+		modulesCur, modulesErr = buildModules(a.Root, a.Bus, a.Engine.Restart, "http://"+a.CurrentSettings().Listen)
 	})
 	return modulesCur, modulesErr
 }

@@ -174,7 +174,7 @@ func TestAFullHouseAnswers429AndANewCapFromSettingsAppliesAtOnce(t *testing.T) {
 		t.Fatalf("after raising the cap: %d %s", resp.StatusCode, text(body))
 	}
 	// A body without the section keeps the defaults rather than zeroing the cap.
-	resp, body = f.call("PUT", "/api/v1/settings", map[string]any{"listen": "127.0.0.1:1"})
+	resp, body = f.call("PUT", "/api/v1/settings", map[string]any{"listen": settings.Defaults().Listen})
 	if resp.StatusCode != 200 || saved.Agents.MaxConcurrent != 8 {
 		t.Fatalf("settings without agents: %d %s saved=%+v", resp.StatusCode, text(body), saved.Agents)
 	}
