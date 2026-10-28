@@ -360,7 +360,10 @@ func (s *V1Source) Convert(domain string) (notes []string, err error) {
 		s.original, s.converted = raw, append(out, '\n')
 		s.docker = UsesDocker(m)
 		notes := []string{"manifest: " + V2ManifestName + ", not converted from the V1 one"}
-		for _, name := range MovingWorkers(m) {
+		for _, name := range m.MovingWorkers(true) {
+			notes = append(notes, "worker "+name+": its data moves by command while it serves (export here and import there before it stops; what it writes after the export does not travel)")
+		}
+		for _, name := range m.MovingWorkers(false) {
 			notes = append(notes, "worker "+name+": its data moves by command (export here with the site stopped, import there before it starts)")
 		}
 		return notes, nil

@@ -215,3 +215,33 @@ func TestTasksOffHasEveryTaskArriveTurnedOff(t *testing.T) {
 		t.Fatalf("not put back as it was: %s", raw)
 	}
 }
+
+// A live export's dump goes in the first copy and not again in the last:
+// comparaloo's 3.66 GB went twice, and the second was most of its down time.
+func TestALiveDumpIsNotSentAgainInTheLastCopy(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	seedV1(t, src, nil)
+	site := filepath.Join(src, "sites", "old.test")
+	os.WriteFile(filepath.Join(site, V2ManifestName), []byte(`{"version":2,"static":{"root":"public"},
+ "workers":{"db":{"command":["x"],"move":{"export":["sh","-c","head -c 300000 /dev/urandom"],"output":".move/db.dump","import":["true"],"live":true}}}}`), 0o644)
+	s := &V1Source{Root: src, Running: func(string) bool { return false }}
+	if _, err := s.Convert("old.test"); err != nil {
+		t.Fatal(err)
+	}
+	tg := &noImportTarget{localTarget{rc: Receiver{Root: dst}, ready: true}}
+	m := &Mover{Root: src, Source: s, Parts: ImportParts, Poll: 10 * time.Millisecond, ReadyWait: time.Second}
+	rep, err := m.Move(context.Background(), "old.test", tg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.First < 300000 || rep.Last >= 300000 {
+		t.Fatalf("first copy %d bytes, last %d: the dump went in the last one", rep.First, rep.Last)
+	}
+}
+
+// noImportTarget is a local target whose imports do nothing.
+type noImportTarget struct{ localTarget }
+
+func (t *noImportTarget) Migrate(context.Context, string, []byte, []string) (string, error) {
+	return "", nil
+}

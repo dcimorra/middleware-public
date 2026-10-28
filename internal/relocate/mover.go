@@ -213,6 +213,11 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 		if said != "" {
 			progress(StepExport, said)
 		}
+		// The last copy takes what changed since two seconds before the
+		// first began: a dump finished within those two seconds was sent
+		// twice. comparaloo's 3.66 GB went again in its last copy, and that
+		// was 2m40s of the 2m52s it was down.
+		time.Sleep(3 * time.Second)
 	}
 
 	// The first copy, with the site serving. What is written while it

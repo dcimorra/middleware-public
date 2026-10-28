@@ -78,3 +78,35 @@ func TestDependenciesAreInstalledInTheFoldersThatHadThem(t *testing.T) {
 		t.Fatalf("a folder outside the site: %d", res.StatusCode)
 	}
 }
+
+// Prisma writes its client inside node_modules, and since Prisma 7 an
+// install no longer makes it: comparaloo arrived with every page that read
+// the database failing on "Cannot find module '.prisma/client/default'". A
+// stand-in prisma CLI, installed from a local folder, says it is made again.
+func TestPrismasClientIsMadeAgainAfterTheInstall(t *testing.T) {
+	if _, err := exec.LookPath("npm"); err != nil {
+		t.Skip("needs npm")
+	}
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "fake-prisma"), 0o755)
+	os.WriteFile(filepath.Join(dir, "fake-prisma", "package.json"), []byte(`{"name":"prisma","version":"7.0.0","bin":{"prisma":"cli.js"}}`), 0o644)
+	os.WriteFile(filepath.Join(dir, "fake-prisma", "cli.js"), []byte(`#!/usr/bin/env node
+const fs = require("fs");
+if (process.argv[2] !== "generate") process.exit(2);
+fs.mkdirSync("node_modules/.prisma/client", { recursive: true });
+fs.writeFileSync("node_modules/.prisma/client/default.js", "module.exports = {}\n");
+console.log("Generated Prisma Client");
+`), 0o755)
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"site","version":"1.0.0","devDependencies":{"prisma":"file:./fake-prisma"}}`), 0o644)
+	os.MkdirAll(filepath.Join(dir, "prisma"), 0o755)
+	os.WriteFile(filepath.Join(dir, "prisma", "schema.prisma"), []byte("generator client { provider = \"prisma-client-js\" }\n"), 0o644)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	said, err := installDeps(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "node_modules", ".prisma", "client", "default.js")); err != nil || !strings.Contains(said, "prisma generate") {
+		t.Fatalf("Prisma's client was not made again; the install said %q", said)
+	}
+}
