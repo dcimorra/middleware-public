@@ -622,9 +622,85 @@ func (src siteSource) Archive(ctx context.Context, domain string, m []byte) (str
 type meshTarget struct {
 	m *nodes.Mesh
 	x nodes.Member
+	// call, when set, replaces the mesh: the tests reach another server's
+	// real routes over plain HTTP. A body that is an io.Reader is a
+	// bundle, sent as it is.
+	call func(ctx context.Context, method, path string, body, out any) error
 }
 
 func (t meshTarget) Name() string { return t.x.Name }
+
+func (t meshTarget) do(ctx context.Context, method, path string, body, out any) error {
+	if t.call != nil {
+		return t.call(ctx, method, path, body, out)
+	}
+	return t.m.Call(ctx, t.x, method, path, body, out)
+}
+
+func (t meshTarget) stream(ctx context.Context, method, path string, body io.Reader) error {
+	if t.call != nil {
+		return t.call(ctx, method, path, body, nil)
+	}
+	return t.m.Stream(ctx, t.x, method, path, "application/gzip", body, nil)
+}
+
+// jobStart is what a node answers to the POST that starts one of its jobs
+// for a move (an install, an import).
+type jobStart struct {
+	Started bool   `json:"started"`
+	Running bool   `json:"running"`
+	ID      string `json:"id"`
+}
+
+// startJob posts to path and says the job it started there.
+func (t meshTarget) startJob(ctx context.Context, path, what, domain string, body any) (string, error) {
+	var st jobStart
+	if err := t.do(ctx, "POST", path, body, &st); err != nil {
+		return "", err
+	}
+	if !st.Started && st.Running {
+		// Polled, it would answer for an earlier attempt's job, which runs
+		// on a staging that was received again since: whatever it ends
+		// with is not this move's.
+		return "", fmt.Errorf("an earlier %s of %s is still running on %s: move it again once that one ends", what, domain, t.x.Name)
+	}
+	return st.ID, nil
+}
+
+// waitJob asks path every few seconds until the job id ends there, each a
+// short request: the job runs there on its own, and no connection is held
+// open for its minutes. One unanswered question is not the job failing;
+// the move's own time (its context) is what gives up on a node that does
+// not answer. A node that answers it has no such job, though, has
+// forgotten it: it restarted, and a job lives in its memory. Asked again
+// it says the same until the move's hour is out, and the site was stopped
+// here for that hour before this, waiting for a job nobody ran.
+func (t meshTarget) waitJob(ctx context.Context, path, what, id string) (string, error) {
+	for {
+		var j prepareJob
+		err := t.do(ctx, "GET", path, nil, &j)
+		var re *nodes.RemoteError
+		switch {
+		case errors.As(err, &re) && re.Status == http.StatusNotFound:
+			return "", fmt.Errorf("%s no longer knows of the %s (it restarted while it ran): it will never end there", t.x.Name, what)
+		case err != nil:
+		case id != "" && j.ID != id:
+			return "", fmt.Errorf("%s answers for another %s than the one this move started (it restarted, and something started one since)", t.x.Name, what)
+		case j.Done && j.Error != "":
+			return "", errors.New(j.Error)
+		case j.Done:
+			return j.Output, nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(jobPoll):
+		}
+	}
+}
+
+// jobPoll is how often waitJob asks; the tests make it short.
+var jobPoll = 3 * time.Second
 
 // older says a node that answers 404 to a move's route runs a version
 // without moves, which is what to tell the operator.
@@ -637,11 +713,11 @@ func (t meshTarget) older(err error) error {
 }
 
 func (t meshTarget) Send(ctx context.Context, domain string, body io.Reader) error {
-	return t.older(t.m.Stream(ctx, t.x, "PUT", "/relocate/"+domain, "application/gzip", body, nil))
+	return t.older(t.stream(ctx, "PUT", "/relocate/"+domain, body))
 }
 
 func (t meshTarget) SendDelta(ctx context.Context, domain string, body io.Reader) error {
-	return t.older(t.m.Stream(ctx, t.x, "PUT", "/relocate/"+domain+"/delta", "application/gzip", body, nil))
+	return t.older(t.stream(ctx, "PUT", "/relocate/"+domain+"/delta", body))
 }
 
 func (t meshTarget) Commit(ctx context.Context, domain string, m []byte, taskFiles map[string][]byte) error {
@@ -649,107 +725,62 @@ func (t meshTarget) Commit(ctx context.Context, domain string, m []byte, taskFil
 	if len(taskFiles) > 0 {
 		body["tasks"] = relocate.EncodeTasks(taskFiles)
 	}
-	return t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/commit", body, nil)
+	return t.do(ctx, "POST", "/relocate/"+domain+"/commit", body, nil)
 }
 
 func (t meshTarget) Prepare(ctx context.Context, domain string, dirs []string) (string, error) {
-	if err := t.older(t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/prepare", map[string]any{"dirs": dirs}, nil)); err != nil {
-		return "", err
+	id, err := t.startJob(ctx, "/relocate/"+domain+"/prepare", "install", domain, map[string]any{"dirs": dirs})
+	if err != nil {
+		return "", t.older(err)
 	}
-	// Asked every few seconds, each a short request: the install runs
-	// there on its own, and no connection is held open for its minutes.
-	for {
-		var j prepareJob
-		err := t.m.Call(ctx, t.x, "GET", "/relocate/"+domain+"/prepare", nil, &j)
-		switch {
-		case err != nil:
-			// One unanswered question is not the install failing; the
-			// move's own time (its context) is what gives up.
-		case j.Done && j.Error != "":
-			return "", errors.New(j.Error)
-		case j.Done:
-			return j.Output, nil
-		}
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(3 * time.Second):
-		}
-	}
+	return t.waitJob(ctx, "/relocate/"+domain+"/prepare", "install of "+domain, id)
 }
 
 // Migrate implements relocate.Migrator: the node runs the workers' imports
 // on its own and is asked how it goes, as Prepare.
 func (t meshTarget) Migrate(ctx context.Context, domain string, m []byte, workers []string) (string, error) {
 	body := map[string]any{"manifest": base64.StdEncoding.EncodeToString(m), "workers": workers}
-	if err := t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/migrate", body, nil); err != nil {
+	id, err := t.startJob(ctx, "/relocate/"+domain+"/migrate", "data import", domain, body)
+	if err != nil {
 		var re *nodes.RemoteError
 		if errors.As(err, &re) && re.Status == http.StatusNotFound {
 			return "", fmt.Errorf("%s cannot import a worker's data (update it to a version that can)", t.x.Name)
 		}
 		return "", err
 	}
-	for {
-		var j prepareJob
-		err := t.m.Call(ctx, t.x, "GET", "/relocate/"+domain+"/migrate", nil, &j)
-		switch {
-		case err != nil:
-		case j.Done && j.Error != "":
-			return "", errors.New(j.Error)
-		case j.Done:
-			return j.Output, nil
-		}
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(3 * time.Second):
-		}
-	}
+	return t.waitJob(ctx, "/relocate/"+domain+"/migrate", "data import of "+domain, id)
 }
 
 func (t meshTarget) Discard(ctx context.Context, domain string) error {
-	return t.m.Call(ctx, t.x, "DELETE", "/relocate/"+domain, nil, nil)
+	return t.do(ctx, "DELETE", "/relocate/"+domain, nil, nil)
 }
 
 func (t meshTarget) Repair(ctx context.Context, domain, why string) (string, error) {
-	if err := t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/repair", map[string]string{"why": why}, nil); err != nil {
+	if err := t.do(ctx, "POST", "/relocate/"+domain+"/repair", map[string]string{"why": why}, nil); err != nil {
 		var re *nodes.RemoteError
 		if errors.As(err, &re) && (re.Status == http.StatusConflict || re.Status == http.StatusNotFound) {
 			return "", relocate.ErrNoRepair
 		}
 		return "", err
 	}
-	for {
-		var j repairJob
-		if err := t.m.Call(ctx, t.x, "GET", "/relocate/"+domain+"/repair", nil, &j); err == nil && j.Done {
-			if j.Error != "" {
-				return "", errors.New(j.Error)
-			}
-			return j.Output, nil
-		}
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(3 * time.Second):
-		}
-	}
+	return t.waitJob(ctx, "/relocate/"+domain+"/repair", "repair of "+domain, "")
 }
 
 func (t meshTarget) Finish(ctx context.Context, domain string) error {
-	return t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/placed", nil, nil)
+	return t.do(ctx, "POST", "/relocate/"+domain+"/placed", nil, nil)
 }
 
 func (t meshTarget) Remove(ctx context.Context, domain string) error {
-	return t.m.Call(ctx, t.x, "DELETE", "/sites/"+domain, nil, nil)
+	return t.do(ctx, "DELETE", "/sites/"+domain, nil, nil)
 }
 
 func (t meshTarget) Check(ctx context.Context, domain string, need relocate.Needs) error {
-	return t.older(t.m.Call(ctx, t.x, "POST", "/relocate/"+domain+"/check", need, nil))
+	return t.older(t.do(ctx, "POST", "/relocate/"+domain+"/check", need, nil))
 }
 
 func (t meshTarget) Ready(ctx context.Context, domain string) (bool, string, error) {
 	var site sites.Site
-	if err := t.m.Call(ctx, t.x, "GET", "/sites/"+domain, nil, &site); err != nil {
+	if err := t.do(ctx, "GET", "/sites/"+domain, nil, &site); err != nil {
 		return false, "", err
 	}
 	ok, why := SiteReady(site)
@@ -757,7 +788,7 @@ func (t meshTarget) Ready(ctx context.Context, domain string) (bool, string, err
 }
 
 func (t meshTarget) Publish(ctx context.Context, domain, door string) error {
-	return t.m.Call(ctx, t.x, "POST", "/sites/"+domain+"/publish", map[string]any{"door": inbound.Door(door), "over": true}, nil)
+	return t.do(ctx, "POST", "/sites/"+domain+"/publish", map[string]any{"door": inbound.Door(door), "over": true}, nil)
 }
 
 // SiteReady says a site answers as it should: no error, and its process

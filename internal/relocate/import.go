@@ -114,30 +114,14 @@ func (t HTTPTarget) Prepare(ctx context.Context, d string, dirs []string) (strin
 	if !t.Install {
 		return "", nil
 	}
-	if err := t.do(ctx, "POST", "/relocate/"+d+"/prepare", "application/json", jsonBody(map[string]any{"dirs": dirs}), nil); err != nil {
+	id, err := t.startJob(ctx, "/relocate/"+d+"/prepare", "install", d, map[string]any{"dirs": dirs})
+	if err != nil {
 		if strings.Contains(err.Error(), "answered 404") || strings.Contains(err.Error(), "answered 403") {
 			return "", nil
 		}
 		return "", err
 	}
-	for {
-		var j struct {
-			Done   bool   `json:"done"`
-			Output string `json:"output"`
-			Error  string `json:"error"`
-		}
-		if err := t.do(ctx, "GET", "/relocate/"+d+"/prepare", "", nil, &j); err == nil && j.Done {
-			if j.Error != "" {
-				return "", errors.New(j.Error)
-			}
-			return j.Output, nil
-		}
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(3 * time.Second):
-		}
-	}
+	return t.waitJob(ctx, "/relocate/"+d+"/prepare", "install of "+d, id)
 }
 
 // Migrate implements Migrator: the house runs the workers' imports on its
@@ -146,28 +130,65 @@ func (t HTTPTarget) Prepare(ctx context.Context, d string, dirs []string) (strin
 // database.
 func (t HTTPTarget) Migrate(ctx context.Context, d string, manifestData []byte, workers []string) (string, error) {
 	body := map[string]any{"manifest": base64.StdEncoding.EncodeToString(manifestData), "workers": workers}
-	if err := t.do(ctx, "POST", "/relocate/"+d+"/migrate", "application/json", jsonBody(body), nil); err != nil {
+	id, err := t.startJob(ctx, "/relocate/"+d+"/migrate", "data import", d, body)
+	if err != nil {
 		if strings.Contains(err.Error(), "answered 404") {
 			return "", fmt.Errorf("%s cannot import a worker's data (update it to a version that can)", t.Name())
 		}
 		return "", err
 	}
+	return t.waitJob(ctx, "/relocate/"+d+"/migrate", "data import of "+d, id)
+}
+
+// startJob posts to path and says the job it started there; one already
+// running is an earlier attempt's, on a staging received again since,
+// and what it ends with is not this import's.
+func (t HTTPTarget) startJob(ctx context.Context, path, what, d string, body any) (string, error) {
+	var st struct {
+		Started bool   `json:"started"`
+		Running bool   `json:"running"`
+		ID      string `json:"id"`
+	}
+	if err := t.do(ctx, "POST", path, "application/json", jsonBody(body), &st); err != nil {
+		return "", err
+	}
+	if !st.Started && st.Running {
+		return "", fmt.Errorf("an earlier %s of %s is still running on %s: import it again once that one ends", what, d, t.Name())
+	}
+	return st.ID, nil
+}
+
+// jobPoll is how often a job on the house is asked about.
+var jobPoll = 3 * time.Second
+
+// waitJob asks path until the job id ends there. A question unanswered is
+// asked again; a house that answers 404 has forgotten the job (it
+// restarted, and its jobs live in its memory) and would say the same until
+// the import's time is out, with the site stopped here all that while.
+func (t HTTPTarget) waitJob(ctx context.Context, path, what, id string) (string, error) {
 	for {
 		var j struct {
+			ID     string `json:"id"`
 			Done   bool   `json:"done"`
 			Output string `json:"output"`
 			Error  string `json:"error"`
 		}
-		if err := t.do(ctx, "GET", "/relocate/"+d+"/migrate", "", nil, &j); err == nil && j.Done {
-			if j.Error != "" {
-				return "", errors.New(j.Error)
-			}
+		err := t.do(ctx, "GET", path, "", nil, &j)
+		switch {
+		case err != nil && strings.Contains(err.Error(), "answered 404"):
+			return "", fmt.Errorf("%s no longer knows of the %s (it restarted while it ran): it will never end there", t.Name(), what)
+		case err != nil:
+		case id != "" && j.ID != id:
+			return "", fmt.Errorf("%s answers for another %s than the one this import started (it restarted, and something started one since)", t.Name(), what)
+		case j.Done && j.Error != "":
+			return "", errors.New(j.Error)
+		case j.Done:
 			return j.Output, nil
 		}
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
-		case <-time.After(3 * time.Second):
+		case <-time.After(jobPoll):
 		}
 	}
 }
@@ -233,24 +254,7 @@ func (t HTTPTarget) Repair(ctx context.Context, d, why string) (string, error) {
 		}
 		return "", err
 	}
-	for {
-		var j struct {
-			Done   bool   `json:"done"`
-			Output string `json:"output"`
-			Error  string `json:"error"`
-		}
-		if err := t.do(ctx, "GET", "/relocate/"+d+"/repair", "", nil, &j); err == nil && j.Done {
-			if j.Error != "" {
-				return "", errors.New(j.Error)
-			}
-			return j.Output, nil
-		}
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(3 * time.Second):
-		}
-	}
+	return t.waitJob(ctx, "/relocate/"+d+"/repair", "repair of "+d, "")
 }
 
 // Finish implements Finisher.
