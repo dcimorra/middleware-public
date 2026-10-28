@@ -70,6 +70,70 @@ func TestAnExitedInstanceTakesItsGroupWithIt(t *testing.T) {
 	waitDead(t, child, "the child of an instance whose shell exited")
 }
 
+// tickRecovering runs one tick and returns what it panicked with. A panic
+// under the engine's lock leaves the lock held, and the cleanup that stops
+// what the test started then waited for it for good: the test hung instead
+// of failing. The lock is freed whoever holds it, since nobody does now.
+func tickRecovering(ctx context.Context, e *Engine) (panicked any) {
+	defer func() {
+		if p := recover(); p != nil {
+			panicked = p
+			e.mu.TryLock()
+			e.mu.Unlock()
+		}
+	}()
+	e.tick(ctx)
+	return nil
+}
+
+// startForAdoption starts the test binary as a site's process the way a
+// previous supervisor would have, and leaves its state behind.
+func startForAdoption(t *testing.T, e *Engine, sites, domain string) runtime.Instance {
+	t.Helper()
+	dir := writeSite(t, sites, domain, "x", "")
+	spec := &manifest.Spec{Domain: domain, SiteDir: dir, Cwd: dir, Command: []string{os.Args[0]}, Env: map[string]string{"MW_TEST_SERVER": "1", "BUILD": "x"}, Revision: "previous"}
+	inst, err := runtime.Process{}.Start(context.Background(), spec, freePort(t), filepath.Join(e.opts.DataDir, "logs", domain, "site.log"), filepath.Join(e.opts.DataDir, "homes", domain))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = inst.Stop(context.Background(), time.Second) })
+	if err := runtime.WaitReady(context.Background(), inst, manifest.Health{}, 10*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	e.saveState(inst.State())
+	return inst
+}
+
+// An adopted instance has no spec until its first reconcile, and one that
+// exited before it took the supervisor down with a nil dereference in the
+// crash branch.
+func TestAnAdoptedInstanceThatExitsBeforeTheFirstTickIsRestarted(t *testing.T) {
+	e, sites := newTestEngine(t)
+	inst := startForAdoption(t, e, sites, "early.test")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e.adoptAll(ctx)
+	e.mu.RLock()
+	adopted := e.sites["early.test"].Instance
+	e.mu.RUnlock()
+	if adopted == nil {
+		t.Fatal("not adopted")
+	}
+	_ = inst.Stop(context.Background(), time.Second)
+	select {
+	case <-adopted.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the adopted instance never noticed its process exited")
+	}
+	if p := tickRecovering(ctx, e); p != nil {
+		t.Fatalf("the tick panicked: %v", p)
+	}
+	sn, _ := e.Lookup("early.test")
+	if sn.Alive || sn.Failures != 1 {
+		t.Fatalf("the exit was not counted: %+v", sn)
+	}
+}
+
 // An adopted process that is the one recorded but no longer listens is
 // stopped, not forgotten: forgotten, it kept running outside every state
 // file while the next tick started a second copy next to it.

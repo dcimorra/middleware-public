@@ -375,7 +375,15 @@ func (e *Engine) reconcile(ctx context.Context, domain, dir string) {
 			exited = s.Instance
 			s.Instance = nil
 			s.failures++
-			wait := backoff(s.failures, s.Spec.Restart.MaxBackoff.Or(60*time.Second))
+			// An adopted instance has no Spec until a reconcile gives it
+			// one, and one that exits before that took the supervisor down
+			// here with a nil dereference. The spec just resolved is the
+			// policy the restart will run under anyway.
+			policy := spec
+			if s.Spec != nil {
+				policy = s.Spec
+			}
+			wait := backoff(s.failures, policy.Restart.MaxBackoff.Or(60*time.Second))
 			s.nextStart = time.Now().Add(wait)
 			e.emit("instance.exited", domain, "error", fmt.Sprintf("%v; restart in %s", err, wait), map[string]any{"failures": s.failures})
 			e.clearState(domain)
