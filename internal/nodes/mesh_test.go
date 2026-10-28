@@ -212,12 +212,12 @@ func TestAnOldRosterDoesNotBringARemovedNodeBack(t *testing.T) {
 	ip := netip.MustParseAddr("10.66.1.2")
 	t0 := time.Now()
 	m.st.Members = []Member{{ID: "x", Name: "x", IP: ip, PublicKey: pub, Updated: t0, Removed: true}}
-	m.mergeLocked([]Member{{ID: "x", Name: "x", IP: ip, PublicKey: pub, Updated: t0.Add(-time.Hour)}})
+	m.mergeLocked("x", []Member{{ID: "x", Name: "x", IP: ip, PublicKey: pub, Updated: t0.Add(-time.Hour)}})
 	if len(m.liveLocked()) != 0 {
 		t.Fatal("an old copy revived a removed node")
 	}
 	m.st.Updated = t0
-	if _, ex := m.mergeLocked([]Member{{ID: "self", IP: ip, PublicKey: pub, Updated: t0.Add(time.Minute), Removed: true}}); !ex {
+	if _, ex := m.mergeLocked("x", []Member{{ID: "self", IP: ip, PublicKey: pub, Updated: t0.Add(time.Minute), Removed: true}}); !ex {
 		t.Fatal("a newer removal of this node was not noticed")
 	}
 }

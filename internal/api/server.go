@@ -281,11 +281,17 @@ func (s *Server) Panel() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The address lists go before everything the panel answers, API
 		// and pages alike: whoever cannot get in is not shown the box.
-		if s.opts.Auth != nil && !s.opts.Auth.PanelAdmits(r) {
+		// Except the site door, called by a site's own process: over the
+		// containers' socket, which has no address for a list to read, or
+		// over loopback, which a list need not name. The lists are about
+		// people reaching the panel; the door answers a site's token and
+		// nothing else, and a list used to shut every site out of it.
+		path, door := SiteDoorPath(r.URL.Path)
+		if s.opts.Auth != nil && !(door && auth.Direct(r)) && !s.opts.Auth.PanelAdmits(r) {
 			s.writeError(w, r, Errorf(http.StatusForbidden, "this address may not reach the panel"))
 			return
 		}
-		if path, ok := SiteDoorPath(r.URL.Path); ok && path != r.URL.Path {
+		if door && path != r.URL.Path {
 			r2 := r.Clone(r.Context())
 			r2.URL.Path, r2.URL.RawPath = path, ""
 			s.ServeHTTP(w, r2)

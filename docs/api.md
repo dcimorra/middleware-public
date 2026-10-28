@@ -13,11 +13,16 @@ domain.
   already owns the files. The CLI uses it.
 
 **Who reaches the panel.** The address lists of `/auth/panel-access` go before
-everything the panel answers (403). This machine (loopback, with no proxy
-header) always gets in, and a list that would shut out the caller saving it
-is refused. With `passkey_only`, the password login answers 403 without
-comparing anything. `middleware panel open [30m]` on the server lifts both
-for a while, without a restart; the panel shows a red strip meanwhile.
+everything the panel answers (403). The unix socket always gets in; a TCP
+connection from loopback does not (a site's process, or a site made to
+fetch a URL, connects from there too) and is `127.0.0.1` to the lists. The
+site door (`/api/v1/site/…`) is let past the lists on the containers'
+socket and from loopback without a proxy header, since it answers a site's
+token and nothing else. A list that would shut out the caller saving it is
+refused. With `passkey_only`, the password login answers 403 without
+comparing anything, from loopback too. `middleware panel open [30m]` on
+the server lifts both for a while, without a restart; the panel shows a
+red strip meanwhile.
 
 **Passkeys** are WebAuthn credentials bound to the name the panel was opened
 by (ES256, Ed25519, RS256; attestation not asked). They work on a secure
@@ -513,8 +518,13 @@ is not valid JSON is left in the text and ignored.
 Installations joined in one network: a WireGuard mesh (interface
 `mwmesh`, UDP 51821, addresses drawn from `10.66.0.0/16`) in which every
 node sees and manages every other. Joining one node is joining all: each
-node reads the others' rosters every twenty seconds, newest entry wins,
-and a removal is an entry marked removed. The nodes' API listens only on
+node reads the others' rosters every twenty seconds. A node not known yet
+is learnt from whoever names it; once known, its entry changes only when
+read from that node itself, dated at most a minute ahead of the reader's
+clock. A removal is an entry marked removed, taken from any member, and is
+final: the node comes back only by joining again through an invitation.
+An entry whose address is outside the mesh's subnet or another node's is
+dropped. The nodes' API listens only on
 the mesh address (TCP 46101), the helper closes the interface to any other
 port, and a request there is accepted only from a member's tunnel address
 with the network's secret. The panel works on another node through
@@ -651,7 +661,7 @@ site written for V1 moves without a line changed.
 | method | path | result |
 | --- | --- | --- |
 | GET | `/site` | → `{domain, claude: {available, provider, model, models, tools, limits: {provider, tools, permissions, daily_usd, daily_turns, max_chats, model, models, hide_chats}, spent_usd, left_usd, turns, chats_open, busy}}`; the `claude` key keeps its V1 name whatever agent answers |
-| POST | `/site/claude/ask` | `{prompt (or text), system?, model?, title?, format?: "json", schema?, wait?, files?: [paths in the site's folder]}` → `{chat, state: "done", text, model, turns, cost_usd, json?, json_error?, question?, error?}`; one question, one call. Still running when `wait` runs out: 202 `{chat, state: "running", why}` |
+| POST | `/site/claude/ask` | `{prompt (or text), system?, model?, title?, format?: "json", schema?, wait?, files?: [paths relative to the site's folder: regular files only, a link that leaves the folder is refused with 400]}` → `{chat, state: "done", text, model, turns, cost_usd, json?, json_error?, question?, error?}`; one question, one call. Still running when `wait` runs out: 202 `{chat, state: "running", why}` |
 | GET | `/site/claude/chats` | → `{chats: [{id, domain, title, model, created, updated, turns, cost_usd, busy, messages, origin, system, tools, asking}]}` |
 | POST | `/site/claude/chats` | `{title?, system?, model?, format?, schema?, prompt?, files?}` → `{chat: {…}}`, or the answer when a prompt was sent |
 | GET | `/site/claude/chats/{id}` | → `{chat, state, text, messages: [{seq, at, role: user\|assistant\|tool\|result, text, tool: {id, name, input, result, error, done, run, background}, agent, cost_usd, error}], more}`; `?limit=150` (the last ones) |

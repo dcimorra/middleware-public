@@ -17,12 +17,19 @@ import (
 // The panel is protected like a site, with two exceptions, and both exist
 // because the panel is the only place the panel is edited from:
 //
-//   - A request from this machine (loopback, with no proxy header saying
-//     it came from elsewhere) always gets in. It does not come from the
-//     tunnel; it comes from inside, and whoever is inside can stop
-//     everything anyway. It is the way back when an allow list was
-//     written wrong.
+//   - A request over the house's unix socket (the CLI) always gets in.
+//     Its file mode lets only the service user and its group open it,
+//     and whoever can do that can edit every file by hand anyway. It is
+//     the way back when an allow list was written wrong.
 //   - A list that would shut out whoever saves it is refused, not written.
+//
+// "This machine" used to be any connection from loopback without a proxy
+// header. Every site's process is on loopback too, and so is whatever a
+// site with an SSRF bug can be made to fetch: it reached the password
+// login past the allow list and the passkey-only switch, limited by CPU
+// alone. A TCP connection from loopback is now an address like any other
+// (127.0.0.1, which a list admits only when it says so), and passkey-only
+// holds for it too.
 //
 // And a fire exit: `middleware panel open` lifts the lists and the
 // closed password for a while (half an hour unless told), from the shell,
@@ -177,9 +184,20 @@ func (s *Store) ClosePanel() error {
 	return nil
 }
 
-// FromMachine says whether r came from this machine and not through a
-// proxy on its behalf: loopback, with none of the headers an edge writes.
-func FromMachine(r *http.Request) bool {
+// FromMachine says whether r came from this machine with the rights of
+// the house: over its unix socket, which nothing on TCP can claim. A
+// connection from loopback is not enough (see the top of this file).
+func FromMachine(r *http.Request) bool { return IsSocket(r.Context()) }
+
+// Direct says whether r came straight from a process on this machine and
+// not through a proxy on its behalf: TCP from loopback with none of the
+// headers an edge writes, or a unix socket. It is not FromMachine: every
+// site is such a process, and so is what a site can be made to fetch.
+// The site door, which its own token guards, is what it is for.
+func Direct(r *http.Request) bool {
+	if a, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok && a.Network() == "unix" {
+		return true
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return false
@@ -196,7 +214,10 @@ func FromMachine(r *http.Request) bool {
 	return true
 }
 
-// PanelAdmits says whether r may reach the panel at all.
+// PanelAdmits says whether r may reach the panel at all. A request on the
+// house's socket has no address for a list to read (RemoteAddr is empty
+// there), and was refused by any list until the socket was let in before
+// them: every CLI command answered 403.
 func (s *Store) PanelAdmits(r *http.Request) bool {
 	if FromMachine(r) || !s.OpenUntil().IsZero() {
 		return true
@@ -209,7 +230,10 @@ func (s *Store) PanelAdmits(r *http.Request) bool {
 	return ok && a.admits(ip)
 }
 
-// PasswordClosed says whether the password login is closed for r.
+// PasswordClosed says whether the password login is closed for r: for
+// everyone but the socket, which needs no password, unless the panel was
+// opened from the shell (`middleware panel open`), which is the way back
+// for whoever lost their passkey.
 func (s *Store) PasswordClosed(r *http.Request) bool {
 	return s.PanelAccess().PasskeyOnly && !FromMachine(r) && s.OpenUntil().IsZero()
 }

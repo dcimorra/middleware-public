@@ -264,8 +264,16 @@ says whether it is there.
 side of `docker.volumes` must resolve inside the site folder, links included;
 a manifest that names anything outside is refused when it is read. Docker
 volumes are either a path in the site (`"./uploads:/u"`) or a name
-(`"data:/app/data"`); a name is per site (`mw-<domain>-data`), so two sites
-writing `data` do not share one.
+(`"data:/app/data"`); a name is per site (`mw-<domain>-data`, dots and
+slashes as dashes), so two sites writing `data` do not share one. Two
+domains can still map to one name (`my-shop.com` and `my.shop.com`), so the
+house makes the volume itself before the first run, labelled
+`middleware.site=<domain>`, and refuses to start a container of any other
+site on it. A volume from before the label goes to the first site that
+starts on it, written down in `data/docker-volumes.json` (docker cannot add
+a label to a volume that exists), and is refused to the second. A container
+whose name another site's running container already has (a worker's port is
+written in its manifest) is neither removed to make room nor adopted.
 
 ## `env_from_file`: deploying by pointer
 

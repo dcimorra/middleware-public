@@ -72,6 +72,15 @@ func Load(path string) (n int, used bool) {
 
 // fromEdge reports whether ip is loopback (the tunnel, and this machine)
 // or one of the edge's ranges (the orange cloud in front of 443).
+//
+// Loopback is believed because the tunnel's connector is there, and its
+// header is the only word on who the visitor is: not believing it would
+// make every visitor through the tunnel one address. Every site's process
+// is on loopback too and can write the same header, and nothing at the
+// TCP level tells the two apart. So what an address decides must not be
+// worth more than that: the panel's "this machine" is the unix socket,
+// not loopback (auth.FromMachine), and the login has a budget for the
+// whole house beside each address's (auth's houseLoginPolicy).
 func fromEdge(ip net.IP) bool {
 	if ip == nil {
 		return false

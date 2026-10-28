@@ -633,8 +633,10 @@ func TestThePanelsListsTheClosedPasswordAndTheFireExit(t *testing.T) {
 	if c := login(from("198.51.100.9")); c != 200 {
 		t.Fatalf("an address on the list: %d", c)
 	}
-	if c := login(); c != 200 {
-		t.Fatalf("this machine: %d", c)
+	// Loopback is not the house: a site's process is there too. The
+	// socket is (TestTheSocketsGetPastThePanelsLists).
+	if c := login(); c != 403 {
+		t.Fatalf("plain loopback skipped the list: %d", c)
 	}
 	// Closing the password needs a passkey first.
 	f.withToken()
