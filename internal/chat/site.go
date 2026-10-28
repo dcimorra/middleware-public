@@ -373,7 +373,7 @@ func (m *Manager) Purge(domain string) (int, error) {
 		} else if !os.IsNotExist(err) && failed == nil {
 			failed = err
 		}
-		_ = os.RemoveAll(m.uploadsDir(name))
+		m.removeUploads(name)
 	}
 	m.mu.Unlock()
 	if failed != nil {
