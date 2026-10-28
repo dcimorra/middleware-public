@@ -99,7 +99,7 @@ func (a *App) Run(ctx context.Context) error {
 	// timeout.
 	base, cancelBase := context.WithCancel(context.Background())
 	defer cancelBase()
-	srv := &http.Server{Handler: h, ReadHeaderTimeout: 15 * time.Second,
+	srv := &http.Server{Handler: h, ReadHeaderTimeout: 15 * time.Second, IdleTimeout: IdleTimeout,
 		BaseContext: func(net.Listener) context.Context { return base }}
 	shutdownDone := make(chan struct{})
 	go func() {
@@ -146,6 +146,14 @@ var (
 	ShutdownTimeout = 10 * time.Second
 	StreamsCutAfter = 5 * time.Second
 )
+
+// IdleTimeout is how long a keep-alive connection may wait for its next
+// request before the server closes it. With none, an idle connection was
+// held for good and enough of them ran the process out of descriptors. It
+// is the only one besides the header's on purpose: a timeout on the whole
+// read or write would cut long uploads, websockets and event streams. A
+// variable so a test need not wait it out.
+var IdleTimeout = 120 * time.Second
 
 // Stopper is a hook with something to write when the process stops.
 type Stopper interface{ Stop() }

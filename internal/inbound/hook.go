@@ -100,6 +100,14 @@ type Hook struct {
 	relayIn *chanListener
 }
 
+// IdleTimeout is how long a keep-alive connection through a door may wait
+// for its next request before it is closed. With none, an idle connection
+// was held for good, and anyone on the internet could open enough of them
+// to run the process out of descriptors. Nothing times the whole read or
+// write, on purpose: that would cut long uploads, websockets and event
+// streams. A variable so a test need not wait it out.
+var IdleTimeout = 120 * time.Second
+
 type listener struct {
 	want string // address from the state file
 	ln   net.Listener
@@ -344,6 +352,7 @@ func (h *Hook) openLocked(st State) error {
 	h.http = &listener{want: st.Ports.HTTP, ln: ln, srv: &http.Server{
 		Handler:           http.HandlerFunc(h.serveHTTP),
 		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       IdleTimeout,
 		ConnContext:       tag,
 	}}
 	go h.http.srv.Serve(ln)
@@ -355,6 +364,7 @@ func (h *Hook) openLocked(st State) error {
 	h.https = &listener{want: st.Ports.HTTPS, ln: ln, srv: &http.Server{
 		Handler:           http.HandlerFunc(h.serveHTTPS),
 		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       IdleTimeout,
 		ConnContext:       tag,
 		TLSConfig: &tls.Config{
 			GetCertificate: h.Store.GetCertificate,
@@ -418,6 +428,7 @@ func (h *Hook) openLocalLocked(st State) error {
 	h.local = &listener{want: st.Local.HTTP, ln: ln, srv: &http.Server{
 		Handler:           h.Handler,
 		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       IdleTimeout,
 		ConnContext:       tag,
 	}}
 	go h.local.srv.Serve(ln)

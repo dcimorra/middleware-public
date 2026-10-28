@@ -107,13 +107,13 @@ func (h *Hook) openVPNLocked(addr netip.Addr, covered bool) error {
 	}
 	// Plain HTTP inside the tunnel is already encrypted by WireGuard; it
 	// serves directly, without the redirect the public 80 does.
-	h.vpnHTTP = &listener{want: host, ln: ln, srv: &http.Server{Handler: h.Handler, ReadHeaderTimeout: 15 * time.Second, ConnContext: tag}}
+	h.vpnHTTP = &listener{want: host, ln: ln, srv: &http.Server{Handler: h.Handler, ReadHeaderTimeout: 15 * time.Second, IdleTimeout: IdleTimeout, ConnContext: tag}}
 	go h.vpnHTTP.srv.Serve(ln)
 	ln, err = net.Listen("tcp", net.JoinHostPort(host, ports.HTTPS))
 	if err != nil {
 		return fmt.Errorf("inbound: vpn https: %w", err)
 	}
-	h.vpnHTTPS = &listener{want: host, ln: ln, srv: &http.Server{Handler: h.Handler, ReadHeaderTimeout: 15 * time.Second, ConnContext: tag,
+	h.vpnHTTPS = &listener{want: host, ln: ln, srv: &http.Server{Handler: h.Handler, ReadHeaderTimeout: 15 * time.Second, IdleTimeout: IdleTimeout, ConnContext: tag,
 		TLSConfig: &tls.Config{GetCertificate: h.Store.GetCertificate, MinVersion: tls.VersionTLS12, NextProtos: []string{"h2", "http/1.1", acme.ALPNProto}}}}
 	go h.vpnHTTPS.srv.ServeTLS(h.relayed(ln, func(net.Conn) bool { return true }), "", "")
 	return h.openVPNDNSLocked(addr)
