@@ -125,7 +125,10 @@ flood past that, `trips` times in a minute, blocks it: for a while, and
 when the helper is present also in nftables (`firewall.block`), so a flood
 stops at layer 3 and never reaches Go. That block closes every site at
 once, which is why volume alone from a person never earns it; exploits,
-scanners and failed logins still do (the bans). Blocks have a TTL and are
+scanners and failed logins still do (the bans). The limit is the site's,
+by its own domain, its `www.` and aliases sharing it, and one more for
+every name no site serves together: a flood that names a new host on each
+request is counted as one and blocked like any other. Blocks have a TTL and are
 written down, so a restart neither forgets nor keeps them forever. A site
 with `waf.off` in its manifest has no rate nor body limit; the block list
 and the bans still apply to it.

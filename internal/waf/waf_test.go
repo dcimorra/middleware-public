@@ -2,6 +2,7 @@ package waf
 
 import (
 	"errors"
+	"fmt"
 	"github.com/dcimorra/middleware-public/internal/attack"
 	"io"
 	"net"
@@ -621,6 +622,61 @@ func TestAFloodIsBlockedWhateverItCallsItself(t *testing.T) {
 	}
 	if !w.IsBlocked(net.ParseIP("198.51.100.66")) {
 		t.Fatal("5000 requests in an instant were not blocked")
+	}
+}
+
+func (w *WAF) bucketCount() int {
+	n := 0
+	for i := range w.buckets {
+		s := &w.buckets[i]
+		s.mu.Lock()
+		n += len(s.m)
+		s.mu.Unlock()
+	}
+	return n
+}
+
+// A name a request makes up is not a site of its own to the rate limit:
+// a flood that names a new one each time is blocked like any other, and
+// leaves no bucket per name behind.
+func TestAFloodIsBlockedWhateverNameItAsksFor(t *testing.T) {
+	sites := map[string]string{"shop.example": "shop.example", "www.shop.example": "shop.example"}
+	w, _, _ := newTestWAF(t, t.TempDir(), func(host string) (Site, bool) {
+		d, ok := sites[host]
+		return Site{Domain: d}, ok
+	})
+	if err := w.SetPolicy(DefaultPolicy()); err != nil {
+		t.Fatal(err)
+	}
+	h := w.Wrap(okHandler())
+	ip := net.ParseIP("198.51.100.67")
+	for i := 0; i < 5000 && !w.IsBlocked(ip); i++ {
+		get(h, fmt.Sprintf("scan-%d.example", i), "198.51.100.67:1", nil)
+	}
+	if !w.IsBlocked(ip) {
+		t.Fatal("5000 requests in an instant, each to a new name, were not blocked")
+	}
+	if n := w.bucketCount(); n > 2 {
+		t.Fatalf("%d buckets after the flood, want the address's and its visitor's", n)
+	}
+
+	// A site's www. and the site are one limit, not two.
+	p := DefaultPolicy()
+	p.Rate = &manifest.Rate{Requests: 60, Window: manifest.Duration(time.Minute), Burst: 5}
+	if err := w.SetPolicy(p); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		host := "shop.example"
+		if i%2 == 1 {
+			host = "www.shop.example"
+		}
+		if code := get(h, host, "203.0.113.70:1", nil).Code; code != 200 {
+			t.Fatalf("request %d to %s: %d within the burst", i, host, code)
+		}
+	}
+	if code := get(h, "www.shop.example", "203.0.113.70:1", nil).Code; code != http.StatusTooManyRequests {
+		t.Fatalf("the www. had a burst of its own: %d", code)
 	}
 }
 

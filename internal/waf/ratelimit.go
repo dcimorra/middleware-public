@@ -22,7 +22,8 @@ type shard struct {
 }
 
 // bucketKey is one visitor of one site, or, with client zero, the whole
-// address on that site.
+// address on that site. host is the site's domain, never the Host header,
+// and "" for every name no site serves (Wrap).
 type bucketKey struct {
 	host   string
 	addr   netip.Addr
