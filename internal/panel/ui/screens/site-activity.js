@@ -8,7 +8,7 @@ import { t } from "../lib/i18n.js";
 import { api, enc, qs } from "../lib/api.js";
 import { store } from "../lib/store.js";
 import { onEvent } from "../lib/stream.js";
-import { kv, table, cell, empty, errorBox } from "../components/page.js";
+import { table, cell, empty, errorBox } from "../components/page.js";
 import { levelBadge } from "../components/badge.js";
 import { sparkline } from "../components/sparkline.js";
 import { toast, toastError } from "../components/toast.js";
@@ -27,11 +27,14 @@ export function activityTab(domain, pick = "") {
   const cpu = sparkline({ label: t("activity.cpu") });
   const mem = sparkline({ label: t("activity.memory") });
   const resBox = h("div");
+  // Two empty charts said nothing before the first sample: they show once
+  // there is one, and until then the sentence under them says why.
+  const sparks = h("div", { hidden: true }, h("div", { class: "site-spark-label" }, t("activity.cpu")), cpu.el, h("div", { class: "site-spark-label" }, t("activity.memory")), mem.el);
   const el = h("div", { class: "cards" },
     h("div", { class: "card" }, h("h2", null, t("activity.traffic")), h("p", { class: "small muted" }, t("activity.trafficHint")), spark.el, numbers, trafficErr),
     h("div", { class: "card" }, h("h2", null, t("activity.resources")), h("p", { class: "small muted" }, t("activity.resourcesHint")),
       workers.length ? h("div", { class: "log-bar" }, which) : null,
-      h("h3", null, t("activity.cpu")), cpu.el, h("h3", null, t("activity.memory")), mem.el, resBox),
+      sparks, resBox),
     h("div", { class: "card pad0" }, h("div", { class: "log-bar card-pad" }, h("h2", null, t("activity.incidents"))), incBox),
   );
 
@@ -42,18 +45,19 @@ export function activityTab(domain, pick = "") {
       clear(trafficErr);
       if (!d) {
         spark.set(new Array(60).fill(0));
-        clear(numbers).append(h("p", { class: "small muted" }, t("activity.quiet")));
+        clear(numbers).append(h("p", { class: "site-none" }, t("activity.quiet")));
         return;
       }
       spark.set(d.seconds || []);
       const statuses = Object.entries(d.by_status || {}).sort().map(([k, v]) => `${k}: ${v}`).join(" · ");
-      clear(numbers).append(kv([
-        [t("activity.requests"), String(d.requests)],
-        [t("activity.perSecond"), d.per_second.toFixed(2)],
-        [t("activity.bytes"), fmtBytes(d.bytes)],
-        [t("activity.latency"), t("activity.latencyValue", { p50: d.p50_ms, p95: d.p95_ms })],
-        [t("activity.statuses"), statuses],
-      ]));
+      // The minute's numbers as tiles, read at a glance like the cache's.
+      const tile = (label, value) => h("div", { class: "stat" }, h("div", { class: "label" }, label), h("div", { class: "value" }, value));
+      clear(numbers).append(h("div", { class: "stats site-stats" },
+        tile(t("activity.requests"), String(d.requests)),
+        tile(t("activity.perSecond"), d.per_second.toFixed(2)),
+        tile(t("activity.bytes"), fmtBytes(d.bytes)),
+        tile(t("activity.latency"), t("activity.latencyValue", { p50: d.p50_ms, p95: d.p95_ms }))),
+      ...(statuses ? [h("p", { class: "small muted" }, t("activity.statuses"), ": ", statuses)] : []));
     } catch (e) {
       clear(trafficErr).append(errorBox(e));
     }
@@ -67,8 +71,9 @@ export function activityTab(domain, pick = "") {
       cpu.set(samples.map((x) => Math.round(x.cpu)));
       mem.set(samples.map((x) => Math.round(x.rss / 1048576)));
       const last = samples[samples.length - 1];
+      sparks.hidden = samples.length === 0;
       clear(resBox).append(
-        last ? h("p", { class: "small" }, t("activity.resourcesNow", { cpu: last.cpu, mem: fmtBytes(last.rss) })) : h("p", { class: "small muted" }, t("activity.resourcesNone")),
+        last ? h("p", { class: "small" }, t("activity.resourcesNow", { cpu: last.cpu, mem: fmtBytes(last.rss) })) : h("p", { class: "site-none" }, t("activity.resourcesNone")),
         ...Object.entries(r.workers || {}).sort().map(([name, x]) => h("p", { class: "small muted" }, t("activity.workerNow", { name, cpu: x.cpu, mem: fmtBytes(x.rss) }))),
         ...(r.episodes || []).slice(-5).reverse().map((ep) => h("div", { class: "small " + (ep.end ? "" : "level-warn") },
           t(ep.end ? "activity.episode" : "activity.episodeOpen", {

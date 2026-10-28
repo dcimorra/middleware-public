@@ -3,7 +3,7 @@
 // happens; the search box filters in memory because the list is already
 // here and a round trip would only add a delay.
 
-import { h, clear, shortRev, fmtAgo, debounce } from "../lib/dom.js";
+import { h, clear, shortRev, fmtAgo, fmtTime, fmtBytes, debounce } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, apiURL } from "../lib/api.js";
 import { store } from "../lib/store.js";
@@ -12,22 +12,29 @@ import { page, empty, errorBox, loading, table, cell, notice, search as searchBo
 import { icon } from "../lib/icons.js";
 
 import { modeBadge, aliveStatus, siteMode } from "../components/badge.js";
-import { open, field, checkbox } from "../components/dialog.js";
+import { open, confirm, field, checkbox } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 import { currentNode, setCurrentNode } from "../lib/node.js";
+import { menu } from "./site-menu.js";
 
 export function sitesScreen({ query }) {
   const search = h("input", { type: "search", placeholder: t("sites.search"), "aria-label": t("sites.search"), autocomplete: "off" });
   const newBtn = h("button", { type: "button", class: "btn primary", "data-shortcut": "new" }, icon("plus"), t("sites.new"));
-  const archivedBtn = h("button", { type: "button", class: "btn" }, icon("download"), t("sites.archived"));
-  const importBtn = h("button", { type: "button", class: "btn" }, icon("download"), t("sites.importV1"));
-  const p = page({ title: t("nav.sites"), icon: "globe", actions: [searchBox(search), archivedBtn, importBtn, newBtn] });
-  const container = h("div", { class: "card pad0" });
+  // Archived sites and importing one are used a few times a year: they
+  // fold under "…" so that, on a phone, the search and New site keep the
+  // header to themselves.
+  const more = menu(t("sitelist.more"), [
+    { label: t("sites.archived"), icon: "history", onClick: () => showArchived() },
+    { label: t("sites.importV1"), icon: "download", onClick: () => importV1() },
+  ]);
+  const p = page({ title: t("nav.sites"), icon: "globe", actions: [searchBox(search), more, newBtn] });
+  p.head.classList.add("sites-head");
+  const container = h("div", { class: "card pad0 sites-card" });
   const count = h("p", { class: "small muted", role: "status" });
   // Bulk actions: a bar over the list while something is selected. The
   // selection survives re-renders (the stream re-renders often) and drops
   // sites that went away.
-  const bulkBar = h("div", { class: "notice bulk-bar", hidden: true });
+  const bulkBar = h("div", { class: "sites-bulk", hidden: true, role: "region", "aria-label": t("sitelist.selection") });
   // With other nodes linked, the list says whose sites these are, and the
   // other machines' follow, each under its name.
   const here = h("h2", { class: "node-title", hidden: true });
@@ -64,49 +71,71 @@ export function sitesScreen({ query }) {
     const rows = [];
     let current = null;
     const grouped = list.some((s) => groupOf(s));
+    // A column nobody has a value for is left out, not filled with dashes:
+    // a house of static sites has no ports, and a fresh one no events.
+    const cols = { where: list.some((s) => s.port || s.revision), last: list.some((s) => store.lastEventFor(s.domain)) };
+    const span = 4 + (cols.where ? 1 : 0) + (cols.last ? 1 : 0);
     for (const s of list) {
       if (grouped && groupOf(s) !== current) {
         current = groupOf(s);
-        rows.push(h("tr", { class: "group-row" }, h("th", { colspan: "7", scope: "colgroup" }, current || t("sites.ungrouped"))));
+        rows.push(h("tr", { class: "group-row" }, h("th", { colspan: String(span), scope: "colgroup" }, current || t("sites.ungrouped"))));
       }
-      rows.push(row(s));
+      rows.push(row(s, cols));
     }
     const all_ = h("input", { type: "checkbox", "aria-label": t("sites.selectAll") });
     all_.checked = visible.length > 0 && visible.every((d) => selected.has(d));
+    all_.indeterminate = !all_.checked && visible.some((d) => selected.has(d));
     all_.addEventListener("change", () => {
       for (const d of visible) { if (all_.checked) selected.add(d); else selected.delete(d); }
       render();
     });
-    container.append(table([
+    // Its own table, not the shared responsive one: that one turns every
+    // cell into a "Label: value" line on a phone, and a site took six of
+    // them, a lone checkbox on top and "Last event: —" at the bottom. Here
+    // a row is two lines on a phone (the name with its mode, then its state
+    // and when it last did something) and the checkbox sits beside them.
+    const tbl = table([
       { label: all_, class: "check-col" },
       { label: t("sites.col.domain") },
-      { label: t("sites.col.mode") },
       { label: t("sites.col.status") },
-      { label: t("sites.col.port"), class: "num" },
-      { label: t("sites.col.revision") },
-      { label: t("sites.col.lastEvent") },
-    ], rows, { responsive: true }).el);
-    count.textContent = t("sites.count", { n: list.length, total: all.length });
+      { label: t("sites.col.mode") },
+      cols.where ? { label: t("sitelist.col.where") } : null,
+      cols.last ? { label: t("sitelist.col.last"), class: "right" } : null,
+    ].filter(Boolean), rows).el;
+    tbl.querySelector("table").classList.add("sites-table");
+    container.classList.toggle("selecting", selected.size > 0);
+    container.append(tbl);
+    // The total is the list itself; the count only says something when
+    // a search has left some out.
+    count.textContent = list.length === all.length ? "" : t("sites.count", { n: list.length, total: all.length });
   }
 
-  function row(s) {
+  function row(s, cols) {
     const href = `#/sites/${encodeURIComponent(s.domain)}`;
     const last = store.lastEventFor(s.domain);
+    const m = s.manifest || {};
     const box = h("input", { type: "checkbox", "aria-label": t("sites.select", { domain: s.domain }) });
     box.checked = selected.has(s.domain);
     box.addEventListener("click", (e) => e.stopPropagation());
     box.addEventListener("change", () => { if (box.checked) selected.add(s.domain); else selected.delete(s.domain); render(); });
-    const tr = h("tr", { class: "row-link", tabindex: "-1" },
-      cell(box, null, "check-col"),
-      cell(h("a", { class: "cell-link", href }, s.domain), null, "primary"),
-      cell(modeBadge(s), t("sites.col.mode")),
-      cell(aliveStatus(s), t("sites.col.status")),
-      cell(s.port ? String(s.port) : "", t("sites.col.port"), "num mono"),
-      cell(shortRev(s.revision), t("sites.col.revision"), "mono"),
-      cell(last ? h("span", { class: "small dim", title: last.time }, h("span", { class: "mono" }, last.type), " ", last.message || "", " · ", fmtAgo(last.time, t)) : h("span", { class: "small muted" }, "—"), t("sites.col.lastEvent")),
+    // Where it answers, for a process: its port and revision, quiet. A
+    // static site or a project has neither, and the cell stays empty
+    // instead of holding a dash.
+    const where = [s.port ? ":" + s.port : "", shortRev(s.revision)].filter(Boolean).join(" · ");
+    const tr = h("tr", { class: "row-link" + (box.checked ? " picked" : ""), tabindex: "-1" },
+      cell(h("label", { class: "site-pick" }, box), null, "check-col"),
+      cell(h("div", { class: "site-name" },
+        h("a", { class: "cell-link", href }, s.domain),
+        m.title && m.title !== s.domain ? h("span", { class: "site-title" }, m.title) : null), null, "site-cell"),
+      cell(aliveStatus(s), null, "site-state"),
+      // The mode only where it adds to the state: "held, held" and
+      // "stopped, stopped" read as a stutter.
+      cell(["hold", "stopped"].includes(siteMode(s)) ? "" : modeBadge(s), null, "site-mode"),
+      cols.where ? cell(where ? h("span", { class: "mono", title: s.revision || "" }, where) : "", null, "site-where") : null,
+      cols.last ? cell(last ? h("span", { class: "site-last", title: [last.type, last.message, fmtTime(last.time)].filter(Boolean).join(" · ") }, fmtAgo(last.time, t)) : "", null, "site-last-cell right") : null,
     );
     tr.addEventListener("click", (e) => {
-      if (e.target.closest("a") || e.target.closest("input")) return;
+      if (e.target.closest("a") || e.target.closest("input") || e.target.closest("label")) return;
       navigate(`/sites/${encodeURIComponent(s.domain)}`);
     });
     return tr;
@@ -211,10 +240,10 @@ export function sitesScreen({ query }) {
     bulkBar.hidden = selected.size === 0;
     if (!selected.size) return;
     const del = h("button", { type: "button", class: "btn sm danger" }, icon("trash"), t("sites.bulkDelete"));
-    const none = h("button", { type: "button", class: "btn sm" }, t("sites.selectNone"));
+    const none = h("button", { type: "button", class: "btn sm ghost" }, t("sites.selectNone"));
     del.addEventListener("click", bulkDelete);
     none.addEventListener("click", () => { selected.clear(); render(); });
-    bulkBar.append(h("div", { class: "grow" }, h("strong", null, t("sites.selected", { n: selected.size }))), h("div", { class: "actions" }, none, del));
+    bulkBar.append(h("strong", { class: "grow" }, t("sites.selected", { n: selected.size })), none, del);
   }
 
   // One confirmation that names every site and makes the count typed, not
@@ -263,7 +292,6 @@ export function sitesScreen({ query }) {
   }
 
   newBtn.addEventListener("click", newSite);
-  importBtn.addEventListener("click", importV1);
 
   // A site from a V1 house: a token for that one site and two hours, and
   // the command to paste on the V1 machine. The house makes the token; the
@@ -289,12 +317,12 @@ export function sitesScreen({ query }) {
   }
   // Archived sites: one file each under data/archive, faithful (data and
   // dependencies included), restored to sites/ as they were.
-  archivedBtn.addEventListener("click", async () => {
+  async function showArchived() {
     const list = h("div", { class: "stack-sm" });
     const fill = async () => {
       clear(list);
       const items = await api.get("/archive");
-      if (!items.length) { list.append(h("p", { class: "muted" }, t("sites.noArchived"))); return; }
+      if (!items.length) { list.append(empty(t("sites.noArchived"), t("sitelist.noArchivedHint"), null, "history")); return; }
       for (const a of items) {
         const restore = h("button", { type: "button", class: "btn sm" }, t("sites.restore"));
         restore.addEventListener("click", async () => {
@@ -302,20 +330,22 @@ export function sitesScreen({ query }) {
           try { const s = await api.post(`/archive/${encodeURIComponent(a.name)}/restore`); store.putSite(s); toast(t("sites.restored", { domain: a.domain }), "ok"); await fill(); }
           catch (e) { toastError(e); } finally { restore.classList.remove("busy"); }
         });
-        const remove = h("button", { type: "button", class: "btn sm danger" }, t("common.delete"));
+        // An archive is the last copy of a deleted site: one click took it
+        // for good, so it asks first, naming the site.
+        const remove = h("button", { type: "button", class: "btn sm ghost danger", "aria-label": t("common.delete"), title: t("common.delete") }, icon("trash"));
         remove.addEventListener("click", async () => {
+          if (!(await confirm({ title: t("sitelist.archiveDeleteQ", { domain: a.domain }), body: t("sitelist.archiveDeleteBody"), confirmLabel: t("common.delete"), danger: true }))) return;
           try { await api.del(`/archive/${encodeURIComponent(a.name)}`); await fill(); } catch (e) { toastError(e); }
         });
-        const mb = (a.bytes / 1048576).toFixed(1);
-        list.append(h("div", { class: "row" },
-          h("span", { class: "grow" }, h("strong", null, a.domain), " ", h("span", { class: "small muted" }, `${new Date(a.at).toLocaleString()} · ${mb} MB`)),
-          h("a", { class: "btn sm", href: apiURL(`/archive/${encodeURIComponent(a.name)}/download`), download: a.name }, icon("download")),
+        list.append(h("div", { class: "archive-row" },
+          h("div", { class: "grow" }, h("strong", null, a.domain), h("div", { class: "small muted", title: new Date(a.at).toLocaleString() }, fmtAgo(a.at, t), " · ", fmtBytes(a.bytes))),
+          h("a", { class: "btn sm ghost", href: apiURL(`/archive/${encodeURIComponent(a.name)}/download`), download: a.name, "aria-label": t("site.download"), title: t("site.download") }, icon("download")),
           restore, remove));
       }
     };
     try { await fill(); } catch (e) { toastError(e); return; }
     await open({ title: t("sites.archivedTitle"), body: [h("p", { class: "dim" }, t("sites.archivedBody")), list], buttons: [{ label: t("common.close"), value: null }] });
-  });
+  }
   search.addEventListener("input", () => { filter = search.value; render(); paintOthers(); });
 
   // The other nodes: what was chosen in the selector is above, live; the
@@ -352,16 +382,22 @@ export function sitesScreen({ query }) {
       const list = (sites || []).filter((x) => !q || x.domain.toLowerCase().includes(q) || siteMode(x).includes(q)).sort((a, b) => a.domain.localeCompare(b.domain));
       if (!list.length) { card.append(h("p", { class: "small muted" }, q ? t("sites.noMatch") : t("sites.emptyTitle"))); others.append(card); continue; }
       const open_ = (x) => { setCurrentNode(node.id); navigate(`/sites/${encodeURIComponent(x.domain)}`); };
-      card.append(table([
-        { label: t("sites.col.domain") }, { label: t("sites.col.mode") }, { label: t("sites.col.status") }, { label: t("sites.col.revision") },
+      const tw = table([
+        { label: t("sites.col.domain") }, { label: t("sites.col.status") }, { label: t("sites.col.mode") }, { label: t("sitelist.col.where") },
       ], list.map((x) => {
         const a = h("a", { class: "cell-link", href: "#" }, x.domain);
         a.addEventListener("click", (e) => { e.preventDefault(); open_(x); });
+        const title = (x.manifest || {}).title;
+        const where = [x.port ? ":" + x.port : "", shortRev(x.revision)].filter(Boolean).join(" · ");
         const tr = h("tr", { class: "row-link", tabindex: "-1" },
-          cell(a, null, "primary"), cell(modeBadge(x), t("sites.col.mode")), cell(aliveStatus(x), t("sites.col.status")), cell(shortRev(x.revision), t("sites.col.revision"), "mono"));
+          cell(h("div", { class: "site-name" }, a, title && title !== x.domain ? h("span", { class: "site-title" }, title) : null), null, "site-cell"),
+          cell(aliveStatus(x), null, "site-state"), cell(modeBadge(x), null, "site-mode"),
+          cell(where ? h("span", { class: "mono" }, where) : "", null, "site-where"));
         tr.addEventListener("click", (e) => { if (!e.target.closest("a")) open_(x); });
         return tr;
-      }), { responsive: true }).el);
+      })).el;
+      tw.querySelector("table").classList.add("sites-table");
+      card.append(tw);
       others.append(card);
     }
   }

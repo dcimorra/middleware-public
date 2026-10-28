@@ -4,7 +4,7 @@
 // ".." never leaves here in the first place.
 
 import { icon } from "../lib/icons.js";
-import { h, clear, fmtBytes, fmtTime } from "../lib/dom.js";
+import { h, clear, fmtBytes, fmtTime, fmtAgo } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, enc, qs } from "../lib/api.js";
 import { loading, errorBox, empty } from "../components/page.js";
@@ -17,7 +17,7 @@ const MAX_VIEW = 2 * 1024 * 1024;
 export function filesTab(domain) {
   const listBox = h("div", { class: "card pad0" });
   const viewBox = h("div", { class: "card file-view" });
-  const el = h("div", { class: "files" }, listBox, viewBox);
+  const el = h("div", { class: "files site-files" }, listBox, viewBox);
   let dir = "/";
   let current = null;
 
@@ -43,7 +43,7 @@ export function filesTab(domain) {
           it.dir ? null : h("span", { class: "size" }, fmtBytes(it.size)),
         )));
       }
-      if (sorted.length === 0) ul.append(h("li", { class: "muted small" }, h("span", { class: "empty" }, t("files.emptyDir"))));
+      if (sorted.length === 0) ul.append(h("li", { class: "site-none files-empty" }, t("files.emptyDir")));
       listBox.append(ul);
     } catch (e) {
       clear(listBox).append(errorBox(e));
@@ -55,7 +55,7 @@ export function filesTab(domain) {
     clear(viewBox).append(loading());
     const isText = TEXT_EXT.test(path) || !/\.[a-z0-9]+$/i.test(path);
     if ((meta && meta.size > MAX_VIEW)) {
-      clear(viewBox).append(h("div", { class: "path" }, path), empty(t("files.tooBig"), t("files.tooBigHint", { size: fmtBytes(meta.size) })));
+      clear(viewBox).append(h("div", { class: "path" }, path), empty(t("files.tooBig"), t("files.tooBigHint", { size: fmtBytes(meta.size) }), null, "file"));
       return;
     }
     try {
@@ -63,7 +63,7 @@ export function filesTab(domain) {
       const binary = !isText && /[\x00-\x08\x0E-\x1F]/.test(text.slice(0, 4000));
       clear(viewBox);
       const editBtn = h("button", { type: "button", class: "btn sm", hidden: binary }, icon("edit"), t("files.edit"));
-      const bar = h("div", { class: "log-bar" }, h("span", { class: "path grow" }, path), meta ? h("span", { class: "small muted" }, fmtBytes(meta.size), " · ", fmtTime(meta.mtime)) : null, editBtn);
+      const bar = h("div", { class: "log-bar" }, h("span", { class: "path grow" }, path), meta ? h("span", { class: "small muted", title: fmtTime(meta.mtime) }, fmtBytes(meta.size), " · ", fmtAgo(meta.mtime, t)) : null, editBtn);
       const pre = h("pre", { class: "log", tabindex: "0" }, binary ? t("files.binary") : (text || t("files.emptyFile")));
       viewBox.append(bar, pre);
       editBtn.addEventListener("click", () => edit(path, text, meta));
@@ -97,7 +97,7 @@ export function filesTab(domain) {
     ta.focus();
   }
 
-  clear(viewBox).append(empty(t("files.pick"), t("files.pickHint")));
+  clear(viewBox).append(empty(t("files.pick"), t("files.pickHint"), null, "file"));
   browse("/");
   return { el, destroy() { current = null; } };
 }

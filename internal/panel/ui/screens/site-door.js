@@ -12,6 +12,7 @@ import { notice, kv } from "../components/page.js";
 import { confirm, field, checkbox, toggle } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 import { icon } from "../lib/icons.js";
+import { store } from "../lib/store.js";
 
 const PERMS = ["read", "edit", "web", "shell"];
 // Granting one of these is said out loud before saving: the site's
@@ -27,7 +28,13 @@ export function doorCard(domain) {
     let d;
     try { d = await api.get(path); } catch (e) { clear(el).append(h("h2", null, t("door.title")), notice("bad", e.message)); return; }
     clear(el).append(h("h2", null, t("door.title")), h("p", { class: "small muted" }, t("door.hint")));
-    if (!d.process && !d.enabled) { el.append(notice("info", t("door.noProcess"))); return; }
+    if (!d.process && !d.enabled) {
+      // "Serves files" was said to every site without a process, a
+      // project with nothing in it included; only a static site does.
+      const m = (store.site(domain) || {}).manifest || {};
+      el.append(notice("info", t(m.static ? "door.noProcess" : "sitepage.doorNoProcess")));
+      return;
+    }
     const sw = toggle(t(d.enabled ? "door.open" : "door.closed"), { checked: d.enabled });
     el.append(h("div", { class: "field" }, sw.el));
     sw.input.addEventListener("change", async () => {
