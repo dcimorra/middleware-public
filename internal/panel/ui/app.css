@@ -2352,3 +2352,31 @@ details.site-env[open] > summary { margin-bottom: 10px; }
 /* The four limits two by two on a phone, not four full-width lines. */
 @media (max-width: 760px) { .site-limits { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .site-cache-max { max-width: 420px; }
+
+/* ---------- sites: the quick way into a site's chat ---------- */
+/* A round chat button at the end of each site's row; a dot on it says
+   whose turn it is (amber: waiting for an answer; pulsing: at work). */
+.sites-table th.chat-col, .sites-table td.site-chat-cell { width: 52px; padding-left: 0; padding-right: 10px; text-align: right; }
+.chat-quick { position: relative; display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--surface-2); color: var(--text-2); text-decoration: none; transition: background var(--dur), color var(--dur); }
+.chat-quick .ico { width: 19px; height: 19px; }
+.sites-table tr:hover .chat-quick { color: var(--text); }
+.chat-quick:hover, .chat-quick:focus-visible { background: var(--accent-soft); color: var(--accent); }
+.chat-quick:focus-visible { box-shadow: var(--focus); }
+.chat-quick-dot { position: absolute; top: 1px; right: 1px; width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--surface); }
+.chat-quick.asking { background: var(--warn-soft); color: var(--warn); }
+.chat-quick.asking .chat-quick-dot { background: var(--warn); }
+.chat-quick.talking { background: var(--accent-soft); color: var(--accent); }
+.chat-quick.talking .chat-quick-dot { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .chat-quick.talking .chat-quick-dot { animation: none; } }
+/* 44px to the thumb, the circle drawn at 38: the rest is a margin the
+   tap still lands on. */
+@media (pointer: coarse) { .chat-quick { width: 38px; height: 38px; margin: 3px; } .chat-quick::after { content: ""; position: absolute; inset: -3px; } }
+@media (max-width: 760px) {
+  /* On a phone the button stands at the right of the card, across its
+     lines, where the thumb is. */
+  .sites-table tr {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas: "check name mode chat" "check state last chat" "check where where chat";
+  }
+  .sites-table td.site-chat-cell { grid-area: chat; width: auto; padding: 0; align-self: center; }
+}

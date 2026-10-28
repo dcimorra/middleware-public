@@ -80,6 +80,9 @@ export function liveChats({ onCount } = {}) {
     // Waiting first: that is what someone has to do.
     next.sort((a, b) => (b.asking - a.asking) || (new Date(b.updated) - new Date(a.updated)));
     rows = next;
+    // Shared, so a screen can say the same at its own place: the sites
+    // list marks each site's chat button with whose turn it is.
+    store.set("liveChats", rows);
     paint();
   }
 

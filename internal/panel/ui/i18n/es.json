@@ -1855,5 +1855,9 @@
   "security.familyNote.seo": "Ahrefs, Semrush y similares. No le dan nada al sitio y son los que más piden.",
   "security.familyNote.tools": "curl, wget, python-requests, navegadores sin pantalla. Los scripts de despliegue también los usan.",
   "security.familyNote.monitors": "UptimeRobot, Pingdom y similares. Quien vigila este sitio desde fuera se queda fuera.",
-  "security.familyNote.other": "Todo lo que dice bot, crawler o spider y no está en ninguna tabla; los nombres nuevos del mes que viene caen aquí."
+  "security.familyNote.other": "Todo lo que dice bot, crawler o spider y no está en ninguna tabla; los nombres nuevos del mes que viene caen aquí.",
+  "sitelist.col.chat": "Chat",
+  "sitelist.chat": "Abrir el chat de {domain}",
+  "sitelist.chatAsking": "El chat de {domain} espera tu respuesta",
+  "sitelist.chatTalking": "El agente de {domain} está trabajando"
 }

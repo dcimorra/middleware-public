@@ -74,7 +74,7 @@ export function sitesScreen({ query }) {
     // A column nobody has a value for is left out, not filled with dashes:
     // a house of static sites has no ports, and a fresh one no events.
     const cols = { where: list.some((s) => s.port || s.revision), last: list.some((s) => store.lastEventFor(s.domain)) };
-    const span = 4 + (cols.where ? 1 : 0) + (cols.last ? 1 : 0);
+    const span = 5 + (cols.where ? 1 : 0) + (cols.last ? 1 : 0);
     for (const s of list) {
       if (grouped && groupOf(s) !== current) {
         current = groupOf(s);
@@ -101,6 +101,7 @@ export function sitesScreen({ query }) {
       { label: t("sites.col.mode") },
       cols.where ? { label: t("sitelist.col.where") } : null,
       cols.last ? { label: t("sitelist.col.last"), class: "right" } : null,
+      { label: h("span", { class: "sr-only" }, t("sitelist.col.chat")), class: "chat-col" },
     ].filter(Boolean), rows).el;
     tbl.querySelector("table").classList.add("sites-table");
     container.classList.toggle("selecting", selected.size > 0);
@@ -133,12 +134,38 @@ export function sitesScreen({ query }) {
       cell(["hold", "stopped"].includes(siteMode(s)) ? "" : modeBadge(s), null, "site-mode"),
       cols.where ? cell(where ? h("span", { class: "mono", title: s.revision || "" }, where) : "", null, "site-where") : null,
       cols.last ? cell(last ? h("span", { class: "site-last", title: [last.type, last.message, fmtTime(last.time)].filter(Boolean).join(" · ") }, fmtAgo(last.time, t)) : "", null, "site-last-cell right") : null,
+      cell(chatLink(s.domain, currentNode() || ""), null, "site-chat-cell"),
     );
     tr.addEventListener("click", (e) => {
       if (e.target.closest("a") || e.target.closest("input") || e.target.closest("label")) return;
       navigate(`/sites/${encodeURIComponent(s.domain)}`);
     });
     return tr;
+  }
+
+  // Each site's conversation is a tap away from the list, which is how the
+  // operator works: open a site's chat, ask, come back to the list. The
+  // button says whose turn it is, as the bar's pill does: amber while a
+  // conversation of the site waits for an answer, a pulsing dot while its
+  // agent works. Tapping it opens that conversation, not merely the last
+  // one used. node is the machine the site lives on ("" for this one).
+  function chatState(domain, node) {
+    const mine = (store.get("liveChats") || []).filter((r) => r.domain === domain && (r.node || "") === node);
+    return { asking: mine.find((r) => r.asking), talking: mine.find((r) => !r.asking) };
+  }
+  function chatLink(domain, node, go) {
+    const st = chatState(domain, node);
+    const which = st.asking ? "asking" : st.talking ? "talking" : "";
+    const label = t(which === "asking" ? "sitelist.chatAsking" : which === "talking" ? "sitelist.chatTalking" : "sitelist.chat", { domain });
+    const a = h("a", { class: "chat-quick" + (which ? " " + which : ""), href: `#/sites/${encodeURIComponent(domain)}/chat`, "aria-label": label, title: label },
+      icon("chat"), which ? h("span", { class: "chat-quick-dot", "aria-hidden": "true" }) : null);
+    a.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const r = st.asking || st.talking;
+      if (r) store.set("openChat", { domain, id: r.id || "" });
+      if (go) { e.preventDefault(); go(); }
+    });
+    return a;
   }
 
   async function newSite() {
@@ -384,6 +411,7 @@ export function sitesScreen({ query }) {
       const open_ = (x) => { setCurrentNode(node.id); navigate(`/sites/${encodeURIComponent(x.domain)}`); };
       const tw = table([
         { label: t("sites.col.domain") }, { label: t("sites.col.status") }, { label: t("sites.col.mode") }, { label: t("sitelist.col.where") },
+        { label: h("span", { class: "sr-only" }, t("sitelist.col.chat")), class: "chat-col" },
       ], list.map((x) => {
         const a = h("a", { class: "cell-link", href: "#" }, x.domain);
         a.addEventListener("click", (e) => { e.preventDefault(); open_(x); });
@@ -392,7 +420,8 @@ export function sitesScreen({ query }) {
         const tr = h("tr", { class: "row-link", tabindex: "-1" },
           cell(h("div", { class: "site-name" }, a, title && title !== x.domain ? h("span", { class: "site-title" }, title) : null), null, "site-cell"),
           cell(aliveStatus(x), null, "site-state"), cell(modeBadge(x), null, "site-mode"),
-          cell(where ? h("span", { class: "mono" }, where) : "", null, "site-where"));
+          cell(where ? h("span", { class: "mono" }, where) : "", null, "site-where"),
+          cell(chatLink(x.domain, node.id || "", () => { setCurrentNode(node.id); navigate(`/sites/${encodeURIComponent(x.domain)}/chat`); }), null, "site-chat-cell"));
         tr.addEventListener("click", (e) => { if (!e.target.closest("a")) open_(x); });
         return tr;
       })).el;
@@ -412,6 +441,8 @@ export function sitesScreen({ query }) {
   const rerender = debounce(render, 80);
   subs.push(store.subscribe("sites", rerender));
   subs.push(store.subscribe("events", () => { if (store.get("sitesLoaded")) rerender(); }));
+  // Whose turn it is in each conversation moves the chat buttons.
+  subs.push(store.subscribe("liveChats", () => { rerender(); paintOthers(); }));
 
   (async () => {
     try {
