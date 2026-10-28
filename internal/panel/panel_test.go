@@ -141,7 +141,9 @@ func TestNothingInlineSlipsPastTheCSP(t *testing.T) {
 		}
 	}
 	walkJS(t, func(name, src string) {
-		for _, bad := range []string{`setAttribute("style"`, `setAttribute('style'`, ` style="`, `.innerHTML`, `.outerHTML`, `insertAdjacentHTML`} {
+		// style: handed to h() becomes a style attribute too, which the
+		// CSP drops: the specs progress bar never filled that way.
+		for _, bad := range []string{`setAttribute("style"`, `setAttribute('style'`, ` style="`, `{ style:`, `, style:`, `.innerHTML`, `.outerHTML`, `insertAdjacentHTML`} {
 			if strings.Contains(src, bad) {
 				t.Errorf("%s uses %s, which the CSP blocks or which bypasses escaping", name, bad)
 			}

@@ -43,7 +43,23 @@ export function render(md, { breaks = false } = {}) {
   const lines = md.replace(/\r/g, "").split("\n");
   let i = 0;
   const isTableRow = (l) => /^\s*\|.*\|\s*$/.test(l);
-  const cells = (l) => l.trim().replace(/^\||\|$/g, "").split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
+  // A pipe inside `code` is the code's, not a column: the API document's
+  // "a|b" in backticks split its row and left a cell the width of a page.
+  const cells = (l) => {
+    const out = [];
+    let cur = "";
+    let inCode = false;
+    const s = l.trim().replace(/^\||\|$/g, "");
+    for (let k = 0; k < s.length; k++) {
+      const c = s[k];
+      if (c === "\\" && s[k + 1] === "|") { cur += "|"; k++; continue; }
+      if (c === "`") inCode = !inCode;
+      if (c === "|" && !inCode) { out.push(cur.trim()); cur = ""; continue; }
+      cur += c;
+    }
+    out.push(cur.trim());
+    return out;
+  };
   while (i < lines.length) {
     const l = lines[i];
     if (/^```/.test(l)) {

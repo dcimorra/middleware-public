@@ -290,7 +290,9 @@ onUnauthorized(() => { if (authed) { showAuth("login"); toast(t("auth.expired"),
 document.addEventListener("route", () => {
   markNav();
   const path = currentPath();
-  const key = NAV.find(([, href]) => path === href || path.startsWith(href + "/"))?.[0];
+  // A query is part of where the screen is ("#/settings?s=agents"), not
+  // another screen: without this the tab of a section read "· middleware".
+  const key = NAV.find(([, href]) => path === href || path.startsWith(href + "/") || path.startsWith(href + "?"))?.[0];
   const site = /^\/sites\/([^/?]+)/.exec(path);
   baseTitle = (site ? decodeURIComponent(site[1]) : key ? t("nav." + key) : "") + " · " + t("app.title");
   paintTitle();
