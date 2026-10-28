@@ -13,11 +13,16 @@ domain.
   already owns the files. The CLI uses it.
 
 **Who reaches the panel.** The address lists of `/auth/panel-access` go before
-everything the panel answers (403). This machine (loopback, with no proxy
-header) always gets in, and a list that would shut out the caller saving it
-is refused. With `passkey_only`, the password login answers 403 without
-comparing anything. `middleware panel open [30m]` on the server lifts both
-for a while, without a restart; the panel shows a red strip meanwhile.
+everything the panel answers (403). The unix socket always gets in; a TCP
+connection from loopback does not (a site's process, or a site made to
+fetch a URL, connects from there too) and is `127.0.0.1` to the lists. The
+site door (`/api/v1/site/…`) is let past the lists on the containers'
+socket and from loopback without a proxy header, since it answers a site's
+token and nothing else. A list that would shut out the caller saving it is
+refused. With `passkey_only`, the password login answers 403 without
+comparing anything, from loopback too. `middleware panel open [30m]` on
+the server lifts both for a while, without a restart; the panel shows a
+red strip meanwhile.
 
 **Passkeys** are WebAuthn credentials bound to the name the panel was opened
 by (ES256, Ed25519, RS256; attestation not asked). They work on a secure

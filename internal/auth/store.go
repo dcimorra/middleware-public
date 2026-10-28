@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -46,6 +47,9 @@ type Store struct {
 	tokens   []Token
 	loaded   bool
 	limiter  *brake.Brake
+	// house counts every wrong password, whatever address it came from
+	// (houseLoginPolicy).
+	house *brake.Brake
 
 	// pkMu guards passkeys.json and the ceremonies in flight.
 	pkMu       sync.Mutex
@@ -96,12 +100,45 @@ type Public struct {
 // password take centuries.
 var loginPolicy = brake.Policy{Failures: 5, Window: time.Minute, MaxLock: 24 * time.Hour}
 
+// houseLoginPolicy is the whole house's budget of wrong passwords, beside
+// each address's. The address is the edge's word for it (edge.ClientIP),
+// and from loopback that word is believed: the tunnel's connector is on
+// loopback and says who the visitor is in CF-Connecting-IP, and nothing
+// at the TCP level tells it apart from a site's process, or from a site
+// made to fetch a URL, writing the same header. Distrusting loopback
+// would make every visitor through the tunnel one address, and the first
+// five wrong passwords anywhere would lock everyone out. So the address
+// stays believed and this caps what believing it costs: thirty failures
+// in ten minutes, from any number of addresses, close the password for
+// everyone for ten minutes, doubling to an hour. A guesser that writes a
+// new address on every try gets about thirty guesses an hour instead of
+// as many as the CPU can check. The price is that a flood can keep the
+// operator's password shut too, for an hour at a time; the passkey, the
+// CLI on the socket and `middleware panel open` do not go through it.
+var houseLoginPolicy = brake.Policy{Failures: 30, Window: 10 * time.Minute, MaxLock: time.Hour}
+
+// houseKey is the house budget's key in its brake.
+const houseKey = "*"
+
+// loginKey is what one guesser at the login is counted as. The brake
+// counts an IPv6 /64 as one household; for the panel's password a /48,
+// the smallest block a provider routes to one customer, so a guesser
+// with a routed prefix cannot walk 65,536 /64s with five tries each.
+func loginKey(ip string) string {
+	if a, err := netip.ParseAddr(ip); err == nil && a.Unmap().Is6() {
+		if p, err := a.Unmap().Prefix(48); err == nil {
+			return p.String()
+		}
+	}
+	return brake.KeyOf(ip)
+}
+
 // New opens the store under root/data/auth. bus may be nil for tests.
 func New(root string, bus *events.Bus) *Store {
 	if bus == nil {
 		bus = events.New("")
 	}
-	return &Store{dir: filepath.Join(root, "data", "auth"), bus: bus, now: time.Now, limiter: brake.New(loginPolicy), challenges: map[string]challenge{}}
+	return &Store{dir: filepath.Join(root, "data", "auth"), bus: bus, now: time.Now, limiter: brake.New(loginPolicy), house: brake.New(houseLoginPolicy), challenges: map[string]challenge{}}
 }
 
 func (s *Store) passwordPath() string  { return filepath.Join(s.dir, "password") }
@@ -195,9 +232,13 @@ func (s *Store) Login(password, ip string) (string, error) {
 	if !s.HasOperator() {
 		return "", ErrNoOperator
 	}
-	key := brake.KeyOf(ip)
+	key := loginKey(ip)
 	if blocked, _ := s.limiter.Blocked(key); blocked {
 		s.emit("auth.rate_limited", "login rate limited", map[string]any{"ip": ip})
+		return "", ErrRateLimited
+	}
+	if blocked, _ := s.house.Blocked(houseKey); blocked {
+		s.emit("auth.rate_limited", "login rate limited for every address: too many wrong passwords in the house", map[string]any{"ip": ip, "house": true})
 		return "", ErrRateLimited
 	}
 	phc, err := fsx.ReadTrimmed(s.passwordPath())
@@ -211,9 +252,13 @@ func (s *Store) Login(password, ip string) (string, error) {
 	}
 	if !ok {
 		s.limiter.Failed(key)
+		s.house.Failed(houseKey)
 		s.emit("auth.login_failed", "wrong password", map[string]any{"ip": ip})
 		return "", ErrBadCredentials
 	}
+	// The house's count is not forgotten on a success: one right password
+	// from the owner in the middle of a flood would give the flood a
+	// fresh budget.
 	s.limiter.Passed(key)
 	id, err := s.NewSession()
 	if err != nil {

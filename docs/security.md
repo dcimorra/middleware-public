@@ -89,9 +89,16 @@ through WireGuard only.
 
 **Password guessing.** Every password door (the panel's login, a site's,
 each zone's) goes through one brake (`internal/brake`): failures are counted
-per address (per /64 for IPv6), and five inside a minute lock that address
-out of that door for a minute, doubling with each lock (to a day for the
-panel, fifteen minutes for a site). A success forgets the count. Locked
+per address (per /64 for IPv6, per /48 at the panel's login), and five
+inside a minute lock that address out of that door for a minute, doubling
+with each lock (to a day for the panel, fifteen minutes for a site). A
+success forgets the count. The panel's login also has a budget for the
+whole house: thirty wrong passwords in ten minutes, from any number of
+addresses, close the password for everyone for ten minutes, doubling to an
+hour. From loopback the tunnel's `CF-Connecting-IP` is believed, so a
+local process can name a new address on every try; this budget is what
+stops it. A flood can keep the operator's password shut as well; the
+passkey, the CLI and `middleware panel open` do not go through it. Locked
 attempts get 429 with `Retry-After` and are not checked at all. On top of
 that, at most two key derivations run at once in the whole installation, so
 guesses spread over many addresses queue instead of taking every site's CPU.
@@ -199,8 +206,12 @@ cloudflared), so for them the ban is the WAF's 403.
 - **Docker is root-equivalent.** A site in the docker runtime is isolated
   from the others, but the `docker` group grants the supervisor root on the
   host through the daemon. That is Docker's model, not ours.
-- **The loopback listener trusts the machine.** Anything that can reach
-  `127.0.0.1:46100` can reach the panel's login page. Use the VPN module or
+- **The loopback listener does not trust the machine.** Anything that can
+  reach `127.0.0.1:46100` can reach the panel's login page, held to the
+  address lists (as `127.0.0.1`, or as the address it writes in
+  `CF-Connecting-IP`, which loopback is believed about for the tunnel's
+  sake), the closed password and the house's login budget; only the unix
+  socket skips them. Use the VPN module or
   a tunnel that authenticates (Cloudflare Access) if other people have
   shells here.
 - **A model may be wrong.** Agents act inside the jail with the site's
