@@ -569,7 +569,10 @@ healthy in three minutes is removed there and the site started here again
 as it was. Only once it answers there are its names published on that
 node over the records that pointed here (`over`, which only a node may
 ask), and only then does this node take its own route down. The copy here
-is archived, not deleted (`data/archive/`), so going back is a restore.
+is archived, not deleted (`data/archive/`), so going back is a restore;
+its folder leaves `sites/` before it is packed (as `data/archive/<site>-<time>.packing`),
+so nothing of it starts here again meanwhile, and a pack that fails puts it
+back stopped.
 A move is given in all what its steps may take by the site's manifest
 (each `move` command's `timeout`, the install there, the wait for the
 site) and an hour for the copies; once the site answers there, pointing

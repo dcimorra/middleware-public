@@ -518,10 +518,20 @@ func (m *Manager) Resume(domain string, original []byte) error {
 }
 
 // ArchiveMoved archives a site that was stopped for a move with the
-// manifest it had before the stop, and removes its folder.
+// manifest it had before the stop, and removes its folder. The site runs
+// on the other node by now: the pack has its own time, not the move's,
+// and a pack a restart cut short (its folder already out of sites/, under
+// data/archive as .packing) is packed again.
 func (m *Manager) ArchiveMoved(ctx context.Context, domain string, original []byte) (string, error) {
-	return m.deleteWith(ctx, domain, true, original)
+	return m.deleteWith(context.WithoutCancel(ctx), domain, true, original)
 }
+
+// packingSuffix names a site's folder taken out of sites/ to be packed.
+const packingSuffix = ".packing"
+
+// beforePack, when set, is called with the folder about to be packed;
+// an error fails the pack. The tests look at the house in that moment.
+var beforePack func(folder string) error
 
 func (m *Manager) deleteWith(ctx context.Context, domain string, keep bool, before []byte) (archived string, err error) {
 	if !manifest.ValidName(domain) {
@@ -529,6 +539,11 @@ func (m *Manager) deleteWith(ctx context.Context, domain string, keep bool, befo
 	}
 	dir := m.Dir(domain)
 	if st, err := os.Lstat(dir); err != nil || !st.IsDir() {
+		if keep && before != nil {
+			if packing := m.packingOf(domain); packing != "" {
+				return m.pack(ctx, domain, packing, before, nil)
+			}
+		}
 		return "", ErrNotFound
 	}
 	original, _ := os.ReadFile(filepath.Join(dir, manifest.FileName))
@@ -549,18 +564,62 @@ func (m *Manager) deleteWith(ctx context.Context, domain string, keep bool, befo
 	if err := os.MkdirAll(m.ArchiveDir(), 0o755); err != nil {
 		return "", err
 	}
+	// Out of sites/ before the manifest it had goes back in. Written in
+	// place, as it first was, the engine read it at its next tick and
+	// started the site again, workers and database included, for the
+	// minutes the pack takes; a pack that failed, or a move whose time ran
+	// out during it, left the site running here and on the node it moved
+	// to. Renamed, the engine sees the folder gone at once, and nothing
+	// written into it after is anything the engine reads.
+	packing := filepath.Join(m.ArchiveDir(), domain+"-"+time.Now().UTC().Format("20060102T150405Z")+packingSuffix)
+	if err := os.Rename(dir, packing); err != nil {
+		return "", fmt.Errorf("archive: taking the folder out of sites/: %w", err)
+	}
+	stopped, _ := os.ReadFile(filepath.Join(packing, manifest.FileName))
+	return m.pack(ctx, domain, packing, original, stopped)
+}
+
+// packingOf is a folder of domain's left under data/archive by a pack
+// that did not finish, the newest; "" when there is none.
+func (m *Manager) packingOf(domain string) string {
+	names, _ := filepath.Glob(filepath.Join(m.ArchiveDir(), domain+"-*"+packingSuffix))
+	if len(names) == 0 {
+		return ""
+	}
+	sort.Strings(names)
+	return names[len(names)-1]
+}
+
+// pack archives the folder taken out of sites/ (packing) with the
+// manifest the operator had, and removes it. A pack that fails puts the
+// folder back where it was with stopped, the manifest that kept it
+// stopped: nothing was deleted, and nothing started.
+func (m *Manager) pack(ctx context.Context, domain, packing string, original, stopped []byte) (string, error) {
+	mf := filepath.Join(packing, manifest.FileName)
 	if original != nil {
 		// The archive keeps the manifest the operator had, not the stop
 		// written to get there.
-		_ = fsx.WriteAtomic(filepath.Join(dir, manifest.FileName), original, 0o644)
+		_ = fsx.WriteAtomic(mf, original, 0o644)
 	}
-	dest := filepath.Join(m.ArchiveDir(), domain+"-"+time.Now().UTC().Format("20060102T150405Z")+".tar.gz")
-	rep, err := archive.Pack(ctx, dir, dest)
+	dest := strings.TrimSuffix(packing, packingSuffix) + ".tar.gz"
+	var rep archive.Report
+	var err error
+	if beforePack != nil {
+		err = beforePack(packing)
+	}
+	if err == nil {
+		rep, err = archive.Pack(ctx, packing, dest)
+	}
 	if err != nil {
-		// Nothing was deleted: the folder is still there, stopped.
-		return "", fmt.Errorf("archive: %w", err)
+		if stopped != nil {
+			_ = fsx.WriteAtomic(mf, stopped, 0o644)
+		}
+		if !fsx.Exists(m.Dir(domain)) && os.Rename(packing, m.Dir(domain)) == nil {
+			return "", fmt.Errorf("archive: %w (the folder is back in sites/, stopped)", err)
+		}
+		return "", fmt.Errorf("archive: %w (the folder is in %s)", err, packing)
 	}
-	if err := os.RemoveAll(dir); err != nil {
+	if err := os.RemoveAll(packing); err != nil {
 		return dest, err
 	}
 	_ = os.RemoveAll(m.logsDir(domain))
