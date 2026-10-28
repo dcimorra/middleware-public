@@ -246,7 +246,9 @@ func buildWire(a *app.App) app.Hook {
 	if theSeen != nil {
 		srv.RegisterSeen(theSeen)
 	}
-	w.updater = buildUpdater(a)
+	// An automatic update waits while a site moves between nodes: the
+	// restart that ends it would cut the move.
+	w.updater = buildUpdater(a, func() bool { return false }) // TODO(merge): use server.MovesRunning()
 	srv.RegisterUpdate(w.updater)
 	w.mesh = buildMesh(a, srv)
 	if w.mesh != nil {
@@ -751,8 +753,9 @@ func dns01For(d cloudflareDNS) *acme.DNS01 {
 }
 
 // buildUpdater is the self-update: the helper installs, the supervisor
-// restarts itself as the Restart button does.
-func buildUpdater(a *app.App) *update.Updater {
+// restarts itself as the Restart button does. busy defers an automatic
+// install (update.Options.Busy).
+func buildUpdater(a *app.App, busy func() bool) *update.Updater {
 	hc := helper.Dial("")
 	return update.New(update.Options{
 		Current: Version,
@@ -774,6 +777,7 @@ func buildUpdater(a *app.App) *update.Updater {
 			return err
 		},
 		Restart: func() { _ = syscall.Kill(os.Getpid(), syscall.SIGTERM) },
+		Busy:    busy,
 		Confirm: func(ctx context.Context, version string) (update.Confirmation, error) {
 			r, err := hc.UpdateConfirm(ctx, version)
 			c := update.Confirmation{Confirmed: r.Confirmed, Skipped: r.Skipped}

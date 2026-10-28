@@ -35,6 +35,10 @@ const DefaultEvery = time.Hour
 // fresh is how long a check is reused before asking GitHub again.
 const fresh = time.Hour
 
+// DeferRetry is how soon an automatic install that waited for Busy is
+// tried again.
+const DeferRetry = time.Minute
+
 // Options configure an Updater.
 type Options struct {
 	Current string
@@ -50,6 +54,10 @@ type Options struct {
 	Helper  func() bool
 	// Restart ends the supervisor so systemd starts the new binary.
 	Restart func()
+	// Busy says whether something a restart would cut is running (a move
+	// between nodes). An automatic install waits while it does; Install,
+	// the operator's button, does not.
+	Busy func() bool
 	// Confirm tells the helper that Current is serving (update.confirm).
 	// nil is an installation without the helper, where nothing is ever
 	// on trial.
@@ -121,7 +129,12 @@ type Updater struct {
 	// told is the last release announced as waiting for the button, so it
 	// is announced once and not at every check.
 	told string
-	next time.Time
+	// deferred is the last release announced as waiting for Busy, for the
+	// same reason.
+	deferred string
+	next     time.Time
+	// poll is how often Run looks at the clock; zero is 15 seconds.
+	poll time.Duration
 }
 
 // New builds an updater.
@@ -300,7 +313,11 @@ func (u *Updater) every() time.Duration {
 // announced, once, and waits for the button.
 func (u *Updater) Run(ctx context.Context) {
 	last := u.opts.Now().Add(-u.every() + 2*time.Minute)
-	t := time.NewTicker(15 * time.Second)
+	poll := u.poll
+	if poll == 0 {
+		poll = 15 * time.Second
+	}
+	t := time.NewTicker(poll)
 	defer t.Stop()
 	for {
 		due := last.Add(u.every())
@@ -318,22 +335,53 @@ func (u *Updater) Run(ctx context.Context) {
 			continue
 		}
 		last = u.opts.Now()
-		u.tick(ctx)
+		if u.tick(ctx) {
+			last = last.Add(-u.every() + DeferRetry)
+		}
 	}
 }
 
-func (u *Updater) tick(ctx context.Context) {
+// tick looks once, and reports whether an install was deferred.
+func (u *Updater) tick(ctx context.Context) bool {
+	// A retry after a deferral reuses the last answer: a move can last an
+	// hour, and asking GitHub every minute of it would spend the hourly
+	// allowance of an address without a token.
+	u.mu.Lock()
+	force := u.deferred == ""
+	u.mu.Unlock()
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	st := u.Check(cctx, true)
+	st := u.Check(cctx, force)
 	cancel()
+	deferring := st.Available && st.Auto && st.CanInstall && u.opts.Busy != nil && u.opts.Busy()
+	if !deferring {
+		u.mu.Lock()
+		u.deferred = ""
+		u.mu.Unlock()
+	}
 	if !st.Available {
-		return
+		return false
 	}
 	if st.Auto && st.CanInstall {
+		// The install ends in a restart of the supervisor, and a move
+		// between nodes is the supervisor copying a site: restarted in
+		// the middle, the move is cut and the site is left half here and
+		// half there. An automatic install waits for it, looked at again
+		// in DeferRetry rather than a whole interval later; the operator's
+		// button does not wait, the operator having chosen.
+		if deferring {
+			u.mu.Lock()
+			told := u.deferred == st.Latest
+			u.deferred = st.Latest
+			u.mu.Unlock()
+			if !told {
+				u.opts.Bus.Emit(events.Event{Type: "update.deferred", Actor: "engine", Message: st.Latest + " waits for the moves between nodes to end before it installs"})
+			}
+			return true
+		}
 		ictx, cancel := context.WithTimeout(ctx, 11*time.Minute)
 		defer cancel()
 		_, _ = u.Install(ictx, "engine")
-		return
+		return false
 	}
 	u.mu.Lock()
 	told := u.told == st.Latest
@@ -342,6 +390,7 @@ func (u *Updater) tick(ctx context.Context) {
 	if !told {
 		u.opts.Bus.Emit(events.Event{Type: "update.available", Actor: "engine", Level: "warn", Message: st.Latest + " is available (running " + st.Current + "); install it from System"})
 	}
+	return false
 }
 
 // DefaultSettle is how long the supervisor serves before it confirms an

@@ -41,6 +41,15 @@ cycle, a bad one kept costs every site. The install script below goes
 around all of this; an operator who installed a binary by hand is not
 second-guessed.
 
+### Not in the middle of a move
+
+An automatic install ends in a restart of the supervisor, and a site
+moving between nodes is the supervisor copying it: restarted then, the
+move is cut. So an automatic install waits while a move runs (event
+`update.deferred`, once), and is looked at again a minute later rather
+than at the next interval. **Update now** does not wait: the operator
+chose.
+
 ## The procedure
 
 ```sh

@@ -283,7 +283,9 @@ The settings object (`data/settings.json`):
 `update` is the self-update: `every_minutes` (1 to 10080, an hour when
 absent) is how often a new release is looked for, and `auto` whether one
 found installs itself; off, it is announced once (`update.available`) and
-waits for `POST /system/update/install`.
+waits for `POST /system/update/install`. On, it waits while a site is
+moving between nodes (`update.deferred`, once) and is tried again a
+minute later; the `POST` does not wait.
 
 `agents` caps the conversations: `max_concurrent` turns at once across
 every conversation (1..64), of which `reserved_for_house` (fewer than the

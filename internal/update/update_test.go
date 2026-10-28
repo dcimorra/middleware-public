@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -116,6 +118,102 @@ func TestACheckInstallsOnlyWithAutoOnAndOtherwiseAnnouncesOnce(t *testing.T) {
 	u.tick(context.Background())
 	if installed != "v2.0.0-alpha.10" {
 		t.Fatalf("auto on did not install: %q", installed)
+	}
+}
+
+// clock is a time the test moves.
+type clock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *clock) Now() time.Time { c.mu.Lock(); defer c.mu.Unlock(); return c.t }
+func (c *clock) add(d time.Duration) {
+	c.mu.Lock()
+	c.t = c.t.Add(d)
+	c.mu.Unlock()
+}
+
+// An automatic install waits while a move runs, is looked at again a
+// minute later and not an hour, and goes ahead once the move is over.
+// The operator's button does not wait.
+func TestAnAutomaticInstallWaitsForTheMovesAndTheButtonDoesNot(t *testing.T) {
+	fakeGitHub(t, releases)
+	bus := events.New("")
+	ch, stop := bus.Subscribe()
+	defer stop()
+	var busy atomic.Bool
+	busy.Store(true)
+	installed := make(chan string, 4)
+	clk := &clock{t: time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)}
+	opts := Options{Current: "v2.0.0-alpha.5", Arch: "amd64", Bus: bus, Now: clk.Now,
+		Auto:    func() bool { return true },
+		Every:   func() time.Duration { return time.Hour },
+		Busy:    busy.Load,
+		Install: func(_ context.Context, v string) error { installed <- v; return nil }}
+	u := New(opts)
+	u.poll = time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); u.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+
+	// The first look, two minutes after the start, finds a move running.
+	deadline := time.Now().Add(5 * time.Second)
+	for u.Status().NextCheck.IsZero() {
+		if time.Now().After(deadline) {
+			t.Fatal("Run did not start")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	clk.add(2 * time.Minute)
+	waitFor(t, ch, "update.deferred")
+	for u.Status().NextCheck != clk.Now().Add(DeferRetry) {
+		if time.Now().After(deadline) {
+			t.Fatalf("next check %v, want %v", u.Status().NextCheck, clk.Now().Add(DeferRetry))
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case v := <-installed:
+		t.Fatalf("installed %s during a move", v)
+	default:
+	}
+	// Still moving a minute later: deferred again, announced only once.
+	clk.add(DeferRetry)
+	for u.Status().NextCheck != clk.Now().Add(DeferRetry) {
+		if time.Now().After(deadline) {
+			t.Fatal("the second look did not happen")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case v := <-installed:
+		t.Fatalf("installed %s during a move", v)
+	default:
+	}
+	for len(ch) > 0 {
+		if e := <-ch; e.Type == "update.deferred" {
+			t.Fatal("announced twice")
+		}
+	}
+	// The operator's button installs regardless.
+	if v, err := New(opts).Install(context.Background(), "operator"); err != nil || v != "v2.0.0-alpha.10" {
+		t.Fatalf("%q %v", v, err)
+	}
+	if v := <-installed; v != "v2.0.0-alpha.10" {
+		t.Fatalf("installed %q", v)
+	}
+	// The move ends: the next look, a minute on, installs.
+	busy.Store(false)
+	clk.add(DeferRetry)
+	select {
+	case v := <-installed:
+		if v != "v2.0.0-alpha.10" {
+			t.Fatalf("installed %q", v)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("not installed once the move ended")
 	}
 }
 
