@@ -21,6 +21,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/guard"
 	"github.com/dcimorra/middleware-public/internal/helper"
+	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/proxy"
 	"github.com/dcimorra/middleware-public/internal/security"
 	"github.com/dcimorra/middleware-public/internal/settings"
@@ -171,9 +172,25 @@ func buildTraffic(a *app.App) app.Hook {
 		LogDir:   filepath.Join(dataDir(a), "logs"),
 		ClientIP: edge.ClientIP,
 		Host:     proxy.Host,
+		// A site's own name, which the engine resolves; the rest share one
+		// log, so a client making up names makes no folders.
+		Site: func(r *http.Request) (string, bool) {
+			return siteOf(a, proxy.Host(r))
+		},
 	})
 	theTraffic = r
 	return hook{wrap: r.Wrap, run: r.Run}
+}
+
+// siteOf is the domain of the site that answers host, as the proxy
+// decides it: a project has no hostname, so a Host that spells its
+// folder's name is no site.
+func siteOf(a *app.App, host string) (string, bool) {
+	sn, ok := a.Engine.Lookup(host)
+	if !ok || sn.Mode == manifest.ModeProject || manifest.IsProject(sn.Domain) {
+		return "", false
+	}
+	return sn.Domain, true
 }
 
 // guardData is data/, for guardSite; set when the guard is built.

@@ -62,6 +62,14 @@ type Options struct {
 	ClientIP func(r *http.Request) net.IP
 	// Host resolves the domain of a request; nil lower-cases r.Host.
 	Host func(r *http.Request) string
+	// Site resolves a request to the site that serves it, by the site's
+	// own domain (an alias and the www. count as the site). A name it
+	// does not resolve writes to the one shared <LogDir>/access.log, with
+	// the name in the line. The Host header is the client's to write:
+	// keyed on it, every new name was a folder, an open file and a 16 KB
+	// buffer kept for good, and a scanner rotating it ran the house out of
+	// descriptors. Nil takes every name as a site of its own.
+	Site func(r *http.Request) (string, bool)
 	Now  func() time.Time
 	// MaxLogSize and KeepLogs set the rotation: 10 MB and 3 by default.
 	MaxLogSize int64
@@ -218,12 +226,21 @@ func percentile(lat [nbuckets]int, total int, p float64) float64 {
 	return bucketUpper(nbuckets - 1)
 }
 
-// Prune drops rings that saw nothing for a minute. Run calls it; without
-// it a scan of ten thousand hostnames would leave ten thousand rings.
+// Prune drops rings that saw nothing for a minute, and closes the access
+// logs nothing was written to for logIdle. Run calls it; without it a
+// scan of ten thousand hostnames would leave ten thousand rings, and a
+// site removed long ago its log still open.
 func (r *Recorder) Prune() {
-	oldest := r.now().Unix() - window
+	now := r.now()
+	oldest := now.Unix() - window
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	for key, lf := range r.logs {
+		if now.Sub(lf.used) > logIdle {
+			lf.close()
+			delete(r.logs, key)
+		}
+	}
 	for domain, rg := range r.rings {
 		live := false
 		for i := range rg.slots {
@@ -249,7 +266,7 @@ func (r *Recorder) Wrap(next http.Handler) http.Handler {
 		rw := &recordingWriter{ResponseWriter: w}
 		defer func() {
 			dur := r.now().Sub(start)
-			domain := r.host(req)
+			domain, site := r.resolve(req)
 			status := rw.status
 			if status == 0 {
 				// Nothing was written: the handler hijacked (WebSocket)
@@ -260,11 +277,43 @@ func (r *Recorder) Wrap(next http.Handler) http.Handler {
 					status = http.StatusSwitchingProtocols
 				}
 			}
-			r.Record(domain, status, rw.bytes, dur)
-			r.log(domain, req, status, rw.bytes, dur)
+			if site {
+				r.Record(domain, status, rw.bytes, dur)
+			} else {
+				r.Record(r.strangerRing(domain), status, rw.bytes, dur)
+			}
+			r.log(domain, site, req, status, rw.bytes, dur)
 		}()
 		next.ServeHTTP(rw, req)
 	})
+}
+
+// maxRings bounds the names counted one by one. A site always has its
+// ring; past this many, the names no site serves are counted together as
+// "-": each ring is some fourteen kilobytes, Prune only runs once a
+// minute, and a flood of made-up names would otherwise fill memory within
+// that minute.
+const maxRings = 1024
+
+func (r *Recorder) strangerRing(name string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.rings[name]; !ok && len(r.rings) >= maxRings {
+		return "-"
+	}
+	return name
+}
+
+// resolve is the name a request is counted and logged under, and whether
+// a site serves it.
+func (r *Recorder) resolve(req *http.Request) (string, bool) {
+	if r.opts.Site == nil {
+		return r.host(req), true
+	}
+	if d, ok := r.opts.Site(req); ok && d != "" {
+		return d, true
+	}
+	return r.host(req), false
 }
 
 func (r *Recorder) host(req *http.Request) string {
@@ -355,15 +404,27 @@ type logFile struct {
 	f    *os.File
 	w    *bufio.Writer
 	size int64
+	used time.Time
 }
+
+// logIdle is how long an access log stays open with nothing to write.
+const logIdle = 5 * time.Minute
 
 // log appends one line:
 //
 //	2026-10-19T12:00:00Z 203.0.113.5 GET /path?q=1 200 1234 12ms "Mozilla/5.0 …"
 //
 // Compact on purpose: it is grepped and tailed, not parsed by a product.
-func (r *Recorder) log(domain string, req *http.Request, status int, bytes int64, dur time.Duration) {
-	if r.opts.LogDir == "" || domain == "" || strings.ContainsAny(domain, "/\\") || domain == "." || domain == ".." {
+// A name no site serves goes to the shared <LogDir>/access.log, the name
+// after the time.
+func (r *Recorder) log(domain string, site bool, req *http.Request, status int, bytes int64, dur time.Duration) {
+	if r.opts.LogDir == "" {
+		return
+	}
+	key, path, prefix := domain, filepath.Join(r.opts.LogDir, domain, "access.log"), ""
+	if !site {
+		key, path, prefix = "", filepath.Join(r.opts.LogDir, "access.log"), logName(domain)+" "
+	} else if domain == "" || strings.ContainsAny(domain, "/\\") || domain == "." || domain == ".." {
 		return
 	}
 	ip := "-"
@@ -382,15 +443,17 @@ func (r *Recorder) log(domain string, req *http.Request, status int, bytes int64
 	if len(uri) > 1000 {
 		uri = uri[:1000]
 	}
-	line := r.now().UTC().Format(time.RFC3339) + " " + ip + " " + req.Method + " " + uri + " " +
+	now := r.now()
+	line := now.UTC().Format(time.RFC3339) + " " + prefix + ip + " " + req.Method + " " + uri + " " +
 		strconv.Itoa(status) + " " + strconv.FormatInt(bytes, 10) + " " + dur.Round(time.Millisecond).String() + " \"" + ua + "\"\n"
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	lf := r.logs[domain]
+	lf := r.logs[key]
 	if lf == nil {
-		lf = &logFile{path: filepath.Join(r.opts.LogDir, domain, "access.log")}
-		r.logs[domain] = lf
+		lf = &logFile{path: path}
+		r.logs[key] = lf
 	}
+	lf.used = now
 	if lf.f == nil {
 		if err := lf.open(); err != nil {
 			return
@@ -404,6 +467,24 @@ func (r *Recorder) log(domain string, req *http.Request, status int, bytes int64
 	}
 	n, _ := lf.w.WriteString(line)
 	lf.size += int64(n)
+}
+
+// logName is a name nobody serves as it goes in the shared log: the
+// client wrote it, so it is cut short and keeps no space or quote that
+// would shift the fields of the line.
+func logName(name string) string {
+	if name == "" {
+		return "-"
+	}
+	if len(name) > 100 {
+		name = name[:100]
+	}
+	return strings.Map(func(c rune) rune {
+		if c <= ' ' || c == '"' || c == 0x7f {
+			return '_'
+		}
+		return c
+	}, name)
 }
 
 func (lf *logFile) open() error {
@@ -459,14 +540,18 @@ func (r *Recorder) Close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, lf := range r.logs {
-		if lf.w != nil {
-			_ = lf.w.Flush()
-		}
-		if lf.f != nil {
-			_ = lf.f.Close()
-		}
-		lf.f, lf.w = nil, nil
+		lf.close()
 	}
+}
+
+func (lf *logFile) close() {
+	if lf.w != nil {
+		_ = lf.w.Flush()
+	}
+	if lf.f != nil {
+		_ = lf.f.Close()
+	}
+	lf.f, lf.w = nil, nil
 }
 
 // Domains lists the domains with traffic in the last minute, sorted.

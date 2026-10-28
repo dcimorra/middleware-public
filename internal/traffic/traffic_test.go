@@ -3,6 +3,7 @@ package traffic
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -195,6 +196,75 @@ func TestTheAccessLogIsWrittenAndRotatedBySize(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "etc")); err == nil {
 		t.Fatal("a hostile Host header wrote outside the log folder")
+	}
+}
+
+func TestAFloodOfMadeUpNamesOpensNoFileAndNoFolder(t *testing.T) {
+	dir := t.TempDir()
+	c := newClock()
+	sites := map[string]string{"shop.example": "shop.example", "www.shop.example": "shop.example", "alias.example": "shop.example"}
+	rec := New(Options{LogDir: dir, Now: c.now, Site: func(r *http.Request) (string, bool) {
+		d, ok := sites[strings.ToLower(r.Host)]
+		return d, ok
+	}})
+	h := rec.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }))
+	visit := func(host string) {
+		r := httptest.NewRequest("GET", "http://x/", nil)
+		r.Host = host
+		h.ServeHTTP(httptest.NewRecorder(), r)
+	}
+	for i := 0; i < 5000; i++ {
+		visit(fmt.Sprintf("scan-%d.example", i))
+	}
+	visit("www.shop.example")
+	visit("alias.example")
+	visit("shop.example")
+	visit(`evil "name" with spaces`)
+
+	if n := len(rec.logs); n != 2 {
+		t.Fatalf("%d access logs open after a flood of names, want 2 (the site's and the shared one)", n)
+	}
+	ents, _ := os.ReadDir(dir)
+	var names []string
+	for _, e := range ents {
+		names = append(names, e.Name())
+	}
+	if len(names) != 2 || names[0] != "access.log" || names[1] != "shop.example" {
+		t.Fatalf("data/logs holds %d entries (%v), want the shared log and the site's folder", len(names), names[:min(len(names), 5)])
+	}
+	// maxRings, the shared "-" past it and the site.
+	if n := len(rec.rings); n > maxRings+2 {
+		t.Fatalf("%d rings for one minute of made-up names", n)
+	}
+	// The site counts its aliases and its www. as itself.
+	if got := rec.Snapshot().ByDomain["shop.example"].Requests; got != 3 {
+		t.Fatalf("shop.example counted %d requests, want 3 with its aliases", got)
+	}
+	rec.Flush()
+	site, _ := os.ReadFile(filepath.Join(dir, "shop.example", "access.log"))
+	if strings.Count(string(site), "\n") != 3 {
+		t.Fatalf("the site's log: %q", site)
+	}
+	shared, _ := os.ReadFile(filepath.Join(dir, "access.log"))
+	lines := strings.Split(strings.TrimSpace(string(shared)), "\n")
+	if len(lines) != 5001 || strings.Fields(lines[0])[1] != "scan-0.example" {
+		t.Fatalf("the shared log has %d lines, the first %q", len(lines), lines[0])
+	}
+	if f := strings.Fields(lines[5000]); f[1] != "evil__name__with_spaces" || f[3] != "GET" {
+		t.Fatalf("a name with spaces and quotes shifted the line: %q", lines[5000])
+	}
+
+	// Logs nothing writes to are closed, and open again when needed.
+	c.advance(logIdle + time.Minute)
+	rec.Prune()
+	if len(rec.logs) != 0 {
+		t.Fatalf("%d idle logs still open", len(rec.logs))
+	}
+	visit("shop.example")
+	rec.Close()
+	site, _ = os.ReadFile(filepath.Join(dir, "shop.example", "access.log"))
+	if strings.Count(string(site), "\n") != 4 {
+		t.Fatalf("the log did not reopen: %q", site)
 	}
 }
 
