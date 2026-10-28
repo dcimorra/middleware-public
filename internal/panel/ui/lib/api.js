@@ -27,6 +27,13 @@ export function onUnauthorized(fn) {
   return () => listeners.delete(fn);
 }
 
+// signalUnauthorized is the same news from something that learned it
+// without a 401 of its own: the event stream asks /auth/me, which is
+// public and answers 200 with authenticated false.
+export function signalUnauthorized() {
+  for (const fn of listeners) fn();
+}
+
 async function request(method, path, body, opts = {}) {
   const headers = { Accept: "application/json" };
   const init = { method, headers, credentials: "same-origin", signal: opts.signal };
@@ -46,9 +53,7 @@ async function request(method, path, body, opts = {}) {
     }
   }
   const res = await fetch(apiURL(path, opts.node), init);
-  if (res.status === 401 && !opts.allow401) {
-    for (const fn of listeners) fn();
-  }
+  if (res.status === 401 && !opts.allow401) signalUnauthorized();
   const ct = res.headers.get("content-type") || "";
   if (!res.ok) {
     let message = res.statusText || `HTTP ${res.status}`;
