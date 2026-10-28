@@ -7,7 +7,34 @@ import { t } from "../lib/i18n.js";
 import { api } from "../lib/api.js";
 import { field } from "../components/dialog.js";
 import { store } from "../lib/store.js";
+import { icon } from "../lib/icons.js";
 import * as passkeys from "../lib/passkeys.js";
+
+// revealable puts a button in the password field that shows what was
+// typed: on a phone the dots hid the one wrong letter, and a setup's new
+// password was chosen blind. The field goes back to dots on submit, so a
+// browser that offers to save it sees a password field.
+function revealable(input, form) {
+  if (!input.parentNode) return;
+  const btn = h("button", { type: "button", class: "icon-btn" });
+  const paint = () => {
+    const shown = input.type === "text";
+    btn.replaceChildren(icon(shown ? "eyeOff" : "eye", { size: 18 }));
+    btn.setAttribute("aria-label", t(shown ? "auth.hidePassword" : "auth.showPassword"));
+    btn.setAttribute("aria-pressed", String(shown));
+    btn.title = btn.getAttribute("aria-label");
+  };
+  btn.addEventListener("click", () => {
+    input.type = input.type === "password" ? "text" : "password";
+    paint();
+    input.focus();
+  });
+  const wrap = h("div", { class: "pw-wrap" });
+  input.replaceWith(wrap);
+  wrap.append(input, btn);
+  form.addEventListener("submit", () => { input.type = "password"; paint(); }, true);
+  paint();
+}
 
 export function authScreen({ mode, onDone }) {
   const el = h("div", { class: "auth" });
@@ -43,6 +70,7 @@ export function authScreen({ mode, onDone }) {
       form.append(h("h1", null, t("auth.loginTitle")), h("p", { class: "lead" }, t("auth.loginLead")));
       if (!closed) form.append(field(t("auth.password"), password));
     }
+    revealable(password, form);
     let pkBtn = null;
     if (current !== "setup" && me.passkeys && passkeys.supported()) {
       pkBtn = h("button", { type: "button", class: "btn " + (closed ? "primary" : "") }, t("auth.withPasskey"));

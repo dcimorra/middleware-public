@@ -75,8 +75,15 @@ const NAV_GROUPS = { dashboard: "nav.groupManage", events: "nav.groupObserve" };
 
 export const NAV_ICON = Object.fromEntries(NAV.map(([k, , , i]) => [k, i]));
 
+// On a phone the sidebar is a sheet over the screen: it has its own head
+// (the name and a way to close it that is not "tap the dark part") and,
+// at its foot, the theme, which left the crowded bar for it.
+let sheetTheme = null;
 function buildSidebar() {
   clear(sidebar);
+  const close = h("button", { type: "button", class: "icon-btn", "aria-label": t("common.close") }, icon("x"));
+  close.addEventListener("click", () => closeMenu(true));
+  sidebar.append(h("div", { class: "sheet-head" }, h("span", { class: "brand" }, brandMark(), h("span", null, t("app.title"))), close));
   for (const [key, href, k, ico] of NAV) {
     if (NAV_GROUPS[key]) sidebar.append(h("div", { class: "group" }, t(NAV_GROUPS[key])));
     sidebar.append(h("a", { href: "#" + href, "data-path": href },
@@ -90,7 +97,16 @@ function buildSidebar() {
     showAuth("login");
   });
   sidebar.append(logout);
+  sheetTheme = h("button", { type: "button", class: "sheet-theme" });
+  sheetTheme.addEventListener("click", cycleTheme);
+  sidebar.append(h("div", { class: "sheet-foot" }, sheetTheme));
+  themeLabel();
   markNav();
+}
+
+// The mark as the bar draws it (index.html), for the sheet's head.
+function brandMark() {
+  return document.querySelector(".topbar .brand .mark").cloneNode(true);
 }
 
 function markNav() {
@@ -102,22 +118,53 @@ function markNav() {
   closeMenu();
 }
 
-function openMenu() { sidebar.classList.add("open"); backdrop.hidden = false; menuBtn.setAttribute("aria-expanded", "true"); }
-function closeMenu() { sidebar.classList.remove("open"); backdrop.hidden = true; menuBtn.setAttribute("aria-expanded", "false"); }
-menuBtn.addEventListener("click", () => (sidebar.classList.contains("open") ? closeMenu() : openMenu()));
-backdrop.addEventListener("click", closeMenu);
+// The page under an open sheet does not scroll (a swipe on the menu moved
+// the screen behind it), Escape closes it, and focus goes into it and,
+// when it is closed by hand, back to the button that opened it.
+function openMenu() {
+  sidebar.classList.add("open");
+  backdrop.hidden = false;
+  document.body.classList.add("menu-open");
+  menuBtn.setAttribute("aria-expanded", "true");
+  const here = sidebar.querySelector("a[aria-current=page]") || sidebar.querySelector("a");
+  if (here) here.focus({ preventScroll: true });
+}
+function closeMenu(refocus) {
+  const was = sidebar.classList.contains("open");
+  sidebar.classList.remove("open");
+  backdrop.hidden = true;
+  document.body.classList.remove("menu-open");
+  menuBtn.setAttribute("aria-expanded", "false");
+  if (was && refocus === true) menuBtn.focus();
+}
+menuBtn.addEventListener("click", () => (sidebar.classList.contains("open") ? closeMenu(true) : openMenu()));
+backdrop.addEventListener("click", () => closeMenu(true));
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && sidebar.classList.contains("open")) closeMenu(true); });
 
 function themeLabel() {
   const v = getTheme();
-  clear(themeBtn).append(icon(v === "dark" ? "moon" : v === "light" ? "sun" : "monitor"));
+  const ico = v === "dark" ? "moon" : v === "light" ? "sun" : "monitor";
+  clear(themeBtn).append(icon(ico));
   themeBtn.setAttribute("aria-label", t("theme.button", { theme: t("theme." + v) }));
   themeBtn.title = themeBtn.getAttribute("aria-label");
+  if (sheetTheme) {
+    clear(sheetTheme).append(icon(ico), h("span", { class: "label" }, t("shell.theme")), h("span", { class: "value" }, t("theme." + v)));
+    sheetTheme.setAttribute("aria-label", themeBtn.getAttribute("aria-label"));
+  }
+  // The phone's own bar (and an installed panel's title bar) takes the
+  // colour of the panel's bar, not the brand blue over a white one.
+  const meta = document.querySelector("meta[name=theme-color]");
+  const surface = getComputedStyle(document.documentElement).getPropertyValue("--surface").trim();
+  if (meta && surface) meta.content = surface;
 }
-themeBtn.addEventListener("click", () => {
+function cycleTheme() {
   const order = ["auto", "light", "dark"];
   setTheme(order[(order.indexOf(getTheme()) + 1) % order.length]);
   themeLabel();
-});
+}
+themeBtn.addEventListener("click", cycleTheme);
+// "System" follows the device, which can change under an open panel.
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", themeLabel);
 helpBtn.addEventListener("click", showShortcuts);
 
 store.subscribe("streamState", (s) => {

@@ -8,8 +8,16 @@ import { t } from "../lib/i18n.js";
 import { open } from "./dialog.js";
 import { navigate } from "../lib/router.js";
 
+// Every letter the sidebar shows beside a section. The sidebar learned
+// "g r", "g a", "g x", "g u" and "g d" as sections were added and this
+// table did not, so five of the shortcuts it advertised did nothing.
 export const GOTO = {
-  n: "/dashboard", s: "/sites", i: "/inbound", w: "/waf", m: "/modules", t: "/tasks", h: "/house", e: "/events", g: "/guard", c: "/settings", y: "/system",
+  n: "/dashboard", s: "/sites", i: "/inbound", w: "/waf", m: "/modules", t: "/tasks", r: "/repos", a: "/audit", x: "/edge",
+  h: "/house", u: "/llm", e: "/events", g: "/guard", c: "/settings", y: "/system", d: "/docs",
+};
+const GOTO_LABEL = {
+  n: "dashboard", s: "sites", i: "inbound", w: "waf", m: "modules", t: "tasks", r: "repos", a: "audit", x: "edge",
+  h: "house", u: "llm", e: "events", g: "guard", c: "settings", y: "system", d: "docs",
 };
 
 let pendingG = false;
@@ -55,19 +63,11 @@ export function showShortcuts() {
     ["?", t("keys.help")],
     ["n", t("keys.new")],
     ["Esc", t("keys.escape")],
-    ["g s", t("nav.sites")],
-    ["g i", t("nav.inbound")],
-    ["g w", t("nav.waf")],
-    ["g m", t("nav.modules")],
-    ["g t", t("nav.tasks")],
-    ["g e", t("nav.events")],
-    ["g g", t("nav.guard")],
-    ["g c", t("nav.settings")],
-    ["g y", t("nav.system")],
+    ...Object.keys(GOTO).map((k) => ["g " + k, t("nav." + GOTO_LABEL[k])]),
   ];
   const dl = h("dl", { class: "shortcuts" });
   for (const [k, label] of rows) {
     dl.append(h("dt", null, ...k.split(" ").map((x, i) => [i ? " " : null, h("kbd", null, x)])), h("dd", null, label));
   }
-  return open({ title: t("keys.title"), body: dl });
+  return open({ title: t("keys.title"), body: dl, wide: true });
 }

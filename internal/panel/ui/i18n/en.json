@@ -72,8 +72,8 @@
   "template.node": "Node.js app",
   "template.go": "Go app",
   "template.docker": "Docker container",
-  "auth.loginTitle": "Sign in",
-  "auth.loginLead": "The operator password for this installation.",
+  "auth.loginTitle": "Welcome back",
+  "auth.loginLead": "Sign in with the operator password of this installation.",
   "auth.setupTitle": "Set up the operator",
   "auth.setupLead": "This installation has no operator yet. Run `middleware setup` on the server to get a one-time code.",
   "auth.code": "One-time code",
@@ -1783,5 +1783,9 @@
   "docs.onThisPage": "On this page",
   "llmUse.total30": "${usd} in 30 days",
   "llmUse.noSubscriptionHint": "A tool signed in with a subscription shows its windows here.",
-  "settings.panelAddress": "The panel's address"
+  "settings.panelAddress": "The panel's address",
+  "common.retry": "Try again",
+  "shell.theme": "Theme",
+  "auth.showPassword": "Show password",
+  "auth.hidePassword": "Hide password"
 }

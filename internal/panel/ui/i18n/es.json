@@ -72,8 +72,8 @@
   "template.node": "App de Node.js",
   "template.go": "App de Go",
   "template.docker": "Contenedor Docker",
-  "auth.loginTitle": "Iniciar sesión",
-  "auth.loginLead": "La contraseña del operador de esta instalación.",
+  "auth.loginTitle": "Hola de nuevo",
+  "auth.loginLead": "Entra con la contraseña de operador de esta instalación.",
   "auth.setupTitle": "Configurar el operador",
   "auth.setupLead": "Esta instalación aún no tiene operador. Ejecuta `middleware setup` en el servidor para obtener un código de un solo uso.",
   "auth.code": "Código de un solo uso",
@@ -1783,5 +1783,9 @@
   "docs.onThisPage": "En esta página",
   "llmUse.total30": "{usd} $ en 30 días",
   "llmUse.noSubscriptionHint": "Una herramienta con sesión de suscripción muestra aquí sus ventanas.",
-  "settings.panelAddress": "La dirección del panel"
+  "settings.panelAddress": "La dirección del panel",
+  "common.retry": "Reintentar",
+  "shell.theme": "Tema",
+  "auth.showPassword": "Mostrar la contraseña",
+  "auth.hidePassword": "Ocultar la contraseña"
 }
