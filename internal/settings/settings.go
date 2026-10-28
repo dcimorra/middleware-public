@@ -6,8 +6,10 @@ package settings
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/fsx"
@@ -239,6 +241,25 @@ func (s *Settings) Fill() {
 	if s.Agents.PerProvider == nil {
 		s.Agents.PerProvider = d.PerProvider
 	}
+}
+
+// ValidListen refuses a listen address the next start could not bind: it
+// was any string, "127.0.0.1" without a port made net.Listen fail at the
+// restart, and systemd brought the supervisor back to fail again, with
+// every site behind it. The port must be a number: a service name would
+// parse, and it would mean another port on another machine's
+// /etc/services. Zero is refused too, since the kernel would pick one
+// that nothing knows to dial.
+func ValidListen(addr string) error {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("listen: %q is not host:port", addr)
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("listen: want a port from 1 to 65535, not %q", port)
+	}
+	return nil
 }
 
 // Save writes the file atomically.
