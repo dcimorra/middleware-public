@@ -507,6 +507,20 @@ travel. A live import writes where the worker keeps its data (its volume):
 what it writes in the folder is replaced by the last copy, which leaves the
 folder as it is where the site was.
 
+`export` must only read: it is run more than once. Before a move stops the
+site, each `export` that waits for the stop is tried where it will run,
+while the site serves: its program is looked for there (inside the
+worker's running container for a docker worker, with the image's `sh`),
+and unless that same command (its arguments as resolved, in the same
+image) has already worked on this house, it is run once, its `output` to a
+scratch file that is then deleted. One that fails refuses the move with
+its error and the end of its output (`data/logs/<site>/move-<worker>-trial.log`),
+and nothing has stopped. An export written for the machine (`docker exec`,
+a client the machine has) is found there, not with the site down. The
+plan a move shows first, and `middleware import --dry-run`, look for the
+program and say whether the export will be tried. What an export without
+`output` writes, the trial writes too, where the real one writes it again.
+
 ## Tasks: `tasks/<name>.json`
 
 ```json

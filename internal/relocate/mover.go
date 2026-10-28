@@ -159,6 +159,13 @@ type Mover struct {
 	// dependencies there after the first copy; Parts must then leave
 	// node_modules behind (MoveParts).
 	Install bool
+	// NoTrial has Check look for each export's program without running
+	// the export (Rehearser): a check answered inside a request (the
+	// panel's plan, the answer to the move's POST) has seconds, and a
+	// database's dump takes minutes. The move's own check runs it.
+	NoTrial bool
+	// Note, when set, hears what Check found of the exports.
+	Note func(string)
 }
 
 // Needer is a Source that says itself what its site needs of the target,
@@ -196,8 +203,12 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	}
 	parts := m.PartsFor(domain)
 
-	progress(StepCheck, "asking "+t.Name()+" whether it can take "+domain)
-	if _, err := m.Check(ctx, domain, t); err != nil {
+	ask := "asking " + t.Name() + " whether it can take " + domain
+	if held := m.rehearsed(domain); len(held) > 0 && !m.NoTrial {
+		ask += ", and trying the export of " + strings.Join(held, ", ") + " here while it serves"
+	}
+	progress(StepCheck, ask)
+	if _, err := m.check(ctx, domain, t, func(s string) { progress(StepCheck, s) }); err != nil {
 		return rep, err
 	}
 	exporter, _ := m.Source.(Exporter)
@@ -490,9 +501,15 @@ func (m *Mover) PartsFor(domain string) []archive.Part {
 // the site: its name, its tasks' names, docker when it needs it, and every
 // name it answers to when they are published here (a target that cannot
 // point them would leave them on a node that no longer serves the site).
-// Nothing changes on either side, so an import's --dry-run asks it too. It
-// returns the workers whose data moves by command.
+// Nothing changes on either side, so an import's --dry-run asks it too,
+// and so does the panel's plan. The exports that wait for the stop are
+// tried too, where they will run (Rehearser). It returns the workers whose
+// data moves by command.
 func (m *Mover) Check(ctx context.Context, domain string, t Target) ([]string, error) {
+	return m.check(ctx, domain, t, m.Note)
+}
+
+func (m *Mover) check(ctx context.Context, domain string, t Target, note func(string)) ([]string, error) {
 	need, moving, err := m.NeedsFor(domain, t)
 	if err != nil {
 		return nil, err
@@ -500,7 +517,32 @@ func (m *Mover) Check(ctx context.Context, domain string, t Target) ([]string, e
 	if err := t.Check(ctx, domain, need); err != nil {
 		return nil, err
 	}
+	// The live exports need no trial: they run before the stop anyway,
+	// and their failure stops nothing.
+	if held := m.rehearsed(domain); len(held) > 0 {
+		raw, _ := json.Marshal(m.plannedManifest(domain, m.dir(domain)))
+		said, err := m.Source.(Rehearser).Rehearse(ctx, domain, raw, held, !m.NoTrial)
+		if err != nil {
+			return nil, err
+		}
+		if said != "" && note != nil {
+			note(said)
+		}
+	}
 	return moving, nil
+}
+
+// rehearsed are the workers whose exports Check tries: the ones that
+// wait for the stop, of a source that can try them.
+func (m *Mover) rehearsed(domain string) []string {
+	if _, ok := m.Source.(Rehearser); !ok {
+		return nil
+	}
+	planned := m.plannedManifest(domain, m.dir(domain))
+	if planned == nil {
+		return nil
+	}
+	return planned.MovingWorkers(false)
 }
 
 // NeedsFor is what a move of domain to t asks of t (Needs), and the

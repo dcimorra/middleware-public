@@ -416,7 +416,9 @@ func (s *Server) registerRelocateSource(m *nodes.Mesh) {
 		// take it is said in the answer, not in an event a minute later.
 		src := siteSource{s: s, mgr: mgr}
 		cctx, ccancel := context.WithTimeout(r.Context(), 30*time.Second)
-		_, err = (&relocate.Mover{Root: s.opts.Root, Source: src}).Check(cctx, domain, meshTarget{m: m, x: x})
+		// Its exports' programs looked for, not run: this answer has
+		// seconds, and the move's own check tries them.
+		_, err = (&relocate.Mover{Root: s.opts.Root, Source: src, NoTrial: true}).Check(cctx, domain, meshTarget{m: m, x: x})
 		ccancel()
 		if err != nil {
 			return nil, Errorf(http.StatusConflict, "%s cannot take %s: %v", x.Name, domain, err)
@@ -507,7 +509,11 @@ func (s *Server) registerRelocateSource(m *nodes.Mesh) {
 			out["node"] = x.Name
 			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 			defer cancel()
-			if _, err := (&relocate.Mover{Root: s.opts.Root, Source: src}).Check(ctx, domain, meshTarget{m: m, x: x}); err != nil {
+			// The exports that wait for the stop: their programs looked for
+			// where they run, and said whether each has worked here before
+			// or will be tried, at the move, before the site stops.
+			mover := &relocate.Mover{Root: s.opts.Root, Source: src, NoTrial: true, Note: func(said string) { out["exports"] = said }}
+			if _, err := mover.Check(ctx, domain, meshTarget{m: m, x: x}); err != nil {
 				out["check_error"] = err.Error()
 			}
 		}
@@ -577,6 +583,16 @@ func (src siteSource) Export(ctx context.Context, domain string, m []byte, worke
 		return "", err
 	}
 	return relocate.ExportHere(ctx, src.s.opts.Root, src.mgr.Dir(domain), domain, mf, workers)
+}
+
+// Rehearse implements relocate.Rehearser: the exports that wait for the
+// stop, tried where they will run while the site serves.
+func (src siteSource) Rehearse(ctx context.Context, domain string, m []byte, workers []string, trial bool) (string, error) {
+	mf, err := manifest.Parse(m)
+	if err != nil {
+		return "", err
+	}
+	return relocate.RehearseHere(ctx, src.s.opts.Root, src.mgr.Dir(domain), domain, mf, workers, trial, goruntime.Docker{})
 }
 
 // Tasks implements relocate.Tasker.
