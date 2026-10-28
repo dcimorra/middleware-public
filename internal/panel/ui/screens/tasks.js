@@ -84,6 +84,26 @@ export function cronWords(expr) {
   return null;
 }
 
+// The server says how long a run took as a Go duration ("15.2ms",
+// "1m3.5s"); read as a number it was NaN and the line showed "ok · ·".
+function runLength(d) {
+  if (d === undefined || d === null || d === "") return "";
+  if (typeof d === "number") return fmtDuration(d);
+  const unit = { h: 3600, m: 60, s: 1, ms: 1e-3, "µs": 1e-6, us: 1e-6, ns: 1e-9 };
+  let secs = 0;
+  let any = false;
+  for (const [, n, u] of String(d).matchAll(/([\d.]+)(h|ms|µs|us|ns|m|s)/g)) { secs += Number(n) * unit[u]; any = true; }
+  if (!any) return "";
+  return secs < 1 ? t("tasks.underSecond") : fmtDuration(secs);
+}
+// A run's status in the reader's words; one the panel does not know yet
+// shows as the server sent it.
+function statusWord(st) {
+  const k = "tasks.status." + st;
+  const w = t(k);
+  return w === k ? st : w;
+}
+
 export function tasksScreen() {
   const list = tasksList();
   const newBtn = h("button", { type: "button", class: "btn primary", "data-shortcut": "new" }, icon("plus"), t("tasks.new"));
@@ -119,9 +139,10 @@ export function tasksList({ site = "" } = {}) {
     return h("div", { class: "task-list" }, head, ...tasks.map((task) => {
       const last = task.last || {};
       const st = last.status;
+      const took = runLength(last.duration);
       const lastEl = st ? h("span", { class: "status", title: last.at ? fmtTime(last.at) : "" },
-        h("span", { class: "dot " + (st === "ok" || st === "success" ? "ok" : st === "running" ? "warn" : "bad") }),
-        t("tasks.lastWas", { status: st }), last.duration ? " · " + fmtDuration(Number(last.duration)) : null,
+        h("span", { class: "dot " + (st === "ok" || st === "success" || st === "ended" ? "ok" : st === "running" || st === "skipped" ? "warn" : "bad") }),
+        t("tasks.lastWas", { status: statusWord(st) }), took ? " · " + took : null,
         last.at ? " · " + fmtAgo(last.at, t) : null,
       ) : h("span", null, t("tasks.neverRan"));
       const words = cronWords(task.schedule);

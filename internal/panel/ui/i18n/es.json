@@ -1484,6 +1484,7 @@
   "settings.scope.read": "Leer los sitios, sus registros y los eventos",
   "settings.scope.restart": "Reiniciar los sitios y sus workers",
   "settings.scope.deploy": "Desplegar los sitios",
+  "settings.scope.tasks": "Gestionar las tareas programadas de los sitios",
   "settings.tokenSite": "Solo para este sitio",
   "settings.tokenSiteHint": "Vacío es todos los sitios.",
   "settings.tokenScopeRequired": "Elige al menos una acción, o dale acceso completo.",
@@ -1864,5 +1865,13 @@
   "tasks.siteSub": "Trabajo programado que corre en la carpeta de este sitio, con su entorno.",
   "tasks.siteEmptyTitle": "Aún no hay tareas",
   "tasks.siteEmptyHint": "Una tarea ejecuta una orden de {domain} cada cierto tiempo: una copia nocturna, calentar la caché, un informe.",
-  "tasks.siteJsonHint": "La tarea corre en la carpeta de {domain} con su entorno; site es siempre {domain}."
+  "tasks.siteJsonHint": "La tarea corre en la carpeta de {domain} con su entorno; site es siempre {domain}.",
+  "tasks.underSecond": "menos de un segundo",
+  "tasks.status.ok": "bien",
+  "tasks.status.failed": "falló",
+  "tasks.status.timeout": "cortada por tiempo",
+  "tasks.status.skipped": "saltada (seguía en marcha)",
+  "tasks.status.error": "no pudo arrancar",
+  "tasks.status.ended": "terminada",
+  "tasks.status.stopped": "parada"
 }

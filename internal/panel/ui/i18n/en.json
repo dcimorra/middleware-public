@@ -1484,6 +1484,7 @@
   "settings.scope.read": "Read sites, their logs and the events",
   "settings.scope.restart": "Restart sites and their workers",
   "settings.scope.deploy": "Deploy sites",
+  "settings.scope.tasks": "Manage the sites' scheduled tasks",
   "settings.tokenSite": "Only for this site",
   "settings.tokenSiteHint": "Empty is every site.",
   "settings.tokenScopeRequired": "Choose at least one action, or give it full access.",
@@ -1864,5 +1865,13 @@
   "tasks.siteSub": "Scheduled work that runs in this site's folder, with its environment.",
   "tasks.siteEmptyTitle": "No tasks yet",
   "tasks.siteEmptyHint": "A task runs a command of {domain} on a schedule: a nightly backup, a cache warm-up, a report.",
-  "tasks.siteJsonHint": "The task runs in the folder of {domain} with its environment; site is always {domain}."
+  "tasks.siteJsonHint": "The task runs in the folder of {domain} with its environment; site is always {domain}.",
+  "tasks.underSecond": "under a second",
+  "tasks.status.ok": "ok",
+  "tasks.status.failed": "failed",
+  "tasks.status.timeout": "cut by its timeout",
+  "tasks.status.skipped": "skipped (still running)",
+  "tasks.status.error": "could not start",
+  "tasks.status.ended": "ended",
+  "tasks.status.stopped": "stopped"
 }
