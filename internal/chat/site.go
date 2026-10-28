@@ -278,6 +278,33 @@ func (m *Manager) Create(domain string, o CreateOptions) (string, error) {
 	return Name(domain, id), nil
 }
 
+// RepairConversation is the conversation of domain the house's automatic
+// repairs run in, opened the first time. They ran in the panel's own,
+// with the operator's session and the push credential, on a prompt that
+// quotes the site's log; apart, the operator's conversation is not where
+// an injected instruction lands, and the repairs are still read in the
+// panel, one after the other, each knowing what the last one tried.
+func (m *Manager) RepairConversation(domain string) (string, error) {
+	if _, err := m.workdir(domain); err != nil {
+		return "", err
+	}
+	m.repairMu.Lock()
+	defer m.repairMu.Unlock()
+	// By the files, not List, which leaves out one that never got a turn.
+	ents, _ := os.ReadDir(filepath.Join(m.opts.Root, "data", "chat", domain))
+	for _, e := range ents {
+		id, ok := strings.CutSuffix(e.Name(), ".json")
+		if !ok || id == "" || !validID(id) {
+			continue
+		}
+		var c Conversation
+		if fsx.ReadJSON(filepath.Join(m.opts.Root, "data", "chat", domain, e.Name()), &c) == nil && c.Origin == OriginRepair {
+			return Name(domain, id), nil
+		}
+	}
+	return m.Create(domain, CreateOptions{Origin: OriginRepair, Title: "Automatic repairs"})
+}
+
 // List is every conversation of domain but the panel's own.
 func (m *Manager) List(domain string) []Summary {
 	ents, err := os.ReadDir(filepath.Join(m.opts.Root, "data", "chat", domain))

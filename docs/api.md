@@ -201,10 +201,15 @@ lines.
 
 Off until `autofix.enabled` in the settings (with `attempts`, 2; `wait_minutes`,
 30; `daily_usd`, 2). A run site with five failed starts in a row, or any site
-with three failed health checks in a row, is handed to its own conversation
-with the reason, its command and the last 60 log lines (fenced as evidence);
-the house restarts it when the turn ends and writes the outcome to
-`data/repairs.jsonl`. A manifest's `"autofix": false` keeps it away.
+with three failed health checks in a row, is handed to its agent with the
+reason, its command and the engine's error and the last 60 log lines, fenced
+as untrusted data between markers drawn at random for each prompt (a fixed
+marker could be closed by a request's path written to the log); the house
+restarts it when the turn ends and writes the outcome to
+`data/repairs.jsonl`. A manifest's `"autofix": false` keeps it away. The
+repairs run in a conversation of the site's own for them (origin `repair`,
+"Automatic repairs" in the panel), not in the operator's, and without the
+credential that lets the panel's conversation `git push`.
 
 The turn runs with the house's AI for automatic work, `automation: {provider,
 model}` in the settings (Settings → "The house's AI for automatic work"),
