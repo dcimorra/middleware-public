@@ -86,7 +86,7 @@ never shell strings. Paths are relative to the site folder.
     "static_max_age": "1h",
     "rules": [
       { "path": "/product", "mode": "origin" },
-      { "path": "/img", "mode": "force", "ttl": 3600, "note": "logos, never change" },
+      { "path": "/img", "mode": "force", "ttl": 3600, "ignore_cookies": true, "note": "logos, never change" },
       { "path": "/product/admin", "mode": "never" }
     ],
     "max_mb": 64
@@ -370,7 +370,13 @@ process.
   first answer shows it will not be kept (its headers say so, or it passes
   8 MB): then the others go to the site too, so a second client of a stream
   does not wait for the first one's to end. A handover empties the site's
-  cache.
+  cache. A request with a cookie passes the cache by, neither answered from
+  it nor kept, because a signed-in user's page that says nothing about
+  caching would otherwise be kept under `force` and served to everyone;
+  the house's own cookies (the door's pass, the challenge's, the panel's
+  session) do not count. `"ignore_cookies": true` on a rule says its pages
+  read no cookie (images, an analytics cookie on every visitor) and keeps
+  and answers them as if they had none; it is refused on `never`.
   `max_mb` asks for less than the house's budget, never for more.
 - `vpn` makes the site exist only inside the VPN (the module of that name):
   it is served through the VPN door (the server's address in the tunnel, on

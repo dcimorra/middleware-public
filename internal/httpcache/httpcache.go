@@ -8,8 +8,10 @@
 // remove: nothing with Set-Cookie; nothing private, no-store or no-cache;
 // nothing with Vary: * or Vary: Cookie; nothing but a 200 to a GET or
 // HEAD; nothing for a request with Authorization; no event streams and no
-// WebSockets, which do not even wait behind one another. What a
-// manifest chooses is only which paths and for how long. A site that gets
+// WebSockets, which do not even wait behind one another. Nothing for a
+// request with a cookie either, unless the rule says its pages read none
+// (ignore_cookies). What a manifest chooses is otherwise only which paths
+// and for how long. A site that gets
 // its cache section wrong can be slow or serve something old; it cannot
 // serve someone what was someone else's.
 //
@@ -38,6 +40,11 @@ type Rule struct {
 	Mode string `json:"mode"`
 	// TTL is for force, in seconds.
 	TTL int `json:"ttl,omitempty"`
+	// IgnoreCookies keeps and answers requests that carry cookies as if
+	// they carried none, for paths whose pages read none (an analytics
+	// cookie on every visitor otherwise leaves nothing to keep). Without
+	// it a request with a cookie of the site's passes the cache by.
+	IgnoreCookies bool `json:"ignore_cookies,omitempty"`
 	// Note is what the rule is for, for whoever reads the manifest.
 	Note string `json:"note,omitempty"`
 }

@@ -766,6 +766,10 @@ func (m *Manifest) Validate() error {
 				return fmt.Errorf("cache.rules[%d].mode: %q is not origin, force or never", i, r.Mode)
 			case r.Mode == httpcache.ModeForce && r.TTL <= 0:
 				return fmt.Errorf("cache.rules[%d].ttl: force needs the seconds to keep", i)
+			case r.Mode == httpcache.ModeNever && r.IgnoreCookies:
+				// Said of a rule that keeps nothing, it is a rule written
+				// for another path: refused, so it is not read as working.
+				return fmt.Errorf("cache.rules[%d].ignore_cookies: never keeps nothing, with cookies or without", i)
 			}
 		}
 	}

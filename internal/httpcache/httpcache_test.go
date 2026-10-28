@@ -95,6 +95,39 @@ func TestTheWallsAManifestCannotRemove(t *testing.T) {
 	}
 }
 
+func TestASignedInPageIsNeitherKeptNorAnsweredFromTheCache(t *testing.T) {
+	// A site that renders the signed-in user's page and says nothing
+	// about caching it: force would keep it for everyone.
+	o := &origin{}
+	_, h, _ := setup([]Rule{{Path: "/", Mode: ModeForce, TTL: 60}}, o)
+	get(h, "/account", "Cookie: sid=alice")
+	anon := get(h, "/account")
+	if anon.Header().Get("X-Middleware-Cache") != "miss" || o.calls.Load() != 2 {
+		t.Fatalf("an anonymous visitor got %q after a signed-in one: %q", anon.Header().Get("X-Middleware-Cache"), anon.Body)
+	}
+	// What an anonymous visit kept is not given to the signed-in one.
+	if r := get(h, "/account", "Cookie: theme=dark; sid=bob"); r.Header().Get("X-Middleware-Cache") == "hit" {
+		t.Fatal("a request with a cookie was answered from the cache")
+	}
+	// A cookie the site's own parser reads although Go's does not.
+	if r := get(h, "/account", "Cookie: s{id=x"); r.Header().Get("X-Middleware-Cache") == "hit" {
+		t.Fatal("a cookie Go cannot parse was taken as no cookie")
+	}
+	// The house's own pass is not the visitor's: the page behind a
+	// password is kept for everyone past the door.
+	if r := get(h, "/account", "Cookie: mw_access=pass; mw_access_abc=z; mw_attack=ok"); r.Header().Get("X-Middleware-Cache") != "hit" {
+		t.Fatalf("the house's own cookies kept a request out of the cache: %q", r.Header().Get("X-Middleware-Cache"))
+	}
+
+	// ignore_cookies: the rule says its pages read none.
+	o2 := &origin{}
+	_, h2, _ := setup([]Rule{{Path: "/", Mode: ModeForce, TTL: 60, IgnoreCookies: true}}, o2)
+	get(h2, "/logo.png", "Cookie: _ga=1")
+	if r := get(h2, "/logo.png", "Cookie: _ga=2"); r.Header().Get("X-Middleware-Cache") != "hit" || o2.calls.Load() != 1 {
+		t.Fatalf("ignore_cookies: %q after %d calls", r.Header().Get("X-Middleware-Cache"), o2.calls.Load())
+	}
+}
+
 func TestRulesBySegmentAndNever(t *testing.T) {
 	o := &origin{}
 	_, h, _ := setup([]Rule{{Path: "/product", Mode: ModeForce, TTL: 60}, {Path: "/product/admin", Mode: ModeNever}}, o)

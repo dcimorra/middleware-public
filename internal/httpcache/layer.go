@@ -31,7 +31,11 @@ func (c *Cache) Wrap(next http.Handler, lookup func(r *http.Request) (Site, bool
 			return
 		}
 		rule, ok := Match(site.Rules, path.Clean("/"+r.URL.Path))
-		if !ok || rule.Mode == ModeNever {
+		// A visitor's cookie is neither answered from the cache nor kept:
+		// a signed-in user's page that sent no Set-Cookie and no
+		// Cache-Control was kept under force and served to whoever came
+		// next. A rule that knows its paths read no cookie says so.
+		if !ok || rule.Mode == ModeNever || (!rule.IgnoreCookies && personal(r)) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -94,6 +98,30 @@ func (c *Cache) Wrap(next http.Handler, lookup func(r *http.Request) (Site, bool
 		}
 		c.keep(site, k, r, w.Header(), rec.status, rec.buf.Bytes(), ttl)
 	})
+}
+
+// personal is a request that carries a cookie the house did not set. The
+// raw header is read, not r.Cookies(): that drops what it cannot parse,
+// and the site's own parser may read it all the same.
+func personal(r *http.Request) bool {
+	for _, v := range r.Header.Values("Cookie") {
+		for _, part := range strings.Split(v, ";") {
+			name, _, _ := strings.Cut(part, "=")
+			if name = strings.TrimSpace(name); name != "" && !houseCookie(name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// houseCookie is one the house itself sets: the door's pass
+// (internal/access), the solved challenge (internal/attack), the panel's
+// session. The site never set it and answers the same with it or without;
+// counted as a visitor's, every page behind a password would be out of
+// the cache, which is where it is kept on purpose.
+func houseCookie(name string) bool {
+	return name == "mw_access" || strings.HasPrefix(name, "mw_access_") || name == "mw_attack" || name == "mw_session"
 }
 
 // streaming is a request whose answer is a connection rather than a

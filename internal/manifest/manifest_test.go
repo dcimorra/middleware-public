@@ -230,6 +230,20 @@ func TestAMisspeltSecurityRuleRejectsTheManifest(t *testing.T) {
 	}
 }
 
+func TestIgnoreCookiesIsReadOnlyOnARuleThatKeeps(t *testing.T) {
+	m, err := Parse([]byte(`{"version":2,"cache":{"rules":[{"path":"/img","mode":"force","ttl":60,"ignore_cookies":true}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.Cache.Rules[0].IgnoreCookies {
+		t.Fatal("ignore_cookies was not read")
+	}
+	_, err = Parse([]byte(`{"version":2,"cache":{"rules":[{"path":"/admin","mode":"never","ignore_cookies":true}]}}`))
+	if err == nil || !strings.Contains(err.Error(), "ignore_cookies") {
+		t.Fatalf("ignore_cookies on a never rule: %v", err)
+	}
+}
+
 func TestAnAppIsNotAFieldOfV2(t *testing.T) {
 	if _, err := Parse([]byte(`{"version":2,"app":"mask"}`)); err == nil {
 		t.Fatal("app was accepted: a field nothing reads would do nothing and say nothing")
