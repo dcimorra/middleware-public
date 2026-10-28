@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -23,6 +22,7 @@ import (
 
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/middleware-public/internal/hostgit"
 	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/runtime"
 )
@@ -476,32 +476,34 @@ type RunOptions struct {
 	Home  string
 }
 
-func gitEnv(o RunOptions) []string {
-	env := []string{"HOME=" + o.Home, "GIT_TERMINAL_PROMPT=0", "LC_ALL=C"}
-	if p, ok := os.LookupEnv("PATH"); ok {
-		env = append(env, "PATH="+p)
-	}
-	return env
-}
-
-// gitArgs prefixes the auth header for the one command when a token is
-// set. The header is what GitHub's own checkout action sends; a URL with
-// the token in it would be saved by `remote add` into .git/config.
-func gitArgs(o RunOptions, args []string) []string {
+// gitConfig is the token auth header for the one command when a token is
+// set, passed to hostgit as an extra -c. The header is what GitHub's own
+// checkout action sends; a URL with the token in it would be saved by
+// `remote add` into .git/config, where it would outlive the command and
+// reach the panel.
+func gitConfig(o RunOptions) []string {
 	if o.Token == "" {
-		return args
+		return nil
 	}
 	auth := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + o.Token))
-	return append([]string{"-c", "http.extraheader=AUTHORIZATION: basic " + auth}, args...)
+	return []string{"-c", "http.extraheader=AUTHORIZATION: basic " + auth}
+}
+
+func hostOpts(dir string, o RunOptions) hostgit.Options {
+	// A deploy runs in the site's own isolated home, so nothing but the
+	// repository's own config (which hostgit vets) can speak to git.
+	return hostgit.Options{Dir: dir, Home: o.Home, Config: gitConfig(o)}
 }
 
 func runGit(ctx context.Context, dir string, o RunOptions, log io.Writer, args ...string) error {
-	cmd := exec.CommandContext(ctx, "git", gitArgs(o, args)...)
-	cmd.Dir = dir
-	cmd.Env = gitEnv(o)
+	fmt.Fprintf(log, "$ git %s\n", strings.Join(args, " "))
+	cmd, err := hostgit.Command(ctx, hostOpts(dir, o), args...)
+	if err != nil {
+		fmt.Fprintf(log, "%v\n", err)
+		return err
+	}
 	cmd.Stdout, cmd.Stderr = log, log
 	cmd.WaitDelay = 5 * time.Second
-	fmt.Fprintf(log, "$ git %s\n", strings.Join(args, " "))
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("git %s: %w", args[0], err)
 	}
@@ -509,9 +511,10 @@ func runGit(ctx context.Context, dir string, o RunOptions, log io.Writer, args .
 }
 
 func gitOutput(ctx context.Context, dir string, o RunOptions, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", gitArgs(o, args)...)
-	cmd.Dir = dir
-	cmd.Env = gitEnv(o)
+	cmd, err := hostgit.Command(ctx, hostOpts(dir, o), args...)
+	if err != nil {
+		return "", err
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w", args[0], err)

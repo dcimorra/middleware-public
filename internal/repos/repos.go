@@ -34,7 +34,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -44,6 +43,7 @@ import (
 
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/middleware-public/internal/hostgit"
 )
 
 // Site is what the manager needs to know about a site.
@@ -208,14 +208,21 @@ func (m *Manager) lookup(id string) (found, bool) {
 	return found{}, false
 }
 
-// git runs one git command in dir, without a terminal to ask for
-// credentials on: a remote that wants a password fails instead of hanging.
+// git runs one git command in dir, hardened by hostgit: the repositories
+// live in site folders a project or a conversation works in, so git must
+// not be allowed to run a program the folder's own config or hooks name.
+// The environment is minimal and secret-free (the supervisor's
+// MIDDLEWARE_SECRET_KEY and the rest used to ride in on os.Environ), with
+// HOME kept at the supervisor's so an ssh deploy key and ssh-agent still
+// reach a pull; global config is kept out all the same, so only the
+// repository's own vetted config speaks.
 func git(ctx context.Context, dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, perCommand)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=true", "LC_ALL=C")
+	cmd, err := hostgit.Command(ctx, hostgit.Options{Dir: dir, Home: os.Getenv("HOME"), Passthrough: []string{"SSH_AUTH_SOCK"}}, args...)
+	if err != nil {
+		return "", err
+	}
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	cmd.WaitDelay = 5 * time.Second

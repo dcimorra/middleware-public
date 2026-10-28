@@ -63,6 +63,26 @@ process group. A site's `~/.ssh`, `~/.npmrc` or agent login is not another
 site's. Sites run as the same Unix user as the supervisor, though: see
 "what is not protected".
 
+**Host git in a site folder.** The supervisor runs git in a site's folder
+to deploy from GitHub and to keep marked repositories pulled. That folder,
+`.git` included, is a docker site's own writable mount, and git reads from
+inside the repository several keys that name a program it then runs
+(`core.fsmonitor`, `core.sshCommand`, a filter driver's clean/smudge, a
+diff textconv, `credential.helper`, `gpg.program`,
+`uploadpack.packObjectsHook`) and the hooks in `.git/hooks`. The
+supervisor's user is in the
+docker group, so that program would run as effectively root. One hardened
+path (`internal/hostgit`) is the only way the house runs git in such a
+folder: it strips the environment to `PATH`, `HOME` and a locale (no
+`MIDDLEWARE_SECRET_KEY`, no inherited secret), keeps system and global
+config out, passes `-c` overrides that disable the single-valued keys and
+the hooks and limit transports to the ones the house uses, and — because
+`-c` cannot blanket-disable a key whose middle name the attacker chose
+(`filter.<x>.clean`, `credential.<url>.helper`) — reads the repository's own
+config first and refuses to run, naming the key, when it finds one that runs
+a program. A deploy then fails with that key in the event and the running
+build is untouched; a marked repository shows the refusal instead of pulling.
+
 **The jail for agents.** A conversation's agent may read and write the
 site's folder and nothing above it, and no other site. Two things outside
 it are its own to read and not write: the house's guide in its HOME, named

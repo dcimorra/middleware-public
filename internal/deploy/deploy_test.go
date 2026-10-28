@@ -262,3 +262,63 @@ func zombie(pid int) bool {
 	i := bytes.LastIndexByte(data, ')')
 	return i < 0 || i+2 >= len(data) || data[i+2] == 'Z'
 }
+
+// A deploy checks out attacker-controlled files, so a hook planted in
+// .git/hooks must not run on the host: core.hooksPath is nulled. The hook
+// here would drop a marker; the deploy must finish clean with no marker.
+func TestADeployDoesNotRunAPlantedGitHook(t *testing.T) {
+	bare := makeRepo(t, "#!/bin/sh\ntrue\n")
+	m := &manifest.Manifest{Version: 2, Deploy: &manifest.Deploy{GitHub: &manifest.GitHubDeploy{Repository: "acme/app", Build: [][]string{{"./build.sh"}}}}}
+	root, dir := makeSite(t, m)
+	r, _ := newRunner(root, bare, nil)
+	// First deploy brings the .git into place.
+	if _, err := r.Run(context.Background(), "app.test", dir, m, "test", FromGitHub); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(root, "ran")
+	hook := filepath.Join(dir, ".git", "hooks", "post-checkout")
+	os.MkdirAll(filepath.Dir(hook), 0o755)
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st, err := r.Run(context.Background(), "app.test", dir, m, "test", FromGitHub)
+	if err != nil || st.Status != "ok" {
+		t.Fatalf("second deploy: %+v %v", st, err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the planted post-checkout hook ran during the deploy")
+	}
+}
+
+// A command-bearing key in .git/config (a compromised container can write
+// it; it is not tracked and so cannot arrive by push) must stop the deploy
+// before git runs it, and leave the running build untouched.
+func TestADeployRefusesACommandBearingGitConfig(t *testing.T) {
+	bare := makeRepo(t, "#!/bin/sh\ntrue\n")
+	m := &manifest.Manifest{Version: 2, Deploy: &manifest.Deploy{GitHub: &manifest.GitHubDeploy{Repository: "acme/app", Build: [][]string{{"./build.sh"}}, Pointer: ".current"}}}
+	root, dir := makeSite(t, m)
+	r, _ := newRunner(root, bare, nil)
+	if _, err := r.Run(context.Background(), "app.test", dir, m, "test", FromGitHub); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, ".current"), []byte("good\n"), 0o644)
+	marker := filepath.Join(root, "smudged")
+	// A filter smudge cannot be reached with -c (its driver name is the
+	// attacker's); Guard must refuse the whole deploy.
+	cfg := filepath.Join(dir, ".git", "config")
+	data, _ := os.ReadFile(cfg)
+	os.WriteFile(cfg, append(data, []byte("[filter \"evil\"]\n\tsmudge = touch "+marker+"\n")...), 0o644)
+	st, err := r.Run(context.Background(), "app.test", dir, m, "test", FromGitHub)
+	if err == nil || st.Status != "failed" {
+		t.Fatalf("a deploy on an unsafe config must fail: %+v %v", st, err)
+	}
+	if !strings.Contains(err.Error(), "filter.evil.smudge") {
+		t.Fatalf("the failure must name the key, got %v", err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the filter smudge ran")
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, ".current")); strings.TrimSpace(string(b)) != "good" {
+		t.Fatalf("the pointer was touched: %q", b)
+	}
+}
