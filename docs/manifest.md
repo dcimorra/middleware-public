@@ -355,6 +355,13 @@ process.
   (`rate`, `max_body`, its own and the policy's). The block list and the
   bans for exploits, scanners and failed logins still apply: they protect
   the machine, and a block closes every site.
+- `headers` go on every answer of the site, the house's own pages included,
+  and replace the site's header of the same name rather than being sent
+  next to it (two `Access-Control-Allow-Origin` break CORS). A
+  `Cache-Control` here replaces the site's except for its `private`,
+  `no-store` and `no-cache`, which stay: a line written for the public
+  pages does not make the signed-in ones public. On static files
+  `cache.static_max_age` sets `Cache-Control` over both.
 - `cache.rules` are the house's response cache, kept in memory and served
   without asking the site, behind the door so nothing passes a password.
   `origin` keeps what the site marks (`s-maxage`, else `max-age`) for as

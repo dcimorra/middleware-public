@@ -119,10 +119,10 @@ func (h *Handler) serveSite(w http.ResponseWriter, r *http.Request, sn engine.Sn
 			return
 		}
 	}
-	if m != nil {
-		for k, v := range m.Headers {
-			w.Header().Set(k, v)
-		}
+	// What the house answers itself carries the manifest's headers from
+	// here; what a site answers gets them in forward, over its own.
+	if !forwards(sn) {
+		setHeaders(w.Header(), m)
 	}
 	switch sn.Mode {
 	case manifest.ModeDisabled:
@@ -148,12 +148,65 @@ func (h *Handler) serveSite(w http.ResponseWriter, r *http.Request, sn engine.Sn
 	}
 }
 
+// forwards says whether serveSite hands the request to a process.
+func forwards(sn engine.Snapshot) bool {
+	switch sn.Mode {
+	case manifest.ModeRun:
+		return sn.Alive && sn.Port != 0
+	case manifest.ModeUpstream:
+		return true
+	}
+	return false
+}
+
+func setHeaders(h http.Header, m *manifest.Manifest) {
+	if m == nil {
+		return
+	}
+	for k, v := range m.Headers {
+		h.Set(k, v)
+	}
+}
+
+// overSite puts the manifest's headers over a site's answer. A manifest's
+// Cache-Control replaces the site's, except for what the site keeps to one
+// person or to nobody (private, no-store, no-cache), which stays: a line
+// written for the public pages, "public, max-age=60", would otherwise make
+// the signed-in ones public, for the house's cache and the edge's alike.
+func overSite(h http.Header, m *manifest.Manifest) {
+	if m == nil {
+		return
+	}
+	var keep []string
+	for k := range m.Headers {
+		if http.CanonicalHeaderKey(k) != "Cache-Control" {
+			continue
+		}
+		for _, v := range h.Values("Cache-Control") {
+			for _, d := range strings.Split(v, ",") {
+				d = strings.TrimSpace(d)
+				name, _, _ := strings.Cut(d, "=")
+				switch strings.ToLower(strings.TrimSpace(name)) {
+				case "private", "no-store", "no-cache":
+					keep = append(keep, d)
+				}
+			}
+		}
+		break
+	}
+	setHeaders(h, m)
+	if len(keep) > 0 {
+		h.Set("Cache-Control", strings.Join(append([]string{h.Get("Cache-Control")}, keep...), ", "))
+	}
+}
+
 // forward proxies to target. httputil.ReverseProxy handles WebSocket
 // upgrades by hijacking both ends, so a long-lived socket keeps flowing;
 // what it cannot survive is this process restarting, which is documented.
 func (h *Handler) forward(w http.ResponseWriter, r *http.Request, sn engine.Snapshot, target string) {
 	u, err := url.Parse(target)
 	if err != nil {
+		setHeaders(w.Header(), sn.Manifest)
 		pages.Render(w, r, SiteNotice(sn, "down"))
 		return
 	}
@@ -173,10 +226,20 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, sn engine.Snap
 		},
 		Transport:     h.transport,
 		FlushInterval: -1, // streams (SSE, chunked) flush as they come
+		// The manifest's headers replace the site's own. Set on the writer
+		// before the proxy ran, they were sent next to the site's (the
+		// proxy adds what the site answers): two Access-Control-Allow-Origin
+		// break CORS, and the cache read the manifest's Cache-Control and
+		// kept a page the site had marked private.
+		ModifyResponse: func(resp *http.Response) error {
+			overSite(resp.Header, sn.Manifest)
+			return nil
+		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			if errors.Is(err, context.Canceled) {
 				return
 			}
+			setHeaders(w.Header(), sn.Manifest)
 			// 503 and not 502: Cloudflare replaces a 502 from the origin
 			// with its own page, and the visitor never sees this one.
 			pages.Render(w, r, SiteNotice(sn, "down"))

@@ -249,7 +249,9 @@ func ttlFor(rule Rule, h http.Header, status int) time.Duration {
 			}
 		}
 	}
-	cc := parseCC(h.Get("Cache-Control"))
+	// Every Cache-Control line, not the first: with two, Get read the one
+	// the manifest had put first and kept a page the site marked private.
+	cc := parseCC(strings.Join(h.Values("Cache-Control"), ","))
 	if _, ok := cc["private"]; ok {
 		return 0
 	}

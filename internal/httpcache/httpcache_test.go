@@ -95,6 +95,17 @@ func TestTheWallsAManifestCannotRemove(t *testing.T) {
 	}
 }
 
+func TestEveryCacheControlLineIsRead(t *testing.T) {
+	h := http.Header{}
+	h.Add("Cache-Control", "public, max-age=60")
+	h.Add("Cache-Control", "private")
+	for _, mode := range []string{ModeOrigin, ModeForce} {
+		if ttl := ttlFor(Rule{Path: "/", Mode: mode, TTL: 60}, h, http.StatusOK); ttl != 0 {
+			t.Errorf("%s kept for %s a page whose second line says private", mode, ttl)
+		}
+	}
+}
+
 func TestASignedInPageIsNeitherKeptNorAnsweredFromTheCache(t *testing.T) {
 	// A site that renders the signed-in user's page and says nothing
 	// about caching it: force would keep it for everyone.
