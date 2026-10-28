@@ -235,7 +235,7 @@ device is gone (404, 410) gets it forgotten.
 | method | path | result |
 | --- | --- | --- |
 | GET | `/events` | `?since=RFC3339&type=prefix&subject=domain&limit=200` → `[event]` |
-| GET | `/events/stream` | `text/event-stream`; each `data:` is one event JSON |
+| GET | `/events/stream` | `text/event-stream`; each `data:` is one event JSON, its `id:` names the event; `Last-Event-ID` (or `?last_event_id=`) resumes after that event, from memory when this process still holds what followed and from the journal otherwise; `?since=RFC3339` catches up from memory first |
 
 ## System
 

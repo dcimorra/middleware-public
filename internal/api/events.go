@@ -137,10 +137,22 @@ func (s *Server) journalEvents(f eventFilter) []events.Event {
 	return out
 }
 
-// eventsStream is the live feed. The subscription is taken before the
-// catch-up is read so nothing emitted in between is lost; what the
-// catch-up already sent is skipped by time. A comment line every
-// Heartbeat keeps proxies and the browser from closing an idle stream.
+// maxCatchUp bounds what a stream sends before it goes live when it
+// resumes from the journal: a tab that slept for a week needs to know
+// the house moved on, not to replay every tick of it.
+const maxCatchUp = 10000
+
+// eventsStream is the live feed. The subscription and the copy of the
+// bus's memory are taken under one lock, so an event is either in the
+// catch-up or on the channel and nothing is skipped by comparing. It
+// was skipped by time once, for the stream's whole life, and an event
+// whose emitter read the clock first but took the lock second was lost
+// for every tab. A comment line every Heartbeat keeps proxies and the
+// browser from closing an idle stream.
+//
+// The catch-up is what followed Last-Event-ID (the header a browser's
+// own reconnect sends, or ?last_event_id= from the panel, whose fresh
+// EventSource cannot set headers), or else what followed ?since=.
 func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) (any, error) {
 	f, err := parseFilter(r)
 	if err != nil {
@@ -150,21 +162,26 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) (any, erro
 	if !ok {
 		return nil, Errorf(http.StatusInternalServerError, "streaming unsupported")
 	}
-	ch, unsub := s.opts.Bus.Subscribe()
+	lastID := r.Header.Get("Last-Event-ID")
+	if lastID == "" {
+		lastID = r.URL.Query().Get("last_event_id")
+	}
+	ch, recent, unsub := s.opts.Bus.SubscribeRecent()
 	defer unsub()
+	backlog := s.catchUp(f.since, lastID, recent)
+	// The catch-up has been chosen; whatever comes live is newer than it,
+	// and a since left in the filter would only hide events from a clock
+	// that stepped back.
+	f.since = time.Time{}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, ": connected\n\n")
 	flusher.Flush()
 
-	var last time.Time
 	send := func(e events.Event) bool {
 		if !f.match(e) {
 			return true
-		}
-		if !last.IsZero() && !e.Time.After(last) {
-			return true // already sent by the catch-up
 		}
 		data, err := json.Marshal(e)
 		if err != nil {
@@ -175,18 +192,15 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) (any, erro
 		// the panel listens to every type. With the type as the event's
 		// name the panel received nothing live, ever; the type is in the
 		// JSON.
-		if _, err := fmt.Fprintf(w, "id: %s\ndata: %s\n\n", e.Time.Format(time.RFC3339Nano), data); err != nil {
+		if _, err := fmt.Fprintf(w, "id: %s\ndata: %s\n\n", s.opts.Bus.ID(e), data); err != nil {
 			return false
 		}
-		last = e.Time
 		flusher.Flush()
 		return true
 	}
-	if !f.since.IsZero() {
-		for _, e := range s.opts.Bus.Recent() {
-			if !send(e) {
-				return Handled, nil
-			}
+	for _, e := range backlog {
+		if !send(e) {
+			return Handled, nil
 		}
 	}
 	hb := s.Heartbeat
@@ -210,4 +224,65 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) (any, erro
 			flusher.Flush()
 		}
 	}
+}
+
+// catchUp is what a stream sends before it goes live. An id from this
+// process whose successor memory still holds resumes exactly, by
+// sequence. Any other id (a process that is gone, a tab away for longer
+// than memory lasts, the RFC 3339 ids of older versions) resumes by its
+// time: the journal for what memory no longer has, memory for the rest.
+// An id that does not parse is ignored rather than refused, since a
+// browser sends back whatever it was given, and since decides instead.
+func (s *Server) catchUp(since time.Time, lastID string, recent []events.Event) []events.Event {
+	bus := s.opts.Bus
+	if lastID != "" {
+		if boot, seq, t, ok := events.ParseID(lastID); ok {
+			if boot == bus.Boot() && seq > 0 && (len(recent) == 0 || seq+1 >= recent[0].Seq) {
+				i := sort.Search(len(recent), func(i int) bool { return recent[i].Seq > seq })
+				return recent[i:]
+			}
+			return s.journalCatchUp(t, recent)
+		}
+	}
+	if since.IsZero() {
+		return nil
+	}
+	out := make([]events.Event, 0, len(recent))
+	for _, e := range recent {
+		if e.Time.After(since) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// journalCatchUp joins the journal to memory at memory's first event:
+// times inside one process only grow (the bus reads the clock under its
+// lock), so what the journal holds from before that instant is exactly
+// what memory has let go of. With memory empty this process has emitted
+// nothing yet and the cut is its start; anything after that comes on the
+// stream's channel instead.
+func (s *Server) journalCatchUp(t time.Time, recent []events.Event) []events.Event {
+	cut := time.Unix(0, s.opts.Bus.Boot())
+	if len(recent) > 0 {
+		cut = recent[0].Time
+	}
+	var out []events.Event
+	if journal := s.journalEvents(eventFilter{since: t}); journal != nil {
+		for _, e := range journal {
+			if e.Time.After(t) && e.Time.Before(cut) {
+				out = append(out, e)
+			}
+		}
+		sort.SliceStable(out, func(i, j int) bool { return out[i].Time.Before(out[j].Time) })
+	}
+	for _, e := range recent {
+		if e.Time.After(t) {
+			out = append(out, e)
+		}
+	}
+	if len(out) > maxCatchUp {
+		out = out[len(out)-maxCatchUp:]
+	}
+	return out
 }
