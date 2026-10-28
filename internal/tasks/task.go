@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 	// A timezone must resolve on a machine without /usr/share/zoneinfo
 	// too (a minimal image): a task that refuses to load there is one
@@ -248,7 +249,26 @@ func LoadRecord(root, name string) Record {
 	return r
 }
 
+// appendRun adds a run to the history under a lock on the file: it is a
+// read, an append and a write, and two writers in between lost one run.
+// A run adopted after a restart is recorded by the supervisor that adopted
+// it while the one that started it, when it is still there, records its
+// own: TestARunInProgressIsAdoptedAfterARestart failed now and then in
+// the release build with only "ok" in the history.
 func appendRun(root, name string, run Run) error {
+	path := RecordPath(root, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 	r := LoadRecord(root, name)
 	r.Runs = append(r.Runs, run)
 	if len(r.Runs) > KeepRuns {

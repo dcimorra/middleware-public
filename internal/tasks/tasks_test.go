@@ -363,3 +363,24 @@ func TestATasksScheduleIsReadInItsTimezone(t *testing.T) {
 		t.Fatal("a zone that does not exist was accepted")
 	}
 }
+
+// Two writers of a task's history at once lose nothing: it is a read, an
+// append and a write, and without its lock one run vanished, which made
+// TestARunInProgressIsAdoptedAfterARestart fail now and then.
+func TestConcurrentRunsAreAllRecorded(t *testing.T) {
+	root := newRoot(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := appendRun(root, "busy", Run{At: time.Now(), Status: StatusOK}); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if n := len(LoadRecord(root, "busy").Runs); n != 20 {
+		t.Fatalf("%d of 20 runs recorded", n)
+	}
+}
