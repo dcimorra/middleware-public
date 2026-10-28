@@ -254,10 +254,13 @@ func commandBearing(section, key string) bool {
 	case "diff":
 		return key == "command" || key == "textconv"
 	case "core":
-		switch key {
-		case "fsmonitor", "hookspath", "sshcommand", "pager", "editor", "askpass":
-			return true
-		}
+		// Not refused: core.hooksPath, fsmonitor, sshCommand, pager and
+		// editor are single-valued, so the -c overrides in hardening win
+		// over whatever the repository says, and GIT_ASKPASS in Env beats
+		// core.askPass. Refusing them broke every site using husky, whose
+		// install writes core.hooksPath=.husky into .git/config: the deploy
+		// failed on a key that could not have run anything.
+		return false
 	case "gpg":
 		return key == "program" || key == "defaultkeycommand"
 	case "credential":

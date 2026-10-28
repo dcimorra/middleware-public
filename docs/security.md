@@ -87,6 +87,9 @@ the hooks and limit transports to the ones the house uses, and — because
 config first and refuses to run, naming the key, when it finds one that runs
 a program. A deploy then fails with that key in the event and the running
 build is untouched; a marked repository shows the refusal instead of pulling.
+The single-valued keys a repository may set for itself (husky writes
+`core.hooksPath=.husky` on every install) are overridden, not refused, so
+such a site still deploys and its hooks still do not run on the host.
 
 **The jail for agents.** A conversation's agent may read and write the
 site's folder and nothing above it, and no other site. Two things outside
