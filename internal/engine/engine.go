@@ -362,16 +362,17 @@ func (e *Engine) reconcile(ctx context.Context, domain, dir string) {
 	}
 
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	if s.handing {
+		e.mu.Unlock()
 		return
 	}
 	// A dead instance: forget it, with backoff so a crash loop does not
 	// burn the port range and the log file.
+	var exited runtime.Instance
 	if s.Instance != nil {
 		select {
 		case err := <-s.Instance.Done():
-			e.opts.Ports.Release(s.Instance.Port())
+			exited = s.Instance
 			s.Instance = nil
 			s.failures++
 			wait := backoff(s.failures, s.Spec.Restart.MaxBackoff.Or(60*time.Second))
@@ -381,6 +382,19 @@ func (e *Engine) reconcile(ctx context.Context, domain, dir string) {
 		default:
 		}
 	}
+	if exited != nil {
+		e.mu.Unlock()
+		// The leader is gone, not necessarily its group: what `sh -c "a &
+		// b"` left behind went on holding the port, and every restart the
+		// backoff made added another set. Stopped before the port goes
+		// back to the allocator, and outside the lock, since a container
+		// takes a docker call or two. Nothing starts this tick anyway: the
+		// backoff is a second at least.
+		_ = exited.Stop(ctx, 2*time.Second)
+		e.opts.Ports.Release(exited.Port())
+		return
+	}
+	defer e.mu.Unlock()
 	if s.Instance != nil && s.Instance.Revision() == spec.Revision {
 		s.Spec = spec
 		return

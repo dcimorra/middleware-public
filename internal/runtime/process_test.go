@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -51,6 +53,44 @@ func TestStartWritesOutputToTheLogFileAndStopReachesTheGroup(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(dir, "out.log"))
 	if !strings.Contains(string(data), "started on 45999") {
 		t.Fatalf("log: %q", data)
+	}
+}
+
+// `sh -c "a & b"` ends while a goes on in its group, holding the port.
+// Stop returned at once when the leader was gone, and every restart the
+// backoff made left one more of them.
+func TestStopReachesTheGroupAfterTheLeaderHasExited(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "child.pid")
+	spec := &manifest.Spec{Domain: "a.test", SiteDir: dir, Cwd: dir, Command: []string{"/bin/sh", "-c", "sleep 300 & echo $! > " + pidFile + "; exit 1"}, Env: map[string]string{}, Revision: "r1"}
+	inst, err := Process{}.Start(context.Background(), spec, 45996, filepath.Join(dir, "out.log"), filepath.Join(dir, "home"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-inst.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the shell did not exit")
+	}
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Kill(child, syscall.SIGKILL)
+	if !pidAlive(child) {
+		t.Fatal("the background child is not running, so the test proves nothing")
+	}
+	if err := inst.Stop(context.Background(), 2*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	// pidAlive counts a zombie as dead: an orphan killed here may stay
+	// one where PID 1 does not reap.
+	if pidAlive(child) {
+		t.Fatal("the leader's child survived Stop")
 	}
 }
 

@@ -85,7 +85,9 @@ born with, and can roll them over with `middleware site restart --all`.
 
 - **process** (default): `exec.Cmd` with a clean environment (no duplicate
   keys, `PORT` last), a per-site `HOME` under `data/homes/`, output to file,
-  process group of its own so a stop reaches grandchildren.
+  process group of its own so a stop reaches grandchildren, also those a
+  leader that already exited left behind (the group is signalled when the
+  instance exits, before its port is handed out again).
 - **docker**: the same manifest, run as a container. The image is built from
   `docker.build` or pulled from `docker.image`; the site folder is bind-mounted;
   the port is published on loopback only. Handover works the same way: two

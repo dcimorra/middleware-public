@@ -41,6 +41,35 @@ func waitDead(t *testing.T, pid int, what string) {
 	}
 }
 
+// A site whose shell exits while what it started in the background goes
+// on: the engine used to forget the instance and release its port with the
+// child still on it, one more child with every restart the backoff made.
+func TestAnExitedInstanceTakesItsGroupWithIt(t *testing.T) {
+	e, sites := newTestEngine(t)
+	dir := filepath.Join(sites, "group.test")
+	os.MkdirAll(dir, 0o755)
+	pidFile := filepath.Join(dir, "child.pid")
+	script := fmt.Sprintf(`"$MW_BIN" & echo $! > %s; sleep 1; exit 1`, pidFile)
+	m := fmt.Sprintf(`{"version":2,"run":{"command":["/bin/sh","-c",%q],"env":{"MW_TEST_SERVER":"1","BUILD":"g","MW_BIN":%q},"health":{"timeout":"10s"}}}`, script, os.Args[0])
+	os.WriteFile(filepath.Join(dir, "site.json"), []byte(m), 0o644)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	waitFor(t, e, "group.test", func(s Snapshot) bool { return s.Alive })
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var child int
+	fmt.Sscan(strings.TrimSpace(string(data)), &child)
+	if child <= 0 {
+		t.Fatalf("no child pid in %q", data)
+	}
+	defer syscall.Kill(child, syscall.SIGKILL)
+	waitFor(t, e, "group.test", func(s Snapshot) bool { return s.Failures >= 1 })
+	waitDead(t, child, "the child of an instance whose shell exited")
+}
+
 // An adopted process that is the one recorded but no longer listens is
 // stopped, not forgotten: forgotten, it kept running outside every state
 // file while the next tick started a second copy next to it.

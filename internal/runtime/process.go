@@ -152,31 +152,82 @@ func (p *procInstance) State() State {
 		StartTicks: p.ticks, BootID: p.boot}
 }
 
-// Stop sends SIGTERM to the whole group, waits up to grace, then SIGKILL.
-// The group matters: killing only the shell that `npm start` spawned leaves
-// node alive on the port, and the next start fails to bind.
+// Stop sends SIGTERM to the whole group, waits up to grace for all of it
+// to go, then SIGKILL. The group matters: killing only the shell that
+// `npm start` spawned leaves node alive on the port, and the next start
+// fails to bind. It is signalled also when the leader has already exited,
+// which is what the engine does when Done fires: Stop used to return at
+// once then, and the children of `sh -c "a & b"` went on holding the port,
+// one more set of them with every restart the backoff made.
+//
+// The group's id is the leader's pid, which the kernel does not hand out
+// again while any process of the group is left, so the only window for
+// reaching a stranger is a leader that has been gone, with its whole
+// group, long enough for the pid to come round: the engine stops as soon
+// as Done fires, a second at most for an adopted pid.
 func (p *procInstance) Stop(ctx context.Context, grace time.Duration) error {
-	if !p.Alive() {
+	if p.gone() {
 		return nil
 	}
-	_ = syscall.Kill(-p.pid, syscall.SIGTERM)
-	timer := time.NewTimer(grace)
-	defer timer.Stop()
-	select {
-	case <-p.done:
+	_ = syscall.Kill(-p.pid, syscall.SIGTERM) // ESRCH: nothing left, fine
+	if p.waitGone(ctx, grace) {
 		return nil
-	case <-ctx.Done():
-	case <-timer.C:
 	}
 	_ = syscall.Kill(-p.pid, syscall.SIGKILL)
-	select {
-	case <-p.done:
-	case <-time.After(5 * time.Second):
-		if p.Alive() {
-			return fmt.Errorf("pid %d survived SIGKILL", p.pid)
+	if p.waitGone(context.Background(), 5*time.Second) {
+		return nil
+	}
+	if p.Alive() {
+		return fmt.Errorf("pid %d survived SIGKILL", p.pid)
+	}
+	return fmt.Errorf("process group %d survived SIGKILL", p.pid)
+}
+
+// gone reports whether the leader and every process of its group have
+// exited. Polled rather than read from done: done carries the exit error
+// for the engine, and a Stop that took it left the engine reading nil.
+func (p *procInstance) gone() bool {
+	return !p.Alive() && !groupAlive(p.pid)
+}
+
+func (p *procInstance) waitGone(ctx context.Context, d time.Duration) bool {
+	deadline := time.Now().Add(d)
+	for !p.gone() {
+		if ctx.Err() != nil || time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return true
+}
+
+// groupAlive reports whether a process other than a zombie is left in
+// process group pgid. Signal 0 to the group answers for zombies too, and an
+// orphan killed in a container whose PID 1 does not reap stays one for
+// good, so a yes from it is checked against /proc.
+func groupAlive(pgid int) bool {
+	if pgid <= 0 {
+		return false
+	}
+	if err := syscall.Kill(-pgid, 0); err != nil && !errors.Is(err, syscall.EPERM) {
+		return false
+	}
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return true // no /proc to tell: the signal's answer stands
+	}
+	want := strconv.Itoa(pgid)
+	for _, ent := range entries {
+		pid, err := strconv.Atoi(ent.Name())
+		if err != nil {
+			continue
+		}
+		// fields[0] is the state (field 3), [2] the group (field 5).
+		if f, ok := statFields(pid); ok && len(f) > 2 && f[2] == want && f[0] != "Z" {
+			return true
 		}
 	}
-	return nil
+	return false
 }
 
 // pidAlive uses signal 0, which checks existence without delivering
