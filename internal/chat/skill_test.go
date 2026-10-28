@@ -27,6 +27,14 @@ func TestTheEmbeddedSkillIsInstalledInTheHomeBeforeATurn(t *testing.T) {
 	if !bytes.Equal(got, SkillContent()) || !strings.HasPrefix(string(got), "---\nname: middleware") {
 		t.Fatalf("installed skill differs from the embedded one:\n%s", got)
 	}
+	// And in the CLI's own folder, which is where Claude Code now loads
+	// skills from (its CLAUDE_CONFIG_DIR).
+	if got, err := os.ReadFile(filepath.Join(root, "data", "agents", "config", "a.test", "fake", "skills", "middleware", "SKILL.md")); err != nil || !bytes.Equal(got, SkillContent()) {
+		t.Fatalf("the skill is not in the CLI's folder: %v", err)
+	}
+	if p.last().Jail.Config != filepath.Join(root, "data", "agents", "config", "a.test") {
+		t.Fatalf("the jail's config folder: %q", p.last().Jail.Config)
+	}
 	if _, err := os.Stat(filepath.Join(root, "data", "homes", "a.test", ".gemini")); err == nil {
 		t.Fatal("a claude-style provider got Antigravity's copy of the skill")
 	}

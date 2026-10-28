@@ -174,10 +174,22 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 	// auth.json under the site's HOME.
 	env["CODEX_API_KEY"] = p.cfg.APIKey
 	if req.Jail.Home != "" {
-		// Codex refuses a CODEX_HOME that does not exist.
-		home := filepath.Join(req.Jail.Home, ".codex")
-		if err := os.MkdirAll(home, 0o700); err != nil {
+		// Codex refuses a CODEX_HOME that does not exist. It is the house's
+		// folder for the CLI, with the sessions an earlier release kept
+		// under the site's HOME carried in once: in HOME, which a docker
+		// site's container writes, its config.toml was the site's to plant,
+		// and a `notify` or an MCP server there is a command Codex runs on
+		// the host by itself.
+		old := filepath.Join(req.Jail.Home, ".codex")
+		home, err := req.Jail.ConfigHome(p.Key(), old, "sessions")
+		if err != nil {
 			return nil, err
+		}
+		if home == "" {
+			home = old
+			if err := os.MkdirAll(home, 0o700); err != nil {
+				return nil, err
+			}
 		}
 		env["CODEX_HOME"] = home
 	}

@@ -73,6 +73,22 @@ by the core before anything reaches the CLI: paths are resolved and checked
 against the site folder, symlinks included. The adapter is a subprocess with
 no say in it.
 
+**The agent CLI's own folder.** A turn's HOME is the site's (a docker site
+mounts it), and its folder comes from its repository, so neither may hold
+anything the agent CLI runs by itself. Claude Code, Codex and Kimi Code
+keep their settings, sessions and login in `data/agents/config/<domain>/
+<agent>/` (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `KIMI_CODE_HOME`), which no
+container mounts and the jail denies to the agent's tools; what an earlier
+release kept for them under HOME (sessions, a login) is copied in once,
+plain files only. Claude Code runs with hooks off (`disableAllHooks` in the
+`--settings` file, which outranks every file but managed policy), with the
+user's settings only (`--setting-sources user`: a project's
+`.claude/settings.json` could name an `apiKeyHelper` or MCP servers, which
+ran on the host in print mode) and no MCP server (`--strict-mcp-config`);
+the project's `CLAUDE.md` is still read, from `--add-dir`. Qwen Code, Vibe,
+OpenCode, Antigravity and Grok still read their configuration from HOME or
+from the project as their CLIs do.
+
 **The CLI from inside a turn.** A turn runs as the supervisor's user with
 the `middleware` binary in its PATH, so whatever its Bash calls start can
 open `data/api.sock`. The socket reads who connected (`SO_PEERCRED`) and

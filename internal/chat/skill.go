@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/dcimorra/middleware-public/internal/agent"
 	"github.com/dcimorra/middleware-public/internal/fsx"
 )
 
@@ -45,13 +46,21 @@ func InstallSkill(dir string) error {
 // installSkillFor puts the skill where the provider's CLI will read it
 // from the run's HOME. Claude Code loads skills from ~/.claude/skills;
 // the Antigravity CLI from ~/.gemini/config/skills, so the same file goes
-// there too.
-func installSkillFor(home, provider string) error {
+// there too. Claude Code now runs with its own folder outside HOME
+// (agent.Jail.ConfigHome) and loads its skills from there; the copy in
+// HOME stays, as the guide every other agent is told to read.
+func installSkillFor(j agent.Jail, provider string) error {
+	home := j.Home
 	if home == "" {
 		return nil
 	}
 	if err := InstallSkill(filepath.Join(home, ".claude", "skills", SkillName)); err != nil {
 		return err
+	}
+	if cfg := j.ConfigPath(provider); cfg != "" && !needsSkillHint[provider] {
+		if err := InstallSkill(filepath.Join(cfg, "skills", SkillName)); err != nil {
+			return err
+		}
 	}
 	if provider == "agy" {
 		return InstallSkill(filepath.Join(home, ".gemini", "config", "skills", SkillName))

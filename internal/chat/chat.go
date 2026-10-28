@@ -789,7 +789,7 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 	}
 	// The skill goes in before every turn, not once at start: the home
 	// may be new, and the binary may have been upgraded since the last one.
-	if err := installSkillFor(s.Jail.Home, s.Provider); err != nil {
+	if err := installSkillFor(s.Jail, s.Provider); err != nil {
 		return fail(fmt.Errorf("skill not installed: %w", err))
 	}
 	var system string

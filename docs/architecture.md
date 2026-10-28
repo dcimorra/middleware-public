@@ -155,7 +155,9 @@ end). Every adapter drives the vendor's CLI as a subprocess so no SDK
 enters the core: `claude`, `agy` (Antigravity), `openai` (Codex) and the
 rest. What an agent may touch is decided
 by the **jail** in the core (the site folder, nothing above, no other site),
-not by the adapter.
+not by the adapter. The CLIs that can be pointed elsewhere keep their own
+settings and sessions in `data/agents/config/<domain>/`, not in the site's
+HOME, which a container can write.
 
 ## API and panel
 

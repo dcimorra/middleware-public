@@ -164,8 +164,13 @@ func (p *Provider) Args(req agent.Request) []string {
 	return args
 }
 
-// home is the conversation's own data directory.
-func home(req agent.Request) string {
+// home is the conversation's own data directory: in the house's folder
+// for the CLI (agent.Jail.ConfigHome), with what an earlier release kept
+// under the site's HOME carried in once. In HOME, which a docker site's
+// container writes, the config and whatever else the CLI reads from that
+// folder were the site's to plant. Without that folder (a run outside a
+// conversation), under HOME as before.
+func home(req agent.Request) (string, error) {
 	name := req.Name
 	if name == "" {
 		name = "default"
@@ -176,7 +181,12 @@ func home(req agent.Request) string {
 		}
 		return '_'
 	}, name)
-	return filepath.Join(req.Jail.Home, ".kimi-code", safe)
+	old := filepath.Join(req.Jail.Home, ".kimi-code", safe)
+	dir, err := req.Jail.ConfigHome(filepath.Join("kimi", safe), old, ".")
+	if err != nil || dir != "" {
+		return dir, err
+	}
+	return old, os.MkdirAll(old, 0o700)
 }
 
 // Start implements agent.Provider.
@@ -193,8 +203,8 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 	if req.Jail.Home == "" {
 		req.Jail.Home = filepath.Join(os.TempDir(), "kimi-home")
 	}
-	dir := home(req)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	dir, err := home(req)
+	if err != nil {
 		return nil, err
 	}
 	if err := fsx.WriteAtomic(filepath.Join(dir, "config.toml"), []byte(p.Config(req)), 0o600); err != nil {
