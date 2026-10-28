@@ -487,7 +487,8 @@ func (w *wireHook) Wrap(next http.Handler) http.Handler { return next }
 // outage.
 func (w *wireHook) Run(ctx context.Context, a *app.App) error {
 	hc := helper.Dial("")
-	from, to := a.Settings.Ports.From, a.Settings.Ports.To
+	st := a.CurrentSettings()
+	from, to := st.Ports.From, st.Ports.To
 	if hc.Available() {
 		rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		err := hc.ReservePorts(rctx, from, to)
@@ -901,7 +902,7 @@ func wireSiteDoor(a *app.App, srv *api.Server, set *moduleSet) {
 			}
 			return sn.Manifest, sn.Manifest != nil
 		},
-		HouseDaily: func() float64 { return a.Settings.Agents.SiteDaily() },
+		HouseDaily: func() float64 { return a.CurrentSettings().Agents.SiteDaily() },
 		Spent:      chatManager.Ledger().Day,
 	})
 	wireGitProxy(a, srv, set, tokens, "http://"+listen)

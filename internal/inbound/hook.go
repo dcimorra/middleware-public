@@ -222,7 +222,7 @@ func (h *Hook) Run(ctx context.Context, a *app.App) error {
 			h.Handler = a.Handler
 		}
 		if h.PanelDomain == "" {
-			h.PanelDomain = a.Settings.PanelDomain
+			h.PanelDomain = a.CurrentSettings().PanelDomain
 		}
 		if h.Bus == nil {
 			h.Bus = a.Bus

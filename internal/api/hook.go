@@ -44,14 +44,16 @@ func NewHook(a *app.App, version string) *Hook {
 		Sites:    mgr,
 		Engine:   a.Engine,
 		Bus:      a.Bus,
-		Settings: func() settings.Settings { return a.Settings },
+		Settings: a.CurrentSettings,
 		SaveSettings: func(s settings.Settings) error {
 			if err := settings.Save(a.Root, s); err != nil {
 				return err
 			}
 			// What can be applied live is applied; the listener and the
-			// port range need a restart and the panel says so.
-			a.Settings = s
+			// port range need a restart and the panel says so. Under the
+			// app's lock: the agents' daily budget and the doors read the
+			// settings from their own goroutines meanwhile.
+			a.SetSettings(s)
 			a.Proxy.SetPanelDomain(s.PanelDomain)
 			return nil
 		},

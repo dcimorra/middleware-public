@@ -1,10 +1,13 @@
 package api
 
 import (
+	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/dcimorra/middleware-public/internal/app"
 	"github.com/dcimorra/middleware-public/internal/settings"
 )
 
@@ -43,6 +46,52 @@ func TestThePanelDomainIsSavedAsTheProxyComparesIt(t *testing.T) {
 	st.PanelDomain = ""
 	if resp, body := f.call("PUT", "/api/v1/settings", st); resp.StatusCode != 200 || saved.PanelDomain != "" {
 		t.Fatalf("empty: %d %s", resp.StatusCode, text(body))
+	}
+}
+
+// TestSavingTheSettingsWhileTheyAreReadIsNotARace is PUT /settings in
+// one goroutine while the agents' daily budget and the API read the
+// settings from others, through the hook the process really wires. The
+// save assigned the whole struct with no lock; -race is what judges.
+func TestSavingTheSettingsWhileTheyAreReadIsNotARace(t *testing.T) {
+	a, err := app.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewHook(a, "test")
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-done:
+					return
+				default:
+				}
+				_ = a.CurrentSettings().Agents.SiteDaily()
+				_ = h.Server.opts.Settings().PanelDomain
+			}
+		}()
+	}
+	var last string
+	for i := 0; i < 50; i++ {
+		st := h.Server.opts.Settings()
+		last = fmt.Sprintf("p%d.example.com", i)
+		st.PanelDomain = last
+		if err := h.Server.opts.SaveSettings(st); err != nil {
+			t.Fatal(err)
+		}
+	}
+	close(done)
+	wg.Wait()
+	if got := a.CurrentSettings().PanelDomain; got != last {
+		t.Fatalf("panel domain %q, want %q", got, last)
+	}
+	if loaded, _ := settings.Load(a.Root); loaded.PanelDomain != last {
+		t.Fatalf("file says %q", loaded.PanelDomain)
 	}
 }
 
