@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -241,9 +242,23 @@ func TestATimedOutStepIsKilledWithItsChildren(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	data, _ := os.ReadFile(filepath.Join(dir, "child.pid"))
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
-	if pid > 0 && syscall.Kill(pid, 0) == nil {
+	if pid > 0 && syscall.Kill(pid, 0) == nil && !zombie(pid) {
 		stat, _ := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
 		syscall.Kill(pid, syscall.SIGKILL)
 		t.Fatalf("the step's child survived the timeout: %s\n%s", stat, log.String())
 	}
+}
+
+// zombie reports whether pid is dead but not yet reaped. The killed child
+// is orphaned to PID 1, and where PID 1 does not reap (a container whose
+// init is a plain process) it stays a zombie that kill(pid, 0) still
+// finds: dead all the same, and the test used to fail on such machines.
+// A pid /proc no longer knows is dead too.
+func zombie(pid int) bool {
+	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return true
+	}
+	i := bytes.LastIndexByte(data, ')')
+	return i < 0 || i+2 >= len(data) || data[i+2] == 'Z'
 }
