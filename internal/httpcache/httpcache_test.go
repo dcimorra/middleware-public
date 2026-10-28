@@ -95,6 +95,33 @@ func TestTheWallsAManifestCannotRemove(t *testing.T) {
 	}
 }
 
+func TestAPageForHttpIsNotGivenToHttps(t *testing.T) {
+	o := &origin{}
+	_, h, _ := setup([]Rule{{Path: "/", Mode: ModeForce, TTL: 60}}, o)
+	visit := func(url string, headers ...string) string {
+		r := httptest.NewRequest("GET", url, nil) // https:// sets r.TLS
+		for _, kv := range headers {
+			k, v, _ := strings.Cut(kv, ": ")
+			r.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec.Header().Get("X-Middleware-Cache")
+	}
+	visit("http://a.example/x")
+	if got := visit("https://a.example/x"); got != "miss" {
+		t.Fatalf("https was answered %q from what http kept", got)
+	}
+	if got := visit("https://a.example/x"); got != "hit" {
+		t.Fatalf("https did not keep its own: %q", got)
+	}
+	// A direct client that says https is not believed, by the cache as
+	// by the site: it is plain http, and gets plain http's page.
+	if got := visit("http://a.example/x", "X-Forwarded-Proto: https"); got != "hit" || o.calls.Load() != 2 {
+		t.Fatalf("a forged X-Forwarded-Proto: %q after %d calls", got, o.calls.Load())
+	}
+}
+
 func TestEveryCacheControlLineIsRead(t *testing.T) {
 	h := http.Header{}
 	h.Add("Cache-Control", "public, max-age=60")

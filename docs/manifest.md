@@ -368,7 +368,9 @@ process.
   long as it says, so switching it on over an app that sends nothing changes
   nothing; `force` keeps `ttl` seconds whatever the site says, for what is
   known to be public and still; `never` keeps nothing, for `/admin`.
-  Prefixes go by whole segments and the longest wins. What no rule can
+  Prefixes go by whole segments and the longest wins. An answer is kept by
+  scheme, name and URI, so a page made for `http://` is never given to
+  `https://`. What no rule can
   change: nothing with `Set-Cookie`, `private`, `no-store` or `no-cache`,
   `Vary: *`, `Cookie` or `Authorization`, nothing but a 200 to GET or HEAD,
   nothing for a request with `Authorization`, no event streams and no

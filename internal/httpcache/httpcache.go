@@ -28,6 +28,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/dcimorra/middleware-public/internal/edge"
 )
 
 // Rule is one entry of the manifest's cache.rules.
@@ -289,10 +291,18 @@ func parseCC(v string) map[string]string {
 	return out
 }
 
-// key is the host and the URI: a HEAD is answered from a GET's entry.
-// Variants by Vary live under it.
+// key is the scheme, the host and the URI: a HEAD is answered from a
+// GET's entry. Variants by Vary live under it. The scheme is the one the
+// house believes (edge.HTTPS) and tells the site: a page rendered for
+// http, with its http:// links and assets, was kept and given to https
+// visitors as mixed content, and whoever asked first over plain http
+// chose what everyone on https got.
 func key(r *http.Request) string {
-	return strings.ToLower(r.Host) + " " + r.URL.RequestURI()
+	scheme := "http"
+	if edge.HTTPS(r) {
+		scheme = "https"
+	}
+	return scheme + " " + strings.ToLower(r.Host) + " " + r.URL.RequestURI()
 }
 
 func (e *entry) fits(r *http.Request) bool {
