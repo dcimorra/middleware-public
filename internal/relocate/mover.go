@@ -204,6 +204,11 @@ func (m *Mover) Move(ctx context.Context, domain string, t Target, progress func
 	planned := m.plannedManifest(domain, dir)
 	plannedRaw, _ := json.Marshal(planned)
 	liveWorkers, stopWorkers := planned.MovingWorkers(true), planned.MovingWorkers(false)
+	// However it ends, the dumps the exports leave here go: undone, the
+	// site runs here on the database they were taken from; done, the
+	// archive has them (it is packed before this runs), or nothing that
+	// keeps the folder here needs them.
+	defer DropOutputs(dir, planned, append(append([]string(nil), liveWorkers...), stopWorkers...))
 	if len(liveWorkers) > 0 {
 		progress(StepExport, "exporting the data of "+strings.Join(liveWorkers, ", ")+" here, while it serves")
 		said, err := exporter.Export(ctx, domain, plannedRaw, liveWorkers)

@@ -478,7 +478,12 @@ run as the site's processes do. All get the site's environment, the
 worker's on top, and `$PORT`. `output`, a file inside the folder, gets the
 export's standard output, written by the house: inside a database's
 container the export runs as the database's user, who cannot write in the
-site's folder. `timeout` bounds each (30m). A move that fails
+site's folder. The house removes `output` (and its `.part`, all a failed
+export leaves) once the import there has ended, and here once the move is
+over (the archive of the copy here keeps it); in a folder that is a git
+repository it is added to `.git/info/exclude` first, so a dump is never
+committed nor pushed. What an export without `output` writes is the site's
+to clean. `timeout` bounds each (30m). A move that fails
 removes the volumes it created and starts the site again where it was, whose
 database has only been read.
 
