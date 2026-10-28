@@ -195,7 +195,13 @@ func (t HTTPTarget) waitJob(ctx context.Context, path, what, id string) (string,
 
 // Check implements Target.
 func (t HTTPTarget) Check(ctx context.Context, d string, need Needs) error {
-	return t.do(ctx, "POST", "/relocate/"+d+"/check", "application/json", jsonBody(need), nil)
+	err := t.do(ctx, "POST", "/relocate/"+d+"/check", "application/json", jsonBody(need), nil)
+	if err != nil && strings.Contains(err.Error(), "answered 400") && strings.Contains(err.Error(), "unknown field") {
+		// An older house reads the check strictly, and what it does not
+		// know (the volumes and ports asked about now) refuses it whole.
+		return fmt.Errorf("%s runs an older version that cannot check what this site needs: update it first (%v)", t.Name(), err)
+	}
+	return err
 }
 
 // Send implements Target.

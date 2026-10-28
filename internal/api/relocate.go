@@ -742,6 +742,11 @@ func (t meshTarget) older(err error) error {
 	if errors.As(err, &re) && re.Status == http.StatusNotFound && strings.Contains(re.Message, "no such route") {
 		return fmt.Errorf("%s runs a version that cannot receive sites: update it first", t.x.Name)
 	}
+	// A check that says more than it knows (the volumes and ports a move
+	// asks about now) is refused whole by an older node's strict reading.
+	if errors.As(err, &re) && re.Status == http.StatusBadRequest && strings.Contains(re.Message, "unknown field") {
+		return fmt.Errorf("%s runs an older version that cannot check what this site needs (%s): update it first", t.x.Name, re.Message)
+	}
 	return err
 }
 
