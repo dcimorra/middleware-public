@@ -11,8 +11,9 @@
 // others and nothing more of their machines.
 //
 // Membership is a roster every node keeps and pulls from the others every
-// twenty seconds: an entry per node, newest change wins, a removal is an
-// entry marked removed (so an old copy cannot bring it back). Joining one
+// twenty seconds: an entry per node, which only that node changes, and a
+// removal is an entry marked removed, final until the node joins again
+// (mergeLocked says why each rule is there). Joining one
 // node is joining all of them: the others learn the newcomer from the
 // roster within a round, and the newcomer learns them from the node that
 // invited it.
@@ -40,6 +41,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -103,7 +105,18 @@ type Member struct {
 	Version  string    `json:"version,omitempty"`
 	Updated  time.Time `json:"updated"`
 	Removed  bool      `json:"removed,omitempty"`
+	// Joined and By are the admission: when the node let in through an
+	// invitation, and which node let it in. They are the one way a
+	// removed id comes back (mergeLocked), and travel unchanged with the
+	// entry whoever relays it.
+	Joined time.Time `json:"joined,omitzero"`
+	By     string    `json:"by,omitempty"`
 }
+
+// MaxSkew is how far ahead of this node's clock a roster entry may be
+// dated. An honest node's clock is off by seconds; an entry dated in the
+// year 2100 is a node that wants to win every comparison from now on.
+const MaxSkew = time.Minute
 
 // Self is this installation's identity, which outlives any network.
 type Self struct {
@@ -639,7 +652,7 @@ func (m *Mesh) Join(ctx context.Context, raw, endpoint string) (Member, error) {
 	m.st.PrivateKey = key
 	m.st.Secret = ans.Secret
 	m.st.Members = nil
-	m.mergeLocked(ans.Roster)
+	m.mergeLocked(c.Inviter.ID, ans.Roster)
 	m.st.Settings = ans.Settings
 	m.dirty = true
 	err = m.saveLocked()
@@ -692,7 +705,7 @@ func (m *Mesh) admit(from netip.Addr, req joinRequest) (joinAnswer, error) {
 	if name == "" {
 		name = "node-" + req.ID[:min(6, len(req.ID))]
 	}
-	nm := Member{ID: req.ID, Name: name, IP: iv.IP, PublicKey: req.PublicKey, Endpoint: req.Endpoint, Version: req.Version, Updated: m.now()}
+	nm := Member{ID: req.ID, Name: name, IP: iv.IP, PublicKey: req.PublicKey, Endpoint: req.Endpoint, Version: req.Version, Updated: m.now(), Joined: m.now(), By: m.self.ID}
 	kept := m.st.Members[:0]
 	for _, x := range m.st.Members {
 		if x.ID != nm.ID {
@@ -713,13 +726,52 @@ func (m *Mesh) rosterLocked() []Member {
 	return out
 }
 
-// mergeLocked takes in another node's roster: per node, the newest entry
-// wins. It reports whether anything changed and whether this node's own
-// entry says it was removed by someone after its last change.
-func (m *Mesh) mergeLocked(in []Member) (changed, expelled bool) {
+// mergeLocked takes in the roster read from the member from (its id). It
+// reports whether anything changed and whether this node's own entry says
+// it was removed by someone after its last change.
+//
+// It used to be "per node, the newest entry wins", from whoever said it.
+// A node can write anything in the roster it serves, and that made one
+// compromised node the network's master: it dated its own entry in 2100
+// and no expel could ever be newer, and it could rewrite another node's
+// key so that node's address went through the tunnel to it. So now:
+//
+//   - every date is clamped to MaxSkew ahead of this clock;
+//   - a node it does not know yet is taken from whoever names it, since
+//     that is how a node joined through another is learnt by all; but
+//     once known, its entry changes only when read from that node itself
+//     (every live member is read directly every round, so nothing honest
+//     waits for a relay);
+//   - a removal is taken from anyone, as any member may expel any other,
+//     unless the node's admission is newer than it;
+//   - a removal is final: a removed id comes back only through a new
+//     join, an entry admitted by the node it is read from, dated after
+//     the removal, at an address nobody has had. A node cannot admit
+//     itself, so an expelled node cannot vote itself back in;
+//   - a live entry must have an address in the mesh's subnet that no
+//     other node has: the address goes into WireGuard's AllowedIPs, and a
+//     node that announced a public address, or a neighbour's, would have
+//     that traffic routed to it.
+//
+// What it cannot stop without signatures, which the roster does not
+// carry: a member introducing a node nobody knows yet under any key it
+// likes, or expelling one. Both are things any member may do anyway, by
+// inviting or by expelling.
+func (m *Mesh) mergeLocked(from string, in []Member) (changed, expelled bool) {
+	subnet := m.opts.Subnet
+	if !subnet.IsValid() {
+		subnet = DefaultSubnet
+	}
+	limit := m.now().Add(MaxSkew)
 	for _, r := range in {
 		if r.ID == "" || !r.IP.IsValid() || r.PublicKey.IsZero() {
 			continue
+		}
+		if r.Updated.After(limit) {
+			r.Updated = limit
+		}
+		if r.Joined.After(limit) {
+			r.Joined = limit
 		}
 		if r.ID == m.self.ID {
 			if r.Removed && r.Updated.After(m.st.Updated) {
@@ -727,18 +779,64 @@ func (m *Mesh) mergeLocked(in []Member) (changed, expelled bool) {
 			}
 			continue
 		}
-		found := false
-		for i := range m.st.Members {
-			if m.st.Members[i].ID == r.ID {
-				found = true
-				if r.Updated.After(m.st.Members[i].Updated) {
-					m.st.Members[i] = r
-					changed = true
-				}
+		i := slices.IndexFunc(m.st.Members, func(x Member) bool { return x.ID == r.ID })
+		if i < 0 {
+			if r.Removed || m.addressFreeLocked(r.ID, r.IP, subnet) {
+				m.st.Members = append(m.st.Members, r)
+				changed = true
 			}
+			continue
 		}
-		if !found {
-			m.st.Members = append(m.st.Members, r)
+		cur := m.st.Members[i]
+		// A join is admitted by the node it is read from, never by the
+		// node itself, and newer than what is known of the node: after
+		// its removal, or after its last admission.
+		since := cur.Joined
+		if cur.Removed {
+			since = cur.Updated
+		}
+		join := !r.Removed && r.By != "" && r.By == from && r.By != r.ID && r.Joined.After(since)
+		switch {
+		case join:
+			// A fresh address too, its own old one included: an admission
+			// always draws one nobody had (freeIPLocked), and one that
+			// kept the old address with another key would take over the
+			// node it names.
+			if r.IP == cur.IP || !m.addressFreeLocked(r.ID, r.IP, subnet) {
+				continue
+			}
+		case cur.Removed:
+			continue
+		case r.Removed:
+			// Newer than the admission, not than the node's last word
+			// about itself: that one the node dates, and a node that
+			// dated itself a minute ahead every round would outrun every
+			// expel. An entry from before admissions were dated has none,
+			// and any removal ends it; what that costs is a node that left
+			// and came back before this version, while another was off
+			// the whole time with the old removal: it would bring that
+			// removal back, and the node joins again.
+			if !r.Updated.After(cur.Joined) {
+				continue
+			}
+			// Only the mark and its date: the address and key stay what
+			// they were, so the address stays taken.
+			upd := cur
+			upd.Removed, upd.Updated = true, r.Updated
+			r = upd
+		default:
+			if from != r.ID || !r.Updated.After(cur.Updated) || !m.addressFreeLocked(r.ID, r.IP, subnet) {
+				continue
+			}
+			r.Joined, r.By = cur.Joined, cur.By
+		}
+		// The same entry dated later is not a change: a node that dates
+		// itself ahead would otherwise have the interface applied anew
+		// every round.
+		same := cur
+		same.Updated = r.Updated
+		m.st.Members[i] = r
+		if same != r {
 			changed = true
 		}
 	}
@@ -746,6 +844,27 @@ func (m *Mesh) mergeLocked(in []Member) (changed, expelled bool) {
 		m.dirty = true
 	}
 	return changed, expelled
+}
+
+// addressFreeLocked says whether ip may be the mesh address of the node
+// id: inside the subnet, and nobody else's, this node's, a pending
+// invitation's or a removed node's (whose address freeIPLocked does not
+// hand out again either).
+func (m *Mesh) addressFreeLocked(id string, ip netip.Addr, subnet netip.Prefix) bool {
+	if !subnet.Contains(ip) || ip == m.st.IP {
+		return false
+	}
+	for _, x := range m.st.Members {
+		if x.ID != id && x.IP == ip {
+			return false
+		}
+	}
+	for _, iv := range m.st.Invites {
+		if iv.IP == ip {
+			return false
+		}
+	}
+	return true
 }
 
 // Expel removes a node from the network: here at once, everywhere within a
@@ -959,11 +1078,21 @@ func (m *Mesh) round(ctx context.Context) {
 	for g := range results {
 		m.seen[g.id] = m.now()
 		m.names[g.id] = g.names
-		_, ex := m.mergeLocked(g.roster.Members)
+		_, ex := m.mergeLocked(g.id, g.roster.Members)
 		expelled = expelled || ex
-		if g.roster.Settings.Updated.After(m.st.Settings.Updated) {
-			m.st.Settings = g.roster.Settings
-			settings, m.dirty = true, true
+		// Dated as the roster's entries are (mergeLocked), and only a
+		// change of what they say is a change: a node that re-dates the
+		// same settings ahead every round would otherwise have every node
+		// save and announce them every round.
+		s := g.roster.Settings
+		if limit := m.now().Add(MaxSkew); s.Updated.After(limit) {
+			s.Updated = limit
+		}
+		if s.Updated.After(m.st.Settings.Updated) {
+			if s.PanelVPNOnly != m.st.Settings.PanelVPNOnly {
+				settings, m.dirty = true, true
+			}
+			m.st.Settings = s
 		}
 	}
 	if len(m.st.Invites) != len(m.pruneInvitesLocked()) {

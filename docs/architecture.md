@@ -174,8 +174,12 @@ own interface (`mwmesh`) and address. Only traffic to another node's /32
 goes through the tunnel; the machines' own traffic does not change, and
 the helper's `mesh.firewall` table admits on that interface the nodes' API
 and nothing else. Membership is a roster each node pulls from the others
-every round, newest entry winning, removals kept as marked entries, so
-joining one node is joining all of them. An invitation carries a key pair
+every round: a node is learnt from whoever names it, but once known its
+entry changes only when read from itself (dated at most a minute ahead),
+a removal is final and only a new join undoes it, and an address outside
+the subnet or already another node's is dropped, so a compromised node
+can neither vote itself back in nor take another's address. Joining one
+node is joining all of them. An invitation carries a key pair
 made for the newcomer so the first contact already goes through the
 tunnel; the newcomer replaces it with its own on joining. The panel keeps
 per tab the node it works on and sends every call through

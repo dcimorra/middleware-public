@@ -511,8 +511,13 @@ is not valid JSON is left in the text and ignored.
 Installations joined in one network: a WireGuard mesh (interface
 `mwmesh`, UDP 51821, addresses drawn from `10.66.0.0/16`) in which every
 node sees and manages every other. Joining one node is joining all: each
-node reads the others' rosters every twenty seconds, newest entry wins,
-and a removal is an entry marked removed. The nodes' API listens only on
+node reads the others' rosters every twenty seconds. A node not known yet
+is learnt from whoever names it; once known, its entry changes only when
+read from that node itself, dated at most a minute ahead of the reader's
+clock. A removal is an entry marked removed, taken from any member, and is
+final: the node comes back only by joining again through an invitation.
+An entry whose address is outside the mesh's subnet or another node's is
+dropped. The nodes' API listens only on
 the mesh address (TCP 46101), the helper closes the interface to any other
 port, and a request there is accepted only from a member's tunnel address
 with the network's secret. The panel works on another node through
