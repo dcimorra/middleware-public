@@ -104,6 +104,12 @@
    fit whatever is too wide; on html too, and clip rather than hidden, so
    the sticky topbar keeps sticking. */
 html { height: 100%; -webkit-text-size-adjust: 100%; overflow-x: clip; }
+/* A double tap on a button is two taps, not a zoom: manipulation keeps
+   pinching (zoom stays the reader's choice) and drops the double-tap
+   zoom, which also took the 300ms wait off every tap. The grey flash
+   iOS draws over a tapped element is the panel's own :active instead. */
+html, a, button, input, select, textarea, label, summary, [role="button"] { touch-action: manipulation; }
+html { -webkit-tap-highlight-color: transparent; }
 body {
   margin: 0; min-height: 100%;
   background: var(--bg); color: var(--text);
@@ -1007,8 +1013,13 @@ svg.dash-spark .mem { stroke: var(--warn); stroke-dasharray: 3 2; }
 }
 /* iOS zooms the page into any field whose text is under 16px and leaves
    it zoomed: every field on a touch screen is 16px. */
+/* Nothing touched zooms the screen. Safari on the iPhone zooms into any
+   field whose text is under 16px the moment it is focused, and a field
+   with a class of its own (the chat's box at 15px, its agent and model
+   at 12.5px, a monospace editor) beat this rule by specificity and
+   zoomed: on a touch screen every field is 16px, whatever else says. */
 @media (pointer: coarse), (max-width: 860px) {
-  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea, textarea.mono, .node-pick select { font-size: 16px; }
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea, [contenteditable="true"] { font-size: 16px !important; }
 }
 .oc-popular { display: flex; flex-wrap: wrap; gap: 6px; }
 .oc-popular .chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }

@@ -33,7 +33,8 @@ export function leftoversCard() {
     }
   }
   async function load() {
-    try { items = await api.get("/relocate/leftovers"); } catch { items = []; }
+    // null when there is nothing: Go sends an empty list as null.
+    try { items = (await api.get("/relocate/leftovers")) || []; } catch { items = []; }
     paint();
   }
   cleanBtn.addEventListener("click", async () => {

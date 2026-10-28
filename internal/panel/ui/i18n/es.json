@@ -718,6 +718,7 @@
   "leftovers.kind.aside": "Copia apartada",
   "leftovers.kind.placed": "Sitio que no arrancó",
   "leftovers.kind.record": "Registro de mudanza",
+  "leftovers.kind.volume": "Volumen de docker que quedó",
   "moves.to": "a {node}",
   "moves.stepOf": "Paso {n} de {of}",
   "moves.ended.ok": "Mudanza terminada",

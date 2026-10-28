@@ -718,6 +718,7 @@
   "leftovers.kind.aside": "Set-aside copy",
   "leftovers.kind.placed": "Site that never started",
   "leftovers.kind.record": "Move record",
+  "leftovers.kind.volume": "Docker volume left behind",
   "moves.to": "to {node}",
   "moves.stepOf": "Step {n} of {of}",
   "moves.ended.ok": "Move finished",
