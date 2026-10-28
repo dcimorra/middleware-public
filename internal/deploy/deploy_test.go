@@ -226,6 +226,42 @@ func TestDeploysOfOneSiteRunOneAtATime(t *testing.T) {
 	}
 }
 
+// A push that lands while the operator's Deploy is building must still get
+// built: Start and Trigger share one "run again" loop. Without it the
+// trigger set a flag only Trigger watched, and the newest commit waited for
+// the next push.
+func TestATriggerDuringAStartIsBuilt(t *testing.T) {
+	// The build appends a mark and sleeps, so a trigger has time to land
+	// mid-build; each pass leaves one mark.
+	bare := makeRepo(t, "#!/bin/sh\necho mark >> \"$MIDDLEWARE_SITE_DIR/marks\"\nsleep 0.3\n")
+	m := &manifest.Manifest{Version: 2, Deploy: &manifest.Deploy{GitHub: &manifest.GitHubDeploy{Repository: "acme/app", Build: [][]string{{"./build.sh"}}}}}
+	root, dir := makeSite(t, m)
+	r, _ := newRunner(root, bare, nil)
+	// A first GitHub deploy puts the repository (and build.sh) in place so
+	// the operator's in-place Deploy has something to build.
+	if _, err := r.Run(context.Background(), "app.test", dir, m, "test", FromGitHub); err != nil {
+		t.Fatal(err)
+	}
+	// The operator presses Deploy (in place); Start claims the site and
+	// returns at once. A push arrives before the build finishes.
+	if _, err := r.Start("app.test", dir, m, "operator", InPlace); err != nil {
+		t.Fatal(err)
+	}
+	r.Trigger("app.test", dir, m, "github:someone")
+	deadline := time.Now().Add(10 * time.Second)
+	for r.Deploying("app.test") && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if r.Deploying("app.test") {
+		t.Fatal("the deployment never finished")
+	}
+	marks, _ := os.ReadFile(filepath.Join(dir, "marks"))
+	// First deploy, the Start, and the triggered run: three marks.
+	if got := strings.Count(string(marks), "mark"); got != 3 {
+		t.Fatalf("the trigger during Start was not built: %d builds, want 3\n%s", got, marks)
+	}
+}
+
 // A build step that outlives its timeout is killed with everything it
 // started, not only the shell: npm's children used to keep running.
 func TestATimedOutStepIsKilledWithItsChildren(t *testing.T) {

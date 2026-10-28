@@ -173,15 +173,41 @@ func (r *Runner) Start(domain, siteDir string, m *manifest.Manifest, actor strin
 	s.running = true
 	r.mu.Unlock()
 	id := NewBuildID()
-	go func() {
-		s.mu.Lock()
-		_, _ = r.run(context.Background(), domain, siteDir, m, actor, from, id)
-		s.mu.Unlock()
-		r.mu.Lock()
-		s.running = false
-		r.mu.Unlock()
-	}()
+	r.background(s, domain, siteDir, m, actor, from, id)
 	return id, nil
+}
+
+// background runs the claimed deployment and then, while a trigger arrived
+// mid-build, runs it again. Start and Trigger share this loop: a push that
+// lands during the operator's Deploy used to set `again` that only Trigger
+// watched, so the newest commit was not built until the next push. An
+// `again` is always a push, so every pass after the first is a GitHub
+// build of the newest commit, whatever the first pass was. The caller has
+// already set running under r.mu.
+func (r *Runner) background(s *siteState, domain, siteDir string, m *manifest.Manifest, actor string, from Source, id string) {
+	go func() {
+		for {
+			cur := m
+			if from == FromGitHub {
+				// Re-read: the push being built may have changed the manifest.
+				if fresh, err := manifest.Load(siteDir); err == nil {
+					cur = fresh
+				}
+			}
+			s.mu.Lock()
+			_, _ = r.run(context.Background(), domain, siteDir, cur, actor, from, id)
+			s.mu.Unlock()
+			r.mu.Lock()
+			if !s.again {
+				s.running = false
+				r.mu.Unlock()
+				return
+			}
+			s.again = false
+			r.mu.Unlock()
+			from, id = FromGitHub, NewBuildID()
+		}
+	}()
 }
 
 // Deploying reports whether a deployment of domain is running.
@@ -209,26 +235,7 @@ func (r *Runner) Trigger(domain, siteDir string, m *manifest.Manifest, actor str
 	}
 	s.running = true
 	r.mu.Unlock()
-	go func() {
-		for {
-			// Re-read: the push being built may have changed the manifest.
-			cur := m
-			if fresh, err := manifest.Load(siteDir); err == nil {
-				cur = fresh
-			}
-			s.mu.Lock()
-			_, _ = r.run(context.Background(), domain, siteDir, cur, actor, FromGitHub, NewBuildID())
-			s.mu.Unlock()
-			r.mu.Lock()
-			if !s.again {
-				s.running = false
-				r.mu.Unlock()
-				return
-			}
-			s.again = false
-			r.mu.Unlock()
-		}
-	}()
+	r.background(s, domain, siteDir, m, actor, FromGitHub, NewBuildID())
 }
 
 // Last returns the last recorded status of a site.
