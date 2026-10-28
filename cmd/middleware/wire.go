@@ -253,7 +253,7 @@ func buildWire(a *app.App) app.Hook {
 	}
 	// An automatic update waits while a site moves between nodes: the
 	// restart that ends it would cut the move.
-	w.updater = buildUpdater(a, func() bool { return false }) // TODO(merge): use server.MovesRunning()
+	w.updater = buildUpdater(a, srv.MovesRunning)
 	srv.RegisterUpdate(w.updater)
 	w.mesh = buildMesh(a, srv)
 	if w.mesh != nil {
