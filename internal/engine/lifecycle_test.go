@@ -56,15 +56,15 @@ type gatedRuntime struct {
 }
 
 func (g *gatedRuntime) Start(ctx context.Context, spec *manifest.Spec, port int, logFile, home string) (runtime.Instance, error) {
-	if g.gate != nil {
-		g.gate(spec)
-	}
 	g.mu.Lock()
 	if g.starts == nil {
 		g.starts = map[string]int{}
 	}
 	g.starts[spec.Domain]++
 	g.mu.Unlock()
+	if g.gate != nil {
+		g.gate(spec)
+	}
 	inst, err := g.Process.Start(ctx, spec, port, logFile, home)
 	if err == nil {
 		g.mu.Lock()
@@ -101,6 +101,58 @@ func newGatedEngine(t *testing.T, g *gatedRuntime) (*Engine, string) {
 		}
 	})
 	return e, sites
+}
+
+// A worker's start ran under the engine's lock, which every request takes
+// to find its site: a docker build or an nvm install stalled the traffic of
+// every site on the machine for as long as it took.
+func TestASlowWorkerStartDoesNotStallLookups(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	g := &gatedRuntime{gate: func(spec *manifest.Spec) {
+		if spec.Domain == "slow.test/api" {
+			once.Do(func() { close(entered) })
+			<-release
+		}
+	}}
+	e, sites := newGatedEngine(t, g)
+	dir := filepath.Join(sites, "slow.test")
+	os.MkdirAll(dir, 0o755)
+	m := fmt.Sprintf(`{"version":2,"static":{},"workers":{"api":{"command":[%q],"env":{"MW_TEST_SERVER":"1","BUILD":"w"}}}}`, os.Args[0])
+	os.WriteFile(filepath.Join(dir, "site.json"), []byte(m), 0o644)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the worker's start never began")
+	}
+	// Several ticks' worth of requests while the start hangs.
+	for end := time.Now().Add(time.Second); time.Now().Before(end); {
+		found := make(chan bool, 1)
+		go func() { _, ok := e.Lookup("slow.test"); found <- ok }()
+		select {
+		case ok := <-found:
+			if !ok {
+				close(release)
+				t.Fatal("the site is not known")
+			}
+		case <-time.After(200 * time.Millisecond):
+			close(release) // or the cleanup waits on the lock for good
+			t.Fatal("a lookup waited on a worker's start")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if n := g.startsOf("slow.test/api"); n != 1 {
+		close(release)
+		t.Fatalf("the worker was started %d times while its first start hung", n)
+	}
+	close(release)
+	sn := waitFor(t, e, "slow.test", func(s Snapshot) bool { return s.Workers["api"].Alive })
+	if body, err := get(sn.Workers["api"].Port); err != nil || body != "w" {
+		t.Fatalf("the worker does not answer: %q %v", body, err)
+	}
 }
 
 // A handover that finishes after its site's folder was removed used to

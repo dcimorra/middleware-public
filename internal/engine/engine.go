@@ -281,9 +281,12 @@ func (e *Engine) tick(ctx context.Context) {
 				e.opts.Ports.Release(inst.Port())
 			}()
 		}
+		// Stopped outside the lock, as the instance is: under it, every
+		// request to every site waited for these graces. A busy one finds
+		// its site gone when its start ends and stops what it started.
 		for _, w := range s.Workers {
-			if w.inst != nil {
-				_ = w.inst.Stop(ctx, 8*time.Second)
+			if !w.busy {
+				e.retireWorkerLocked(ctx, domain, w, 8*time.Second)
 			}
 		}
 		e.clearState(domain)
