@@ -229,7 +229,7 @@ func percentile(lat [nbuckets]int, total int, p float64) float64 {
 // Prune drops rings that saw nothing for a minute, and closes the access
 // logs nothing was written to for logIdle. Run calls it; without it a
 // scan of ten thousand hostnames would leave ten thousand rings, and a
-// site removed long ago its log still open.
+// site removed long ago would keep its log open.
 func (r *Recorder) Prune() {
 	now := r.now()
 	oldest := now.Unix() - window
