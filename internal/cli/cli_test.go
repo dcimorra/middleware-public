@@ -20,6 +20,7 @@ import (
 	"github.com/dcimorra/middleware-public/internal/auth"
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/sites"
+	"github.com/dcimorra/middleware-public/internal/tasks"
 )
 
 func TestMain(m *testing.M) {
@@ -73,6 +74,7 @@ func realServer(t *testing.T) (root string, cl *Client) {
 			return settings.Save(root, s)
 		}})
 	srv.Heartbeat = 50 * time.Millisecond
+	srv.RegisterTasks(api.TasksOptions{Scheduler: tasks.NewScheduler(tasks.Options{Root: root, Bus: bus}), Root: root})
 	sock := api.SocketPath(root)
 	ln, err := api.ListenSocket(sock)
 	if err != nil {
@@ -91,8 +93,14 @@ func realServer(t *testing.T) (root string, cl *Client) {
 
 func run(t *testing.T, cl *Client, args ...string) (string, error) {
 	t.Helper()
+	return runIn(t, cl, "", args...)
+}
+
+// runIn is run with stdin.
+func runIn(t *testing.T, cl *Client, stdin string, args ...string) (string, error) {
+	t.Helper()
 	var out, errw bytes.Buffer
-	e := &Env{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errw, Connect: func(string) (*Client, error) { return cl, nil }}
+	e := &Env{Stdin: strings.NewReader(stdin), Stdout: &out, Stderr: &errw, Connect: func(string) (*Client, error) { return cl, nil }}
 	err := e.Run(args[0], args[1:])
 	return out.String() + errw.String(), err
 }

@@ -18,7 +18,11 @@ hand or keep it current: it ships inside the binary and changes with it.
 Every manifest and task example in the skill goes through the real parsers
 in `internal/chat/skill_examples_test.go`: a skill that taught a field the
 schema rejects would have every agent writing manifests the engine refuses,
-and the test is what says so before a release does.
+and the test is what says so before a release does. That includes the task
+a site's agent saves from a heredoc with `middleware site tasks <domain>
+save <name> -`, which is how the skill tells an agent working in a site to
+manage that site's tasks (§ 9): it cannot write `tasks/`, and the house
+keeps the task to its own site.
 
 To change what agents are told, edit the skill, run `go test ./internal/chat/`,
 and ship the binary. A site's own `AGENTS.md` (or `CLAUDE.md`) adds what is

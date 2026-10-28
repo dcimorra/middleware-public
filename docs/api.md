@@ -12,9 +12,10 @@ domain.
 - The unix socket `data/api.sock` needs no credentials: whoever can open it
   already owns the files. The CLI uses it. One exception: a process started
   by a site conversation's agent turn (one of its parents is the turn) is
-  that site's, with the routes a token scoped `read`, `restart` and
-  `deploy` for it opens, and `GET /events?subject=<its site>`; anything
-  else is a 403 and an `api.turn_refused` event. `/auth/me` says `turn`.
+  that site's, with the routes a token scoped `read`, `restart`,
+  `deploy` and `tasks` for it opens, and `GET /events?subject=<its site>`;
+  anything else is a 403 and an `api.turn_refused` event. `/auth/me` says
+  `turn`.
 
 **Who reaches the panel.** The address lists of `/auth/panel-access` go before
 everything the panel answers (403). The unix socket always gets in; a TCP
@@ -40,8 +41,9 @@ subdomain sends the panel's cookie.
 **Service doors.** A token created with `scopes` opens only the routes those
 scopes list, and with `:site` only for that site: `read` (the site list, one
 site, its logs, the events), `restart` (a site's handover and a worker's
-restart), `deploy` (a site's deploy). Anything else answers 403 and names the
-scopes. For a program that acts on the house from outside, an app that builds
+restart), `deploy` (a site's deploy), `tasks` (a site's own tasks, the six
+`/sites/{domain}/tasks` routes below; never `/tasks`). Anything else answers
+403 and names the scopes. For a program that acts on the house from outside, an app that builds
 sites and restarts them, it is the narrowest door that works. A token
 without scopes is the operator's and opens everything. An `import:<site>` token
 opens only that site's import (below, "Moving a site to another node") and
@@ -521,6 +523,22 @@ is not valid JSON is left in the text and ignored.
 | POST | `/tasks/{name}/stop` | → `{ok}`; ends a run in progress, recorded as `stopped`; 409 when none runs |
 | POST | `/tasks/{name}/run` | → `{ok, log}` at once; the run is on `/events/stream` as `task.*`, and `task.skipped` when it was already running |
 | GET | `/tasks/{name}/log` | `?lines=500` → `text/plain`, the last lines of `data/logs/tasks/{name}.log` |
+
+A site's own tasks are the same files seen from the site: the ones whose
+`site` is `{domain}`. These are the routes the `tasks:<domain>` scope opens
+and a site's agent turn reaches over the socket (`middleware site tasks`).
+`{domain}` is a site or project here (404 otherwise). A task that is not
+there and one that is not this site's are the same 404; names stay one space
+for the whole house, so a name the root or another site holds is 409 to PUT.
+
+| method | path | body / result |
+| --- | --- | --- |
+| GET | `/sites/{domain}/tasks` | → the rows of `GET /tasks` whose `site` is `{domain}` (`[]` when none); a task of the site that does not parse is a row with `error` |
+| PUT | `/sites/{domain}/tasks/{name}` | task JSON, validated as `PUT /tasks/{name}`; an empty `site` becomes `{domain}` → the task's row. 400 when `site` names another site; 409 when `{name}` is a task of another site or of the root, which is left as it was. Emits `task.saved` with `site` and the caller as actor (`operator`, `agent` for a turn, `token:<name>` for a scoped token) |
+| DELETE | `/sites/{domain}/tasks/{name}` | → `{ok}`; the history and the log stay |
+| POST | `/sites/{domain}/tasks/{name}/run` | → `{ok, log}` at once, as `POST /tasks/{name}/run` |
+| POST | `/sites/{domain}/tasks/{name}/stop` | → `{ok}`; 409 when none runs |
+| GET | `/sites/{domain}/tasks/{name}/log` | `?lines=500` → `text/plain`, as `GET /tasks/{name}/log` |
 
 ## Nodes
 

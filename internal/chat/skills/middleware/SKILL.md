@@ -21,7 +21,7 @@ Four kinds, and choosing wrong shows at once.
 | something that answers a domain | a **site** | `sites/<domain>/` with a `site.json` |
 | a process that must always be up and answers no domain (an API behind a frontend, a queue consumer) | a **worker** | `workers` inside the site it belongs to |
 | workers, tasks and a conversation with no domain at all (a bot, a pipeline) | a **project** | `sites/<name>/`, a name without a dot, with only `workers` in its `site.json` |
-| something that happens because it is time (backup, purge, sync, prune old builds) | a **task** | `tasks/<name>.json` |
+| something that happens because it is time (backup, purge, sync, prune old builds) | a **task** | `tasks/<name>.json`; from a site's conversation, `middleware site tasks <domain> save` (§ 9) |
 | something not every installation wants (DNS at a provider, deploy on push, a VPN, an agent) | a **module** | already shipped: enable it, never reimplement it in a site |
 
 Rules of thumb:
@@ -94,6 +94,7 @@ house without opening `data/` by path:
 middleware site show shop.example.com     # mode, port, alive, revision, error, workers
 middleware site logs shop.example.com --lines 200 [--worker api]
 middleware events --subject shop.example.com
+middleware site tasks shop.example.com    # its scheduled tasks, next and last run (§ 9)
 curl -s -o /dev/null -w '%{http_code}\n' -H "Host: shop.example.com" http://127.0.0.1:46100/
 ```
 
@@ -737,15 +738,37 @@ A task that prunes old builds, the companion of § 4:
 where the script lists `.next-*` sorted by name, keeps the newest N **and
 the one `.next-current` names**, and removes the rest.
 
-From a site conversation you cannot write `tasks/`: write the script in the
-project, propose the task JSON in your reply, and ask the person to add it
-(the Tasks screen or `PUT /api/v1/tasks/{name}`). From the house conversation
-write the file; `middleware tasks` lists it.
+**From a site conversation, manage the site's tasks with `middleware site
+tasks <your domain> …`**, never by writing `tasks/` (outside your folder:
+the jail denies it). Write the script in the project, then save the task
+through the house, which reads it from stdin and makes it your site's:
+
+```sh
+middleware site tasks shop.example.com save prune-builds - <<'JSON'
+{ "version": 2, "schedule": "15 3 * * *", "command": ["./scripts/prune-builds.sh", "3"], "timeout": "10m" }
+JSON
+middleware site tasks shop.example.com              # list: schedule, next, last run
+middleware site tasks shop.example.com run prune-builds
+middleware site tasks shop.example.com log prune-builds
+middleware site tasks shop.example.com rm prune-builds
+```
+
+`site` may be left out (it becomes yours) and cannot name another site.
+Names are one space for the whole house: a name another site or the root
+already holds is refused (409); choose another, do not ask for it to be
+removed. You only see and touch your own site's tasks; the house's are the
+person's. The site's **Tasks** tab in the panel shows the same list.
+
+From the house conversation write the file under `tasks/`; `middleware
+tasks` lists every task of the house.
 
 **Never leave a new task to its first scheduled hour unseen.**
 `middleware tasks run <name>` runs it now, re-reading the file first, waits
-and prints the log path; the Tasks screen shows the last runs with exit code
-and output. The log is `data/logs/tasks/<name>.log`.
+and prints the log path; from a site's conversation `middleware site tasks
+<domain> run <name>` starts it and returns at once, so read `… log <name>`
+and `…` (the list, with the last run's status) until it has ended. The
+panel shows the last runs with exit code and output. The log is
+`data/logs/tasks/<name>.log`, read through `log`, not by path.
 
 **A worker** (§ 3) is supervised like a site: same backoff, same re-adoption
 when the supervisor restarts, its own log (`site logs --worker <name>`). It
@@ -758,7 +781,7 @@ Every line here was paid for at least once. Run through it.
 
 - **Test by doing, not by reading.** You wrote a manifest: `curl -H Host`
   it. You wrote a deploy script: run it once with the site serving and
-  watch `handover.done`. You wrote a task: `tasks run` it. Paths that only
+  watch `handover.done`. You wrote a task: run it (`site tasks <domain> run`). Paths that only
   exist in a file have taken whole machines down the first time someone
   used them.
 - **The worst failures give no error anywhere.** A site that serves and

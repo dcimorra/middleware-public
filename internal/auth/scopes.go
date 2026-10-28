@@ -32,6 +32,19 @@ var scopeRoutes = map[string][]string{
 	"deploy": {
 		"POST /api/v1/sites/{domain}/deploy",
 	},
+	// tasks is a site's own scheduled work: the tasks whose site is that
+	// one, and nothing under /tasks, which is every task of the house. The
+	// routes check the task is the site's; the scope only lets the caller
+	// ask. A site that can deploy its code already decides what runs in
+	// its folder, and a task runs there and nowhere else.
+	"tasks": {
+		"GET /api/v1/sites/{domain}/tasks",
+		"PUT /api/v1/sites/{domain}/tasks/{name}",
+		"DELETE /api/v1/sites/{domain}/tasks/{name}",
+		"POST /api/v1/sites/{domain}/tasks/{name}/run",
+		"POST /api/v1/sites/{domain}/tasks/{name}/stop",
+		"GET /api/v1/sites/{domain}/tasks/{name}/log",
+	},
 	// import is a site arriving from another installation (V1): its
 	// bundle, its last copy, the commit, and seeing whether it came up or
 	// removing it when it did not. Always for one site, and made to
@@ -55,16 +68,22 @@ var scopeRoutes = map[string][]string{
 	},
 }
 
-// Scopes is the closed list, for the panel.
-func Scopes() []string { return []string{"read", "restart", "deploy"} }
+// Scopes is the closed list, for the panel and for the message that
+// refuses a scope outside it. import is left out: it is made for one
+// site by POST /relocate/import-token, never picked from a list.
+func Scopes() []string { return []string{"read", "restart", "deploy", "tasks"} }
 
 // TurnScopes are what a site's agent turn opens when it calls the house
 // over the socket (the middleware CLI from one of its Bash calls): what a
 // service door for that site opens, and not tokens, settings, the house's
 // conversation or any other site. The turn runs as the supervisor's user,
-// so the socket used to take it for the operator.
+// so the socket used to take it for the operator. Its site's tasks are
+// in: before, the skill had the agent propose the task JSON and ask the
+// person to add it, which made the person the courier of a file that
+// runs in the folder the agent already writes and deploys. The routes
+// keep it to tasks that run there.
 func TurnScopes(site string) []string {
-	return []string{"read:" + site, "restart:" + site, "deploy:" + site}
+	return []string{"read:" + site, "restart:" + site, "deploy:" + site, "tasks:" + site}
 }
 
 // ErrBadScope is a scope outside the list.

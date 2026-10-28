@@ -31,7 +31,9 @@ const Usage = `  setup        print a one-time code to create the operator in th
                (--domain panel.example.com [--door ports|tunnel]: the panel's name and door)
                (--password: set the password from the terminal instead)
                (--reset: with an operator already set, a code to set a new one)
-  site         list | show | add | rm | restart | stop | start | hold | unhold | logs | deploy
+  site         list | show | add | rm | restart | stop | start | hold | unhold | logs | deploy | tasks
+  site tasks <domain> [list | save <name> <file|-> | rm <name> | run <name> | stop <name> | log <name>]
+               the tasks that run in that site's folder, through the API (what a site's agent may manage)
   events       recent events (-f to follow)
   system       version, uptime, load, memory, disk
   token        add | list | rm — API tokens for scripts
@@ -268,6 +270,8 @@ const siteUsage = `usage: middleware site <command> [flags]
   unhold <domain>
   logs <domain> [-f] [--lines 200] [--worker name]
   deploy <domain>             run deploy.github.build and write the pointer
+  tasks <domain> [list | save <name> <file|-> | rm <name> | run <name> | stop <name> | log <name>]
+                              the site's own scheduled tasks
 `
 
 func (e *Env) site(args []string) error {
@@ -521,6 +525,19 @@ func (e *Env) site(args []string) error {
 			return err
 		}
 		return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/deploy", nil, "Deployment started for "+domain+"; follow it with `middleware events -f`")
+	case "tasks":
+		if err := need(); err != nil {
+			return err
+		}
+		// The server's default is longer than the site log's; only a
+		// --lines given on the command line is passed on.
+		n := 0
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "lines" {
+				n = *lines
+			}
+		})
+		return e.siteTasks(c, cl, domain, pos[1:], n)
 	case "logs", "log":
 		if err := need(); err != nil {
 			return err
@@ -751,8 +768,8 @@ const tokenUsage = `usage: middleware token <command>
 
   add <name> [--scope s]...
                 create a token; the secret is printed once. With --scope it
-                is a service door: read, restart or deploy, optionally for
-                one site (restart:shop.example), and nothing else
+                is a service door: read, restart, deploy or tasks, optionally
+                for one site (restart:shop.example), and nothing else
   list          tokens, with when each was last used
   rm <id>       revoke a token
 `
@@ -767,7 +784,7 @@ func (e *Env) token(args []string) error {
 	var c common
 	c.bind(fs)
 	var scopes multiFlag
-	fs.Var(&scopes, "scope", "what the token opens (read, restart, deploy; :site to narrow); repeatable")
+	fs.Var(&scopes, "scope", "what the token opens (read, restart, deploy, tasks; :site to narrow); repeatable")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
