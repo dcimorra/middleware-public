@@ -3,6 +3,14 @@
 // waiting, and what went wrong lately. One request to this node, which
 // asks the others in parallel; read every ten seconds while open. The
 // links between nodes are made and undone here too.
+//
+// It is the page the panel opens on, read every day, so it is ordered by
+// what a tired operator needs first: what needs them (or a calm line
+// saying nothing does), then each machine, then the network. How linking
+// works used to sit in a card of three paragraphs under everything on
+// every visit; it is folded now, and a node alone gets one quiet card
+// that says how to link another instead of a banner and a header full of
+// network buttons it may never use.
 
 import { h, clear, svg, fmtBytes, fmtAgo, copy } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
@@ -10,13 +18,14 @@ import { api } from "../lib/api.js";
 import { store } from "../lib/store.js";
 import { navigate } from "../lib/router.js";
 import { currentNode, setCurrentNode } from "../lib/node.js";
-import { page, notice, loading, errorBox } from "../components/page.js";
+import { page, loading, errorBox } from "../components/page.js";
 import { open, field, confirm, toggle } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 import { icon } from "../lib/icons.js";
 import { movesCard } from "../components/moves.js";
 
 const pct = (v) => `${Math.round(Number(v || 0))}%`;
+const levelOf = (v) => (v >= 90 ? "bad" : v >= 75 ? "warn" : "ok");
 
 // go opens something on a node: the panel moves to that machine first.
 function go(node, path) {
@@ -24,168 +33,243 @@ function go(node, path) {
   navigate(path);
 }
 
-// spark draws the hour per minute: processor and memory, 0 to 100.
-function spark(minutes) {
-  const W = 300, H = 48, n = minutes.length;
-  const s = svg("svg", { class: "dash-spark", viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none", role: "img", "aria-label": t("dash.sparkLabel") });
-  if (n < 2) return s;
-  const line = (k, cls) => {
-    let d = "";
-    minutes.forEach((m, i) => { d += (i ? "L" : "M") + ((i / (n - 1)) * W).toFixed(1) + " " + (H - (Math.min(100, Math.max(0, m[k])) / 100) * (H - 2) - 1).toFixed(1) + " "; });
-    return svg("path", { class: cls, d });
-  };
-  s.append(line(2, "mem"), line(1, "cpu"));
-  return s;
+// spark draws one measure of the hour, a sample a minute. The scale is
+// the hour's own, not 0 to 100: on a machine idling at 10% a 0-100 chart
+// was a flat line on the floor and said nothing. It never goes under 20%
+// either, or a wobble from 2% to 4% would fill the box like a storm; the
+// peak is written beside it so the height can be read.
+function spark(minutes, k, cls) {
+  const W = 300, H = 40, n = minutes.length;
+  const vals = minutes.map((m) => Math.min(100, Math.max(0, Number(m[k]) || 0)));
+  const top = Math.max(20, Math.ceil((Math.max(...vals) * 1.15) / 10) * 10);
+  const y = (v) => (H - 2 - (v / top) * (H - 4)).toFixed(1);
+  let d = "";
+  vals.forEach((v, i) => { d += (i ? "L" : "M") + ((i / (n - 1)) * W).toFixed(1) + " " + y(v) + " "; });
+  return svg("svg", { class: "np-spark " + cls, viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none", "aria-hidden": "true" },
+    svg("path", { class: "area", d: `${d}L${W} ${H} L0 ${H} Z` }),
+    svg("path", { class: "line", d }));
 }
 
-function meter(label, value, extra) {
+// vital is one of the machine's three numbers: the value large, then the
+// hour as a line where there is one (processor, memory) or a fill bar
+// where a level is what matters (disk), then the detail.
+function vital(label, value, detail, minutes, k) {
   const v = Math.min(100, Math.max(0, Number(value || 0)));
-  const level = v >= 90 ? "bad" : v >= 75 ? "warn" : "ok";
-  const bar = h("div", { class: "dash-bar-fill " + level });
-  bar.style.width = v.toFixed(0) + "%";
-  return h("div", { class: "dash-meter" },
-    h("div", { class: "dash-meter-head" }, h("span", null, label), h("strong", { class: "mono" }, pct(v))),
-    h("div", { class: "dash-bar", role: "meter", "aria-valuenow": v.toFixed(0), "aria-valuemin": "0", "aria-valuemax": "100", "aria-label": label }, bar),
-    extra ? h("div", { class: "small muted" }, extra) : null);
+  const level = levelOf(v);
+  let viz;
+  let peak = "";
+  if (minutes && minutes.length > 1) {
+    viz = spark(minutes, k, level);
+    peak = t("dash.peakHour", { pct: pct(Math.max(...minutes.map((m) => Number(m[k]) || 0))) });
+  } else {
+    const fill = h("div", { class: "dash-bar-fill " + level });
+    fill.style.width = v.toFixed(0) + "%";
+    viz = h("div", { class: "dash-bar", role: "meter", "aria-valuenow": v.toFixed(0), "aria-valuemin": "0", "aria-valuemax": "100", "aria-label": label }, fill);
+  }
+  return h("div", { class: "np-vital " + level },
+    h("div", { class: "np-vital-head" }, h("span", null, label), h("strong", null, pct(v))),
+    viz,
+    h("div", { class: "np-vital-foot" }, [detail, peak].filter(Boolean).join(" · ")));
 }
 
 function stat(value, label, kind) {
   return h("div", { class: "dash-stat " + (kind || "") }, h("strong", null, String(value)), h("span", null, label));
 }
 
-function nodeCard(node, actions, member, myVersion) {
+// menu is a node's seldom-used actions folded under "…", as the chat's
+// are: five buttons in a card's head wrapped onto a second line and put
+// "remove from the network" a slip of the finger from "open".
+function menu(items) {
+  const list = h("div", { class: "np-menu-list", role: "menu" });
+  const el = h("details", { class: "np-menu" },
+    h("summary", { class: "icon-btn", "aria-label": t("dash.more"), title: t("dash.more") }, icon("more", { size: 18 })), list);
+  for (const it of items) {
+    const b = h("button", { type: "button", role: "menuitem", class: "np-menu-item" + (it.danger ? " danger" : ""), title: it.title || null }, it.icon ? icon(it.icon, { size: 16 }) : null, it.label);
+    b.addEventListener("click", () => { el.open = false; it.onClick(); });
+    list.append(b);
+  }
+  return el;
+}
+
+function nodeCard(node, acts, member, myVersion, openEvents) {
   const s = node.summary || {};
+  const viewing = (!node.self && currentNode() === node.id) || (node.self && !currentNode());
   const head = h("div", { class: "dash-node-head" },
     h("span", { class: "dot " + (node.ok ? "ok" : "bad") }),
     h("h2", null, node.name),
     node.self ? h("span", { class: "badge info" }, t("dash.thisNode")) : null,
-    (!node.self && currentNode() === node.id) || (node.self && !currentNode()) ? h("span", { class: "badge accent" }, t("dash.viewing")) : null,
+    viewing ? h("span", { class: "badge accent" }, t("dash.viewing")) : null,
     h("div", { class: "grow" }),
-    ...actions);
-  const card = h("article", { class: "card dash-node" + (node.ok ? "" : " down") }, head);
+    viewing ? null : h("button", { type: "button", class: "btn sm", title: t("dash.openHint"), onClick: () => go(node, "/sites") }, icon("external"), t("dash.open")),
+    acts.length ? menu(acts) : null);
+  const card = h("article", { class: "card dash-node np-node" + (node.ok ? "" : " down") }, head);
   const meta = [];
-  if (s.hostname) meta.push(s.hostname);
+  if (s.hostname && s.hostname !== node.name) meta.push(s.hostname);
   if (s.version) meta.push(s.version);
   if (s.started) meta.push(t("dash.up", { ago: fmtAgo(s.started, t) }));
   if (node.ip) meta.push(node.ip);
   if (node.latency_ms) meta.push(`${node.latency_ms} ms`);
-  card.append(h("p", { class: "small muted dash-meta" }, meta.join(" · ")));
+  if (meta.length) card.append(h("p", { class: "dash-meta" }, meta.join(" · ")));
   if (member) {
     const hs = member.handshake && !member.handshake.startsWith("0001") ? member.handshake : "";
-    card.append(h("p", { class: "small dash-tunnel" }, h("span", { class: "dot " + (member.online ? "ok" : "bad") }),
+    card.append(h("p", { class: "dash-tunnel" }, h("span", { class: "dot " + (member.online ? "ok" : "bad") }),
       hs ? t("dash.tunnelSeen", { ago: fmtAgo(hs, t) }) : t("dash.tunnelNever"),
-      member.endpoint ? h("span", { class: "muted" }, " · " + member.endpoint) : h("span", { class: "muted" }, " · " + t("dash.behindNAT"))));
+      h("span", null, " · " + (member.endpoint || t("dash.behindNAT")))));
   }
-  if (s.version && myVersion && s.version !== myVersion) card.append(notice("warn", t("dash.otherVersion", { v: s.version, mine: myVersion })));
   if (!node.ok) {
-    card.append(notice("bad", h("strong", null, t("dash.unreachable")), " ", h("span", { class: "small" }, node.error || "")));
+    card.append(h("div", { class: "np-node-down" }, icon("ban", { size: 18 }), h("div", null, h("strong", null, t("dash.unreachable")), " ", h("span", { class: "mono" }, node.error || ""))));
     return card;
   }
   const v = s.vitals;
   if (v && v.now) {
     const n = v.now;
-    card.append(h("div", { class: "dash-meters" },
-      meter(t("vitals.cpu"), n.cpu, t("dash.cores", { n: n.cores || 0, load: Number(n.load1 || 0).toFixed(2) })),
-      meter(t("vitals.memory"), n.mem_pct, `${fmtBytes(n.mem_used)} / ${fmtBytes(n.mem_total)}`),
-      meter(t("vitals.disk"), n.disk_pct, `${fmtBytes(n.disk_used)} / ${fmtBytes(n.disk_total)}`)));
-    if ((v.minutes || []).length > 1) {
-      card.append(h("div", { class: "dash-spark-wrap" }, spark(v.minutes),
-        h("div", { class: "small muted dash-legend" }, h("span", { class: "cpu" }, t("vitals.cpu")), h("span", { class: "mem" }, t("vitals.memory")), h("span", null, t("dash.lastHour")))));
-    }
-    if (v.open_episode) {
-      const e = v.open_episode;
-      const who = (e.blamed || []).map((b) => b.site || b.cmd).join(", ");
-      card.append(notice("warn", h("strong", null, t("dash.strain", { reason: t("vitals.reason." + e.reason) })), who ? " " + t("dash.strainWho", { who }) : ""));
-    }
+    const mins = v.minutes || [];
+    card.append(h("div", { class: "np-vitals" },
+      vital(t("vitals.cpu"), n.cpu, t("dash.cores", { n: n.cores || 0, load: Number(n.load1 || 0).toFixed(2) }), mins, 1),
+      vital(t("vitals.memory"), n.mem_pct, `${fmtBytes(n.mem_used)} / ${fmtBytes(n.mem_total)}`, mins, 2),
+      vital(t("vitals.disk"), n.disk_pct, `${fmtBytes(n.disk_used)} / ${fmtBytes(n.disk_total)}`)));
   }
   const sc = s.sites;
   if (sc) {
     const chats = s.chats || { asking: [], working: 0 };
-    card.append(h("div", { class: "dash-stats" },
-      stat(sc.serving, t("dash.serving"), "ok"),
-      stat(sc.trouble.length, t("dash.trouble"), sc.trouble.length ? "bad" : ""),
-      stat(sc.stopped, t("dash.stopped")),
-      stat(sc.projects, t("dash.projects")),
-      stat(chats.working || 0, t("dash.working"), chats.working ? "accent" : ""),
-      stat((chats.asking || []).length, t("dash.asking"), (chats.asking || []).length ? "warn" : "")));
-    if (sc.trouble.length) {
-      card.append(h("ul", { class: "dash-list" }, ...sc.trouble.map((x) => h("li", null,
-        h("span", { class: "dot bad" }),
-        h("a", { href: "#", onClick: (e) => { e.preventDefault(); go(node, `/sites/${encodeURIComponent(x.domain)}`); } }, x.domain),
-        h("span", { class: "small muted" }, t("dash.why." + x.why))))));
-    }
-    if ((chats.asking || []).length) {
-      card.append(h("ul", { class: "dash-list" }, ...chats.asking.map((c) => h("li", null,
-        icon("chat", { size: 14 }),
-        h("a", { href: "#", onClick: (e) => { e.preventDefault(); go(node, c.domain && c.domain !== "middleware" ? `/sites/${encodeURIComponent(c.domain)}/chat` : "/house"); } }, c.name || c.domain),
-        h("span", { class: "small muted" }, t("dash.waitsForYou"))))));
-    }
+    // The counts as one line of words: trouble and waiting are said again,
+    // with names, in what needs attention above, so here they are counts.
+    const part = (n, label, kind) => h("span", { class: "np-count " + (kind || "") }, h("b", null, String(n)), " ", label);
+    const parts = [part(sc.serving, t("dash.serving"), "ok")];
+    if (sc.trouble.length) parts.push(part(sc.trouble.length, t("dash.trouble"), "bad"));
+    if (sc.stopped) parts.push(part(sc.stopped, t("dash.stopped")));
+    if (sc.projects) parts.push(part(sc.projects, t("dash.projects")));
+    if (chats.working) parts.push(part(chats.working, t("dash.working"), "accent"));
+    if ((chats.asking || []).length) parts.push(part(chats.asking.length, t("dash.asking"), "warn"));
+    card.append(h("a", { class: "np-node-sites", href: "#/sites", onClick: (e) => { e.preventDefault(); go(node, "/sites"); } },
+      icon("globe", { size: 16 }), h("span", { class: "np-counts" }, ...parts), icon("external", { size: 14, class: "np-go" })));
   }
-  const up = s.update;
-  if (up && up.available) card.append(notice("", t("dash.update", { v: up.latest })));
-  const evs = (s.events || []).slice(0, 4);
+  const all = s.events || [];
+  const evs = all.slice(0, 4);
   if (evs.length) {
-    card.append(h("details", { class: "dash-events" },
-      h("summary", { class: "small" }, t("dash.recentTrouble", { n: (s.events || []).length })),
-      h("ul", { class: "dash-list small" }, ...evs.map((e) => h("li", null,
+    const det = h("details", { class: "np-events", open: openEvents.has(node.id) },
+      h("summary", null, t("dash.recentTrouble", { n: all.length })),
+      h("ul", { class: "np-event-list" }, ...evs.map((e) => h("li", null,
         h("span", { class: "dot " + (e.level === "error" ? "bad" : "warn") }),
         h("span", { class: "grow" }, e.subject ? h("strong", null, e.subject + " ") : null, e.message || e.type),
-        h("span", { class: "muted", title: e.time }, fmtAgo(e.time, t)))))));
+        h("span", { class: "muted nowrap", title: e.time }, fmtAgo(e.time, t))))));
+    // The card is drawn again every ten seconds: a list the operator
+    // opened must still be open after it.
+    det.addEventListener("toggle", () => { if (det.open) openEvents.add(node.id); else openEvents.delete(node.id); });
+    card.append(det);
   }
   return card;
 }
 
+// attention gathers, from every node, what someone has to act on, worst
+// first: a node that does not answer, a site down, a conversation waiting
+// for an answer, a machine under strain or with its disk full, two nodes
+// on different versions, an update. Each line goes where it is fixed.
+function attentionItems(cards, info, many) {
+  const items = [];
+  const add = (kind, node, title, sub, onClick) => items.push({ kind, node: many && node ? node.name : "", title, sub, onClick });
+  if (info && info.network && info.error) add("bad", null, t("dash.meshError"), info.error);
+  const mine = cards[0] && cards[0].summary && cards[0].summary.version;
+  for (const c of cards) {
+    const s = c.summary || {};
+    if (!c.ok) { add("bad", c, t("dash.nodeDown", { name: c.name }), c.error || ""); continue; }
+    for (const x of (s.sites && s.sites.trouble) || []) add("bad", c, x.domain, t("dash.why." + x.why), () => go(c, `/sites/${encodeURIComponent(x.domain)}`));
+    for (const ch of (s.chats && s.chats.asking) || []) {
+      add("warn", c, ch.name || ch.domain, t("dash.waitsForYou"), () => go(c, ch.domain && ch.domain !== "middleware" ? `/sites/${encodeURIComponent(ch.domain)}/chat` : "/house"));
+    }
+    const v = s.vitals;
+    if (v && v.open_episode) {
+      const e = v.open_episode;
+      const who = (e.blamed || []).map((b) => b.site || b.cmd).join(", ");
+      add("warn", c, t("dash.strain", { reason: t("vitals.reason." + e.reason) }), who ? t("dash.strainWho", { who }) : "", () => go(c, "/system"));
+    }
+    if (v && v.now && Number(v.now.disk_pct) >= 90) {
+      add("warn", c, t("dash.diskFull", { pct: pct(v.now.disk_pct) }), t("dash.diskFullHint", { used: fmtBytes(v.now.disk_used), total: fmtBytes(v.now.disk_total) }), () => go(c, "/system"));
+    }
+    if (s.version && mine && s.version !== mine) add("warn", c, t("dash.otherVersion", { v: s.version, mine }), "");
+    if (s.update && s.update.available) add("info", c, t("dash.update", { v: s.update.latest }), t("dash.updateHint"), () => go(c, "/system"));
+  }
+  // Worst first, whichever node it is on; within a kind, the nodes' order.
+  const rank = { bad: 0, warn: 1, info: 2 };
+  return items.map((it, i) => [it, i]).sort((a, b) => rank[a[0].kind] - rank[b[0].kind] || a[1] - b[1]).map(([it]) => it);
+}
+
+function attentionCard(items) {
+  if (!items.length) {
+    return h("div", { class: "np-calm" }, h("span", { class: "np-calm-mark" }, icon("check", { size: 18 })),
+      h("div", null, h("strong", null, t("dash.allClear")), h("span", null, t("dash.allClearHint"))));
+  }
+  const list = h("ul", { class: "np-attn-list" });
+  for (const it of items) {
+    const body = [
+      h("span", { class: "np-attn-mark " + it.kind }, icon(it.kind === "bad" ? "alert" : it.kind === "warn" ? "bell" : "info", { size: 16 })),
+      h("span", { class: "np-attn-text" }, h("strong", null, it.title, it.node ? h("span", { class: "badge" }, it.node) : null), it.sub ? h("span", null, it.sub) : null),
+      it.onClick ? icon("external", { size: 14, class: "np-go" }) : null,
+    ];
+    list.append(h("li", null, it.onClick
+      ? h("button", { type: "button", class: "np-attn-row", onClick: it.onClick }, ...body)
+      : h("div", { class: "np-attn-row" }, ...body)));
+  }
+  return h("section", { class: "card np-attn" },
+    h("h2", null, t("dash.attention"), h("span", { class: "np-count-pill" }, String(items.length))), list);
+}
+
+function howFold(...more) {
+  return h("details", { class: "np-fold" }, h("summary", null, t("dash.howTitle")),
+    h("div", { class: "np-fold-body" }, h("p", null, t("dash.how1")), h("p", null, t("dash.how2")), h("p", null, t("dash.how3")), ...more));
+}
+
 export function dashboardScreen() {
-  const joinBtn = h("button", { type: "button", class: "btn" }, icon("link"), t("dash.join"));
-  const inviteBtn = h("button", { type: "button", class: "btn primary" }, icon("plus"), t("dash.invite"));
+  const joinBtn = h("button", { type: "button", class: "btn", hidden: true }, icon("link"), t("dash.join"));
+  const inviteBtn = h("button", { type: "button", class: "btn primary", hidden: true }, icon("plus"), t("dash.invite"));
   const p = page({ title: t("nav.dashboard"), icon: "layout", sub: t("dash.sub"), actions: [joinBtn, inviteBtn] });
-  const banner = h("div");
+  p.el.classList.add("np-page");
+  const attention = h("div");
   const totals = h("div", { class: "dash-totals" });
-  const grid = h("div", { class: "dash-grid" }, loading());
-  const help = h("div", { class: "card" }, h("h2", null, t("dash.howTitle")), h("p", { class: "small muted" }, t("dash.how1")), h("p", { class: "small muted" }, t("dash.how2")), h("p", { class: "small muted" }, t("dash.how3")));
-  // The network's settings: one decision for every node.
+  const grid = h("div", { class: "dash-grid np-grid" }, loading());
+  // The network's settings when there is one; the way to make one when not.
   const netCard = h("div", { class: "card", hidden: true });
+  const linkCard = h("div", { class: "card np-link", hidden: true });
   const moves = movesCard("");
-  p.body.append(banner, totals, grid, moves.el, netCard, help);
+  p.body.append(attention, totals, grid, moves.el, netCard, linkCard);
   let cards = [];
   let info = null;
   let alive = true;
+  const openEvents = new Set();
 
   function paint() {
-    clear(banner);
-    if (info && !info.network) {
-      banner.append(notice("", h("strong", null, t("dash.alone")), " ", t("dash.aloneHint")));
-    } else if (info && info.error) {
-      banner.append(notice("bad", h("strong", null, t("dash.meshError")), " ", info.error));
-    }
-    joinBtn.hidden = Boolean(info && info.network);
+    const inNet = Boolean(info && info.network);
+    joinBtn.hidden = true;
+    inviteBtn.hidden = !inNet;
+    const many = cards.length > 1;
+    clear(attention).append(attentionCard(attentionItems(cards, info, many)));
     paintNet();
+    paintLink();
     clear(totals);
-    const ok = cards.filter((c) => c.ok);
-    const sum = (f) => ok.reduce((n, c) => n + (f(c.summary || {}) || 0), 0);
-    totals.append(
-      stat(`${ok.length}/${cards.length}`, t("dash.nodesUp"), ok.length < cards.length ? "bad" : "ok"),
-      stat(sum((s) => s.sites && s.sites.sites), t("dash.sites")),
-      stat(sum((s) => s.sites && s.sites.trouble.length), t("dash.trouble"), sum((s) => s.sites && s.sites.trouble.length) ? "bad" : ""),
-      stat(sum((s) => s.chats && s.chats.working), t("dash.working")),
-      stat(sum((s) => s.chats && (s.chats.asking || []).length), t("dash.asking"), sum((s) => s.chats && (s.chats.asking || []).length) ? "warn" : ""));
+    // One node's totals are its own card's numbers: the strip is for a
+    // network, where it adds the machines up.
+    if (many) {
+      const ok = cards.filter((c) => c.ok);
+      const sum = (f) => ok.reduce((n, c) => n + (f(c.summary || {}) || 0), 0);
+      totals.append(
+        stat(`${ok.length}/${cards.length}`, t("dash.nodesUp"), ok.length < cards.length ? "bad" : "ok"),
+        stat(sum((s) => s.sites && s.sites.sites), t("dash.sites")),
+        stat(sum((s) => s.chats && s.chats.working), t("dash.working"), sum((s) => s.chats && s.chats.working) ? "accent" : ""));
+    }
     clear(grid);
     const byID = new Map(((info && info.members) || []).map((m) => [m.id, m]));
     const mine = cards[0] && cards[0].summary && cards[0].summary.version;
     for (const c of cards) {
-      const acts = [h("button", { type: "button", class: "btn sm", title: t("dash.openHint"), onClick: () => go(c, "/sites") }, icon("external"), t("dash.open"))];
+      const acts = [];
+      if (c.self) acts.push({ icon: "edit", label: t("dash.rename"), onClick: () => rename(c) });
       // A node in a network can drop its panel's domain and be managed
       // from here alone: its record and route retired, nothing public.
-      if (info && info.network && c.ok && c.summary && c.summary.panel_domain) {
-        acts.push(h("button", { type: "button", class: "btn sm", title: t("dash.networkOnlyHint"), onClick: () => networkOnly(c) }, icon("lock"), t("dash.networkOnly")));
+      if (inNet && c.ok && c.summary && c.summary.panel_domain) {
+        acts.push({ icon: "lock", label: t("dash.networkOnly"), title: t("dash.networkOnlyHint"), onClick: () => networkOnly(c) });
       }
-      if (c.self) {
-        acts.push(h("button", { type: "button", class: "btn sm", onClick: () => rename(c) }, icon("edit"), t("dash.rename")));
-        if (info && info.network) acts.push(h("button", { type: "button", class: "btn sm danger", onClick: leave }, t("dash.leave")));
-      } else {
-        acts.push(h("button", { type: "button", class: "btn sm danger", onClick: () => expel(c) }, t("dash.expel")));
-      }
-      grid.append(nodeCard(c, acts, byID.get(c.id), mine));
+      if (c.self) { if (inNet) acts.push({ icon: "logout", label: t("dash.leave"), danger: true, onClick: leave }); }
+      else acts.push({ icon: "trash", label: t("dash.expel"), danger: true, onClick: () => expel(c) });
+      grid.append(nodeCard(c, acts, byID.get(c.id), mine, openEvents));
     }
   }
 
@@ -203,13 +287,37 @@ export function dashboardScreen() {
         load();
       } catch (e) { sw.input.checked = !want; toastError(e); }
     });
+    const wasOpen = netCard.querySelector("details[open]");
+    // How the relay works is how linking works: read once, then folded
+    // with the rest of it.
+    const how = howFold(h("p", null, t("dash.relayHint")));
+    how.open = Boolean(wasOpen);
     clear(netCard).append(
       h("h2", null, t("dash.netTitle")),
-      h("div", { class: "field" }, sw.el, h("p", { class: "small muted" }, t("dash.panelVPNOnlyHint"))),
-      h("p", { class: "small muted" }, t("dash.relayHint")));
+      h("div", { class: "field" }, sw.el, h("p", { class: "hint" }, t("dash.panelVPNOnlyHint"))),
+      how);
+  }
+
+  // A node alone: one card at the bottom with the two ways to stop being
+  // alone, and how it works folded under them.
+  function paintLink() {
+    linkCard.hidden = !info || Boolean(info.network);
+    if (linkCard.hidden || linkCard.firstChild) return;
+    const invite = h("button", { type: "button", class: "btn primary" }, icon("plus"), t("dash.invite"));
+    const join = h("button", { type: "button", class: "btn" }, icon("link"), t("dash.join"));
+    invite.addEventListener("click", () => inviteBtn.click());
+    join.addEventListener("click", () => joinBtn.click());
+    linkCard.append(
+      h("div", { class: "np-link-head" }, h("span", { class: "np-link-icon" }, icon("link")),
+        h("div", { class: "grow" }, h("h2", null, t("dash.linkTitle")), h("p", null, t("dash.aloneHint"))),
+        h("div", { class: "actions" }, join, invite)),
+      howFold());
   }
 
   async function load() {
+    // A menu left open would be closed under the operator's finger by the
+    // redraw: the next tick draws it.
+    if (cards.length && grid.querySelector(".np-menu[open]")) return;
     try {
       [cards, info] = await Promise.all([api.get("/nodes/overview", { node: "" }), api.get("/nodes", { node: "" })]);
       store.set("nodes", info);
@@ -306,7 +414,11 @@ export function dashboardScreen() {
     if (made) { toast(t("dash.joined", { name: made.inviter }), "ok"); load(); }
   });
 
+  // A tap anywhere else closes a node's menu, as a menu does.
+  const closeMenus = (e) => { for (const m of grid.querySelectorAll(".np-menu[open]")) if (!m.contains(e.target)) m.open = false; };
+  document.addEventListener("click", closeMenus);
+
   load();
   const timer = setInterval(() => { if (alive && !document.hidden) load(); }, 10000);
-  return { el: p.el, destroy() { alive = false; clearInterval(timer); moves.destroy(); } };
+  return { el: p.el, destroy() { alive = false; clearInterval(timer); moves.destroy(); document.removeEventListener("click", closeMenus); } };
 }
