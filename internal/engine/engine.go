@@ -113,7 +113,7 @@ func New(opts Options) *Engine {
 		opts.Tick = 2 * time.Second
 	}
 	if opts.Runtimes == nil {
-		opts.Runtimes = map[string]runtime.Runtime{"process": runtime.Process{}, "docker": runtime.Docker{House: opts.SitesDir}}
+		opts.Runtimes = map[string]runtime.Runtime{"process": runtime.Process{}, "docker": runtime.Docker{House: opts.SitesDir, Data: opts.DataDir}}
 	}
 	if opts.Ports == nil {
 		opts.Ports = ports.New(0, 0)

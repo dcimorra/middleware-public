@@ -41,6 +41,7 @@ data/                        what this installation decided
   settings.json              panel domain, ports, listeners
   modules.json               which modules are on; credentials encrypted inside
   state/<domain>.json        running instance: pid, port, revision (for re-adoption)
+  docker-volumes.json        which site owns each docker volume made before volumes carried a label
   logs/<domain>/             site output, rotated
   events/                    audit trail, one file per day
 modules/                     binaries a module installed (cloudflared, wg, agent CLIs)

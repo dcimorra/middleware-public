@@ -3,6 +3,7 @@ package runtime
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,8 +11,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/dcimorra/middleware-public/internal/fsx"
 	"github.com/dcimorra/middleware-public/internal/manifest"
 )
 
@@ -25,6 +28,11 @@ type Docker struct {
 	// House labels the containers this installation starts (the sites
 	// folder), for Reap.
 	House string
+	// Data is the house's data folder, where the owner of a named volume
+	// made before volumes carried one is written down (VolumeClaimsFile).
+	// Empty, there is nowhere to write it, and such a volume is used as
+	// before.
+	Data string
 }
 
 // Name implements Runtime.
@@ -87,11 +95,18 @@ func (d Docker) Start(ctx context.Context, spec *manifest.Spec, port int, logFil
 	argv, env := spec.WithPort(port)
 	name := ContainerName(spec.Domain, port)
 	// A leftover with this name from an earlier life would make the run
-	// fail, and the site would not come back over a scrap.
+	// fail, and the site would not come back over a scrap. But a name is
+	// not unique per site (dockerName folds dots and slashes into one
+	// dash), and a worker's port is written in its manifest: the
+	// container under this name can be another site's, running, and
+	// removing it would be stopping a neighbour's database.
+	if owner := d.containerSite(ctx, name); owner != "" && owner != spec.Domain {
+		return nil, fmt.Errorf("the container %s is %s's: its name and port collide with this one's; change the port", name, owner)
+	}
 	_ = exec.CommandContext(ctx, d.bin(), "rm", "-f", name).Run()
 	args := []string{"run", "-d", "--name", name,
 		"-p", fmt.Sprintf("127.0.0.1:%d:%d", port, port),
-		"--label", "middleware.domain=" + spec.Domain,
+		"--label", domainLabel + "=" + spec.Domain,
 		"--label", "middleware.revision=" + spec.Revision}
 	if d.House != "" {
 		args = append(args, "--label", HouseLabel+"="+d.House)
@@ -101,6 +116,9 @@ func (d Docker) Start(ctx context.Context, spec *manifest.Spec, port int, logFil
 		return nil, err
 	}
 	args = append(args, walls...)
+	if err := d.claimVolumes(ctx, spec); err != nil {
+		return nil, err
+	}
 	mounts, err := siteMounts(spec, home)
 	if err != nil {
 		return nil, err
@@ -252,9 +270,16 @@ func (d Docker) Adopt(ctx context.Context, st State) (Instance, error) {
 	if st.Container == "" {
 		return nil, ErrGone
 	}
-	out, err := exec.CommandContext(ctx, d.bin(), "inspect", "-f", "{{.State.Running}} {{.Id}}", st.Container).Output()
-	running, id, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
-	if err != nil || running != "true" {
+	out, err := exec.CommandContext(ctx, d.bin(), "inspect", "-f", "{{.State.Running}} {{.Id}} {{index .Config.Labels \""+domainLabel+"\"}}", st.Container).Output()
+	f := strings.Fields(string(out))
+	if err != nil || len(f) < 2 || f[0] != "true" {
+		return nil, ErrGone
+	}
+	id := f[1]
+	// The name in the state file is found by name, and another site's can
+	// have it (see Start): adopting it would route this site's traffic to
+	// the neighbour's container and stop it on the next handover.
+	if len(f) > 2 && f[2] != st.Domain {
 		return nil, ErrGone
 	}
 	inst := &dockerInstance{d: d, name: st.Container, port: st.Port, revision: st.Revision, domain: st.Domain, logFile: st.LogFile, started: st.StartedAt, done: make(chan error, 1), id: id}
@@ -365,7 +390,127 @@ func lastLine(out string) string {
 }
 
 // NamedVolume is the docker volume a site's named volume is.
+//
+// It is not unique per site: my-shop.com and my.shop.com are both
+// mw-my-shop-com-data. Renaming would orphan the data every installation
+// already keeps under these names, so the name stays and the volume says
+// whose it is instead (ClaimVolume): a second site that maps to it is
+// refused, not handed the first one's database.
 func NamedVolume(site, name string) string { return "mw-" + dockerName(site) + "-" + name }
+
+// domainLabel names the site, or the worker, a container runs.
+const domainLabel = "middleware.domain"
+
+// SiteLabel names the site a named volume belongs to.
+const SiteLabel = "middleware.site"
+
+// VolumeClaimsFile, under the house's data folder, names the owner of
+// each volume that was made before volumes carried SiteLabel: docker
+// cannot add a label to a volume that exists, and the data in it is not
+// the house's to move to a new one.
+const VolumeClaimsFile = "docker-volumes.json"
+
+// claimsMu keeps two sites starting at once from both reading the claims
+// file before either wrote it. Package-wide because Docker is a value
+// and every copy writes the same file.
+var claimsMu sync.Mutex
+
+// containerSite is the domain the container under name was started for,
+// empty when there is none or it carries no label.
+func (d Docker) containerSite(ctx context.Context, name string) string {
+	out, err := exec.CommandContext(ctx, d.bin(), "inspect", "-f", "{{index .Config.Labels \""+domainLabel+"\"}}", name).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// claimVolumes claims, before the run, every named volume the spec
+// mounts: left to docker run, a volume that is not there is made without
+// a word about whose it is, and one that is there is mounted whoever's
+// it is.
+func (d Docker) claimVolumes(ctx context.Context, spec *manifest.Spec) error {
+	site, _, _ := strings.Cut(spec.Domain, "/")
+	for _, v := range spec.Docker.Volumes {
+		src, err := manifest.VolumeSource(v)
+		if err != nil {
+			return err
+		}
+		if !src.Named || src.Name == "" {
+			continue
+		}
+		if err := d.ClaimVolume(ctx, site, NamedVolume(site, src.Name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ClaimVolume makes sure the volume is site's before a container of it
+// mounts it. One that is not there is made labelled with the site; one
+// labelled with another site is refused; one with no label, from before
+// labels, goes to the first site that claims it, written down in the
+// claims file, and is refused to any other after that.
+func (d Docker) ClaimVolume(ctx context.Context, site, volume string) error {
+	owner, exists := d.volumeOwner(ctx, volume)
+	if !exists {
+		// Read again after the create rather than trusting it: docker
+		// answers a create of a name that is there with success and leaves
+		// that volume as it was, labels and all, so one made in between
+		// by another site must still be seen as the other site's.
+		out, err := exec.CommandContext(ctx, d.bin(), "volume", "create", "--label", SiteLabel+"="+site, volume).CombinedOutput()
+		if owner, exists = d.volumeOwner(ctx, volume); !exists {
+			return fmt.Errorf("docker volume create %s: %v: %s", volume, err, bytes.TrimSpace(out))
+		}
+	}
+	if owner == site {
+		return nil
+	}
+	if owner != "" {
+		return volumeTaken(volume, site, owner)
+	}
+	if d.Data == "" {
+		return nil
+	}
+	claimsMu.Lock()
+	defer claimsMu.Unlock()
+	path := filepath.Join(d.Data, VolumeClaimsFile)
+	claims := map[string]string{}
+	if raw, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(raw, &claims); err != nil {
+			// Unreadable, every unlabelled volume would be anybody's.
+			return fmt.Errorf("%s: %w", path, err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	switch claims[volume] {
+	case site:
+		return nil
+	case "":
+		claims[volume] = site
+		return fsx.WriteJSON(path, claims, 0o600)
+	default:
+		return volumeTaken(volume, site, claims[volume])
+	}
+}
+
+func volumeTaken(volume, site, owner string) error {
+	return fmt.Errorf("the docker volume %s is %s's, not %s's: both names map to it, and a site is never handed another's data; rename the volume in %s's manifest", volume, owner, site, site)
+}
+
+// volumeOwner is the site a volume's label names, and whether the volume
+// is there at all. A daemon that does not answer reads as "not there",
+// and the create that follows says what is wrong.
+func (d Docker) volumeOwner(ctx context.Context, volume string) (string, bool) {
+	out, err := exec.CommandContext(ctx, d.bin(), "volume", "inspect", "--format", "{{json .Labels}}", volume).Output()
+	if err != nil {
+		return "", false
+	}
+	var labels map[string]string
+	_ = json.Unmarshal(bytes.TrimSpace(out), &labels)
+	return labels[SiteLabel], true
+}
 
 // Reap removes the containers of this house that nobody adopted: a
 // generation whose supervisor died between "run" and "saved", a handover
