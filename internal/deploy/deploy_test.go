@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -225,6 +226,131 @@ func TestDeploysOfOneSiteRunOneAtATime(t *testing.T) {
 	}
 }
 
+// makeRepoWithManifest builds a bare repo whose main branch ships its own
+// site.json (and a trivial build.sh), standing for a repository that would
+// replace the local manifest on checkout.
+func makeRepoWithManifest(t *testing.T, shipped *manifest.Manifest) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	base := t.TempDir()
+	// A domain-named folder so manifest.Save's CheckInside is happy with a
+	// run/workers manifest.
+	work := filepath.Join(base, "app.test")
+	bare := filepath.Join(base, "origin.git")
+	os.MkdirAll(work, 0o755)
+	git(t, base, "init", "-q", "--bare", bare)
+	git(t, work, "init", "-q")
+	if err := manifest.Save(work, shipped); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(work, "build.sh"), []byte("#!/bin/sh\ntrue\n"), 0o755)
+	git(t, work, "add", ".")
+	git(t, work, "commit", "-q", "-m", "first")
+	git(t, work, "remote", "add", "origin", bare)
+	git(t, work, "push", "-q", "origin", "main")
+	return bare
+}
+
+// A disabled site is a decision; a push must not revive it. The deploy is
+// skipped before anything is fetched or built.
+func TestADeployOfADisabledSiteIsSkipped(t *testing.T) {
+	bare := makeRepo(t, "#!/bin/sh\ntrue\n")
+	m := &manifest.Manifest{Version: 2, Disabled: true,
+		Run:    &manifest.Run{Command: []string{"./server"}},
+		Deploy: &manifest.Deploy{GitHub: &manifest.GitHubDeploy{Repository: "acme/app", Build: [][]string{{"./build.sh"}}}}}
+	root, dir := makeSite(t, m)
+	r, bus := newRunner(root, bare, nil)
+	st, err := r.Run(context.Background(), "app.test", dir, m, "github:someone", FromGitHub)
+	if err != nil {
+		t.Fatalf("a skip is not an error: %v", err)
+	}
+	if st.Status != "skipped" {
+		t.Fatalf("status: %+v", st)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+		t.Fatal("a disabled site was fetched")
+	}
+	if got := eventTypes(bus); got != "deploy.skipped" {
+		t.Fatalf("events: %s", got)
+	}
+}
+
+// A checkout that ships the repository's own site.json must not drop the
+// operator's and the guard's decisions: a hold, a stopped worker and
+// under-attack mode survive the deploy even though the repository's
+// manifest has none of them.
+func TestACheckoutKeepsTheSiteDecisions(t *testing.T) {
+	shipped := &manifest.Manifest{Version: 2,
+		Run:     &manifest.Run{Command: []string{"./server"}},
+		Workers: map[string]*manifest.Worker{"db": {Command: []string{"./db"}}},
+		Deploy:  &manifest.Deploy{GitHub: &manifest.GitHubDeploy{Repository: "acme/app", Build: [][]string{{"./build.sh"}}}}}
+	bare := makeRepoWithManifest(t, shipped)
+
+	local := &manifest.Manifest{Version: 2,
+		Run:     &manifest.Run{Command: []string{"./server"}},
+		Workers: map[string]*manifest.Worker{"db": {Command: []string{"./db"}, Disabled: true}},
+		Hold:    &manifest.Hold{Enabled: true, Mode: "maintenance"},
+		Deploy:  &manifest.Deploy{GitHub: &manifest.GitHubDeploy{Repository: "acme/app", Build: [][]string{{"./build.sh"}}}}}
+	root, dir := makeSite(t, local)
+	r, _ := newRunner(root, bare, nil)
+	if _, err := r.Run(context.Background(), "app.test", dir, local, "github:someone", FromGitHub); err != nil {
+		log, _ := os.ReadFile(filepath.Join(root, "data", "logs", "app.test", "deploy.log"))
+		t.Fatalf("%v\n%s", err, log)
+	}
+	after, err := manifest.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Hold == nil || !after.Hold.Enabled {
+		t.Fatalf("the hold was dropped: %+v", after.Hold)
+	}
+	if w := after.Workers["db"]; w == nil || !w.Disabled {
+		t.Fatalf("the stopped worker was started: %+v", w)
+	}
+	// The repository's own content still arrived.
+	if _, err := os.Stat(filepath.Join(dir, "build.sh")); err != nil {
+		t.Fatal("the checkout did not bring the repository's files")
+	}
+}
+
+// A push that lands while the operator's Deploy is building must still get
+// built: Start and Trigger share one "run again" loop. Without it the
+// trigger set a flag only Trigger watched, and the newest commit waited for
+// the next push.
+func TestATriggerDuringAStartIsBuilt(t *testing.T) {
+	// The build appends a mark and sleeps, so a trigger has time to land
+	// mid-build; each pass leaves one mark.
+	bare := makeRepo(t, "#!/bin/sh\necho mark >> \"$MIDDLEWARE_SITE_DIR/marks\"\nsleep 0.3\n")
+	m := &manifest.Manifest{Version: 2, Deploy: &manifest.Deploy{GitHub: &manifest.GitHubDeploy{Repository: "acme/app", Build: [][]string{{"./build.sh"}}}}}
+	root, dir := makeSite(t, m)
+	r, _ := newRunner(root, bare, nil)
+	// A first GitHub deploy puts the repository (and build.sh) in place so
+	// the operator's in-place Deploy has something to build.
+	if _, err := r.Run(context.Background(), "app.test", dir, m, "test", FromGitHub); err != nil {
+		t.Fatal(err)
+	}
+	// The operator presses Deploy (in place); Start claims the site and
+	// returns at once. A push arrives before the build finishes.
+	if _, err := r.Start("app.test", dir, m, "operator", InPlace); err != nil {
+		t.Fatal(err)
+	}
+	r.Trigger("app.test", dir, m, "github:someone")
+	deadline := time.Now().Add(10 * time.Second)
+	for r.Deploying("app.test") && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if r.Deploying("app.test") {
+		t.Fatal("the deployment never finished")
+	}
+	marks, _ := os.ReadFile(filepath.Join(dir, "marks"))
+	// First deploy, the Start, and the triggered run: three marks.
+	if got := strings.Count(string(marks), "mark"); got != 3 {
+		t.Fatalf("the trigger during Start was not built: %d builds, want 3\n%s", got, marks)
+	}
+}
+
 // A build step that outlives its timeout is killed with everything it
 // started, not only the shell: npm's children used to keep running.
 func TestATimedOutStepIsKilledWithItsChildren(t *testing.T) {
@@ -241,9 +367,83 @@ func TestATimedOutStepIsKilledWithItsChildren(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	data, _ := os.ReadFile(filepath.Join(dir, "child.pid"))
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
-	if pid > 0 && syscall.Kill(pid, 0) == nil {
+	if pid > 0 && syscall.Kill(pid, 0) == nil && !zombie(pid) {
 		stat, _ := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
 		syscall.Kill(pid, syscall.SIGKILL)
 		t.Fatalf("the step's child survived the timeout: %s\n%s", stat, log.String())
+	}
+}
+
+// zombie reports whether pid is dead but not yet reaped. The killed child
+// is orphaned to PID 1, and where PID 1 does not reap (a container whose
+// init is a plain process) it stays a zombie that kill(pid, 0) still
+// finds: dead all the same, and the test used to fail on such machines.
+// A pid /proc no longer knows is dead too.
+func zombie(pid int) bool {
+	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return true
+	}
+	i := bytes.LastIndexByte(data, ')')
+	return i < 0 || i+2 >= len(data) || data[i+2] == 'Z'
+}
+
+// A deploy checks out attacker-controlled files, so a hook planted in
+// .git/hooks must not run on the host: core.hooksPath is nulled. The hook
+// here would drop a marker; the deploy must finish clean with no marker.
+func TestADeployDoesNotRunAPlantedGitHook(t *testing.T) {
+	bare := makeRepo(t, "#!/bin/sh\ntrue\n")
+	m := &manifest.Manifest{Version: 2, Deploy: &manifest.Deploy{GitHub: &manifest.GitHubDeploy{Repository: "acme/app", Build: [][]string{{"./build.sh"}}}}}
+	root, dir := makeSite(t, m)
+	r, _ := newRunner(root, bare, nil)
+	// First deploy brings the .git into place.
+	if _, err := r.Run(context.Background(), "app.test", dir, m, "test", FromGitHub); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(root, "ran")
+	hook := filepath.Join(dir, ".git", "hooks", "post-checkout")
+	os.MkdirAll(filepath.Dir(hook), 0o755)
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st, err := r.Run(context.Background(), "app.test", dir, m, "test", FromGitHub)
+	if err != nil || st.Status != "ok" {
+		t.Fatalf("second deploy: %+v %v", st, err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the planted post-checkout hook ran during the deploy")
+	}
+}
+
+// A command-bearing key in .git/config (a compromised container can write
+// it; it is not tracked and so cannot arrive by push) must stop the deploy
+// before git runs it, and leave the running build untouched.
+func TestADeployRefusesACommandBearingGitConfig(t *testing.T) {
+	bare := makeRepo(t, "#!/bin/sh\ntrue\n")
+	m := &manifest.Manifest{Version: 2, Deploy: &manifest.Deploy{GitHub: &manifest.GitHubDeploy{Repository: "acme/app", Build: [][]string{{"./build.sh"}}, Pointer: ".current"}}}
+	root, dir := makeSite(t, m)
+	r, _ := newRunner(root, bare, nil)
+	if _, err := r.Run(context.Background(), "app.test", dir, m, "test", FromGitHub); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, ".current"), []byte("good\n"), 0o644)
+	marker := filepath.Join(root, "smudged")
+	// A filter smudge cannot be reached with -c (its driver name is the
+	// attacker's); Guard must refuse the whole deploy.
+	cfg := filepath.Join(dir, ".git", "config")
+	data, _ := os.ReadFile(cfg)
+	os.WriteFile(cfg, append(data, []byte("[filter \"evil\"]\n\tsmudge = touch "+marker+"\n")...), 0o644)
+	st, err := r.Run(context.Background(), "app.test", dir, m, "test", FromGitHub)
+	if err == nil || st.Status != "failed" {
+		t.Fatalf("a deploy on an unsafe config must fail: %+v %v", st, err)
+	}
+	if !strings.Contains(err.Error(), "filter.evil.smudge") {
+		t.Fatalf("the failure must name the key, got %v", err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the filter smudge ran")
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, ".current")); strings.TrimSpace(string(b)) != "good" {
+		t.Fatalf("the pointer was touched: %q", b)
 	}
 }

@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -23,6 +22,7 @@ import (
 
 	"github.com/dcimorra/middleware-public/internal/events"
 	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/middleware-public/internal/hostgit"
 	"github.com/dcimorra/middleware-public/internal/manifest"
 	"github.com/dcimorra/middleware-public/internal/runtime"
 )
@@ -173,15 +173,41 @@ func (r *Runner) Start(domain, siteDir string, m *manifest.Manifest, actor strin
 	s.running = true
 	r.mu.Unlock()
 	id := NewBuildID()
-	go func() {
-		s.mu.Lock()
-		_, _ = r.run(context.Background(), domain, siteDir, m, actor, from, id)
-		s.mu.Unlock()
-		r.mu.Lock()
-		s.running = false
-		r.mu.Unlock()
-	}()
+	r.background(s, domain, siteDir, m, actor, from, id)
 	return id, nil
+}
+
+// background runs the claimed deployment and then, while a trigger arrived
+// mid-build, runs it again. Start and Trigger share this loop: a push that
+// lands during the operator's Deploy used to set `again` that only Trigger
+// watched, so the newest commit was not built until the next push. An
+// `again` is always a push, so every pass after the first is a GitHub
+// build of the newest commit, whatever the first pass was. The caller has
+// already set running under r.mu.
+func (r *Runner) background(s *siteState, domain, siteDir string, m *manifest.Manifest, actor string, from Source, id string) {
+	go func() {
+		for {
+			cur := m
+			if from == FromGitHub {
+				// Re-read: the push being built may have changed the manifest.
+				if fresh, err := manifest.Load(siteDir); err == nil {
+					cur = fresh
+				}
+			}
+			s.mu.Lock()
+			_, _ = r.run(context.Background(), domain, siteDir, cur, actor, from, id)
+			s.mu.Unlock()
+			r.mu.Lock()
+			if !s.again {
+				s.running = false
+				r.mu.Unlock()
+				return
+			}
+			s.again = false
+			r.mu.Unlock()
+			from, id = FromGitHub, NewBuildID()
+		}
+	}()
 }
 
 // Deploying reports whether a deployment of domain is running.
@@ -209,26 +235,7 @@ func (r *Runner) Trigger(domain, siteDir string, m *manifest.Manifest, actor str
 	}
 	s.running = true
 	r.mu.Unlock()
-	go func() {
-		for {
-			// Re-read: the push being built may have changed the manifest.
-			cur := m
-			if fresh, err := manifest.Load(siteDir); err == nil {
-				cur = fresh
-			}
-			s.mu.Lock()
-			_, _ = r.run(context.Background(), domain, siteDir, cur, actor, FromGitHub, NewBuildID())
-			s.mu.Unlock()
-			r.mu.Lock()
-			if !s.again {
-				s.running = false
-				r.mu.Unlock()
-				return
-			}
-			s.again = false
-			r.mu.Unlock()
-		}
-	}()
+	r.background(s, domain, siteDir, m, actor, FromGitHub, NewBuildID())
 }
 
 // Last returns the last recorded status of a site.
@@ -262,6 +269,16 @@ func (r *Runner) save(st Status) {
 
 // run is one deployment, with the site's lock held by the caller.
 func (r *Runner) run(ctx context.Context, domain, siteDir string, m *manifest.Manifest, actor string, from Source, buildID string) (Status, error) {
+	// A disabled site is an operator's or the guard's decision, and a
+	// deploy would build it and (lacking a pointer) start it again. A push
+	// must not undo that: the site is built only once it is switched back
+	// on. The decision is read from the local manifest, before any fetch,
+	// so a repository that ships disabled:false cannot talk its way past it.
+	if m != nil && m.Disabled {
+		r.opts.Bus.Emit(events.Event{Type: "deploy.skipped", Subject: domain, Actor: actor, Level: "warn", Message: "the site is disabled; not deploying", Data: map[string]any{"build_id": buildID}})
+		now := time.Now()
+		return Status{Domain: domain, BuildID: buildID, Actor: actor, Status: "skipped", Started: now, Finished: now}, nil
+	}
 	ctx, cancel := context.WithTimeout(ctx, r.opts.Timeout)
 	defer cancel()
 	logPath := filepath.Join(r.opts.DataDir, "logs", domain, "deploy.log")
@@ -385,8 +402,23 @@ func Fetch(ctx context.Context, siteDir string, g *manifest.GitHubDeploy, log io
 	if err := git("checkout", "-q", "-f", "-B", branch, "origin/"+branch); err != nil {
 		return "", fmt.Errorf("checkout %s: %w", branch, err)
 	}
-	if after, _ := os.ReadFile(filepath.Join(siteDir, manifest.FileName)); len(before) > 0 && string(after) != string(before) {
+	after, _ := os.ReadFile(filepath.Join(siteDir, manifest.FileName))
+	if len(before) > 0 && string(after) != string(before) {
 		fmt.Fprintln(log, "note: the repository ships its own site.json and it replaced the local one")
+		// The repository's manifest does not get to undo the operator's and
+		// the guard's decisions. Those live in the manifest precisely so
+		// they survive a restart, and a checkout is a restart of the file:
+		// carry them from the manifest that was here onto the new one, so a
+		// push cannot revive a disabled site, lift a hold, start a stopped
+		// worker or drop under-attack mode.
+		if prior, perr := manifest.Parse(before); perr == nil {
+			if fresh, ferr := manifest.Load(siteDir); ferr == nil && carryDecisions(fresh, prior) {
+				if err := manifest.Save(siteDir, fresh); err != nil {
+					return "", fmt.Errorf("keeping the site's decisions over its new site.json: %w", err)
+				}
+				fmt.Fprintln(log, "note: kept the site's disabled, hold, stopped-worker and under-attack decisions")
+			}
+		}
 	}
 	commit, err := gitOutput(ctx, siteDir, ro, "rev-parse", "HEAD")
 	if err != nil {
@@ -395,6 +427,49 @@ func Fetch(ctx context.Context, siteDir string, g *manifest.GitHubDeploy, log io
 	commit = strings.TrimSpace(commit)
 	fmt.Fprintf(log, "at %s\n", commit)
 	return commit, nil
+}
+
+// carryDecisions copies onto m the decisions the house writes into a
+// manifest at runtime and that must outlive a checkout that replaced
+// site.json: a stopped site, a hold, stopped workers, under-attack mode.
+// It only ever switches a decision on, never off, so neither the operator
+// nor the repository can be overridden into a weaker state: a worker the
+// repository ships disabled and one the operator stopped both stay down. It
+// reports whether it changed anything, so the caller saves only when it
+// must. Deploy configuration, build steps and everything else are the
+// repository's to set.
+func carryDecisions(m, prior *manifest.Manifest) bool {
+	if m == nil || prior == nil {
+		return false
+	}
+	changed := false
+	if prior.Disabled && !m.Disabled {
+		m.Disabled, changed = true, true
+	}
+	if prior.Hold != nil {
+		h := *prior.Hold
+		m.Hold, changed = &h, true
+	}
+	if prior.Attack != nil {
+		m.Attack, changed = prior.Attack, true
+	}
+	if prior.WAF != nil && prior.WAF.UnderAttack {
+		if m.WAF == nil {
+			m.WAF = &manifest.WAF{}
+		}
+		if !m.WAF.UnderAttack {
+			m.WAF.UnderAttack, changed = true, true
+		}
+	}
+	for name, pw := range prior.Workers {
+		if pw == nil || !pw.Disabled {
+			continue
+		}
+		if w := m.Workers[name]; w != nil && !w.Disabled {
+			w.Disabled, changed = true, true
+		}
+	}
+	return changed
 }
 
 // BuildOptions parametrise Build.
@@ -476,32 +551,34 @@ type RunOptions struct {
 	Home  string
 }
 
-func gitEnv(o RunOptions) []string {
-	env := []string{"HOME=" + o.Home, "GIT_TERMINAL_PROMPT=0", "LC_ALL=C"}
-	if p, ok := os.LookupEnv("PATH"); ok {
-		env = append(env, "PATH="+p)
-	}
-	return env
-}
-
-// gitArgs prefixes the auth header for the one command when a token is
-// set. The header is what GitHub's own checkout action sends; a URL with
-// the token in it would be saved by `remote add` into .git/config.
-func gitArgs(o RunOptions, args []string) []string {
+// gitConfig is the token auth header for the one command when a token is
+// set, passed to hostgit as an extra -c. The header is what GitHub's own
+// checkout action sends; a URL with the token in it would be saved by
+// `remote add` into .git/config, where it would outlive the command and
+// reach the panel.
+func gitConfig(o RunOptions) []string {
 	if o.Token == "" {
-		return args
+		return nil
 	}
 	auth := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + o.Token))
-	return append([]string{"-c", "http.extraheader=AUTHORIZATION: basic " + auth}, args...)
+	return []string{"-c", "http.extraheader=AUTHORIZATION: basic " + auth}
+}
+
+func hostOpts(dir string, o RunOptions) hostgit.Options {
+	// A deploy runs in the site's own isolated home, so nothing but the
+	// repository's own config (which hostgit vets) can speak to git.
+	return hostgit.Options{Dir: dir, Home: o.Home, Config: gitConfig(o)}
 }
 
 func runGit(ctx context.Context, dir string, o RunOptions, log io.Writer, args ...string) error {
-	cmd := exec.CommandContext(ctx, "git", gitArgs(o, args)...)
-	cmd.Dir = dir
-	cmd.Env = gitEnv(o)
+	fmt.Fprintf(log, "$ git %s\n", strings.Join(args, " "))
+	cmd, err := hostgit.Command(ctx, hostOpts(dir, o), args...)
+	if err != nil {
+		fmt.Fprintf(log, "%v\n", err)
+		return err
+	}
 	cmd.Stdout, cmd.Stderr = log, log
 	cmd.WaitDelay = 5 * time.Second
-	fmt.Fprintf(log, "$ git %s\n", strings.Join(args, " "))
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("git %s: %w", args[0], err)
 	}
@@ -509,9 +586,10 @@ func runGit(ctx context.Context, dir string, o RunOptions, log io.Writer, args .
 }
 
 func gitOutput(ctx context.Context, dir string, o RunOptions, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", gitArgs(o, args)...)
-	cmd.Dir = dir
-	cmd.Env = gitEnv(o)
+	cmd, err := hostgit.Command(ctx, hostOpts(dir, o), args...)
+	if err != nil {
+		return "", err
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w", args[0], err)

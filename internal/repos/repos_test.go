@@ -155,3 +155,37 @@ func TestCredentialsInARemoteAreNotShown(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// The watcher runs git in folders a project or a conversation works in, so
+// a command-bearing key or a hook planted there (a compromised container,
+// or a pushed repo, can write them) must never run on the host. Here a
+// filter smudge, a core.fsmonitor and a post-checkout hook each try to drop
+// a marker; after a listing and a pull the marker must not exist, and the
+// repository shows the refusal instead of running it.
+func TestARefreshDoesNotRunACommandFromTheRepository(t *testing.T) {
+	m, site, other, _ := world(t)
+	ctx := context.Background()
+	id := m.List(ctx)[0].ID
+	push(t, other, "index.html", "two\n", "two") // something to pull
+
+	marker := filepath.Join(t.TempDir(), "pwned")
+	hook := filepath.Join(site, ".git", "hooks", "post-checkout")
+	os.MkdirAll(filepath.Dir(hook), 0o755)
+	os.WriteFile(hook, []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755)
+	cfg := filepath.Join(site, ".git", "config")
+	data, _ := os.ReadFile(cfg)
+	extra := "[filter \"evil\"]\n\tsmudge = touch " + marker + "\n[core]\n\tfsmonitor = touch " + marker + "\n"
+	os.WriteFile(cfg, append(data, []byte(extra)...), 0o644)
+
+	list := m.List(ctx)
+	if list[0].Error == "" || !strings.Contains(list[0].Error, "filter.evil.smudge") {
+		t.Fatalf("describe must surface the refusal, got %q", list[0].Error)
+	}
+	r, _ := m.Pull(ctx, id)
+	if r.Last == nil || r.Last.OK || !strings.Contains(r.Last.Message, "filter.evil.smudge") {
+		t.Fatalf("a pull on an unsafe repo must be refused: %+v", r.Last)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a command from the repository ran during the refresh")
+	}
+}
