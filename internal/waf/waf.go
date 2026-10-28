@@ -684,8 +684,17 @@ func (w *WAF) Wrap(next http.Handler) http.Handler {
 			site, isSite = w.opts.Lookup(host)
 		}
 		pol := w.effectiveFor(site.WAF)
+		// The buckets are the site's, by its own domain, and one for every
+		// name no site serves. Keyed on the Host header, a client that
+		// made up a name per request started each on a full bucket, never
+		// drained its address's, and left a bucket behind for ten minutes
+		// every time; and a site's www. and aliases split its limit.
+		limitOn := ""
+		if isSite {
+			limitOn = site.Domain
+		}
 		if pol.rate != nil && !(!isSite && panelAsset(r)) {
-			switch w.allow(host, addr, clientOf(r), pol.rate, costOf(r)) {
+			switch w.allow(limitOn, addr, clientOf(r), pol.rate, costOf(r)) {
 			case limitClient:
 				w.refuse(rw, r, ip, "ratelimited", http.StatusTooManyRequests)
 				return

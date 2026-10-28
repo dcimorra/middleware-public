@@ -7,8 +7,11 @@
 // What is kept is kept for everyone, so there are walls a manifest cannot
 // remove: nothing with Set-Cookie; nothing private, no-store or no-cache;
 // nothing with Vary: * or Vary: Cookie; nothing but a 200 to a GET or
-// HEAD; nothing for a request with Authorization; no event streams. What a
-// manifest chooses is only which paths and for how long. A site that gets
+// HEAD; nothing for a request with Authorization; no event streams and no
+// WebSockets, which do not even wait behind one another. Nothing for a
+// request with a cookie either, unless the rule says its pages read none
+// (ignore_cookies). What a manifest chooses is otherwise only which paths
+// and for how long. A site that gets
 // its cache section wrong can be slow or serve something old; it cannot
 // serve someone what was someone else's.
 //
@@ -25,6 +28,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/dcimorra/middleware-public/internal/edge"
 )
 
 // Rule is one entry of the manifest's cache.rules.
@@ -37,6 +42,11 @@ type Rule struct {
 	Mode string `json:"mode"`
 	// TTL is for force, in seconds.
 	TTL int `json:"ttl,omitempty"`
+	// IgnoreCookies keeps and answers requests that carry cookies as if
+	// they carried none, for paths whose pages read none (an analytics
+	// cookie on every visitor otherwise leaves nothing to keep). Without
+	// it a request with a cookie of the site's passes the cache by.
+	IgnoreCookies bool `json:"ignore_cookies,omitempty"`
 	// Note is what the rule is for, for whoever reads the manifest.
 	Note string `json:"note,omitempty"`
 }
@@ -241,7 +251,9 @@ func ttlFor(rule Rule, h http.Header, status int) time.Duration {
 			}
 		}
 	}
-	cc := parseCC(h.Get("Cache-Control"))
+	// Every Cache-Control line, not the first: with two, Get read the one
+	// the manifest had put first and kept a page the site marked private.
+	cc := parseCC(strings.Join(h.Values("Cache-Control"), ","))
 	if _, ok := cc["private"]; ok {
 		return 0
 	}
@@ -279,10 +291,18 @@ func parseCC(v string) map[string]string {
 	return out
 }
 
-// key is the host and the URI: a HEAD is answered from a GET's entry.
-// Variants by Vary live under it.
+// key is the scheme, the host and the URI: a HEAD is answered from a
+// GET's entry. Variants by Vary live under it. The scheme is the one the
+// house believes (edge.HTTPS) and tells the site: a page rendered for
+// http, with its http:// links and assets, was kept and given to https
+// visitors as mixed content, and whoever asked first over plain http
+// chose what everyone on https got.
 func key(r *http.Request) string {
-	return strings.ToLower(r.Host) + " " + r.URL.RequestURI()
+	scheme := "http"
+	if edge.HTTPS(r) {
+		scheme = "https"
+	}
+	return scheme + " " + strings.ToLower(r.Host) + " " + r.URL.RequestURI()
 }
 
 func (e *entry) fits(r *http.Request) bool {
@@ -309,29 +329,55 @@ func varyOf(h http.Header) []string {
 }
 
 // recorder writes through to the client and keeps a copy while it fits.
+// keepable says, once the status and headers are known, whether the answer
+// could be kept at all; when it cannot, or once the body outgrows
+// maxEntry, release lets the requests waiting on the same key go.
 type recorder struct {
 	http.ResponseWriter
-	status  int
-	buf     bytes.Buffer
-	tooBig  bool
-	written bool
+	status   int
+	buf      bytes.Buffer
+	tooBig   bool
+	unkept   bool
+	written  bool
+	keepable func(status int) bool
+	release  func()
+}
+
+func (r *recorder) settle(code int) {
+	if r.written {
+		return
+	}
+	r.status, r.written = code, true
+	if r.keepable != nil && !r.keepable(code) {
+		r.unkept = true
+		r.letGo()
+	}
+}
+
+func (r *recorder) letGo() {
+	if r.release != nil {
+		r.release()
+	}
 }
 
 func (r *recorder) WriteHeader(code int) {
-	if !r.written {
-		r.status, r.written = code, true
+	// An informational answer (103 Early Hints) comes before the real
+	// one; taken as the status, it made every such page one never kept.
+	if code >= 200 {
+		r.settle(code)
 	}
 	r.ResponseWriter.WriteHeader(code)
 }
 
 func (r *recorder) Write(p []byte) (int, error) {
-	if !r.written {
-		r.status, r.written = http.StatusOK, true
-	}
-	if !r.tooBig {
+	r.settle(http.StatusOK)
+	// What will not be kept is not copied either: an hour of an event
+	// stream held in memory only to be thrown away.
+	if !r.tooBig && !r.unkept {
 		if r.buf.Len()+len(p) > maxEntry {
 			r.tooBig = true
 			r.buf.Reset()
+			r.letGo()
 		} else {
 			r.buf.Write(p)
 		}

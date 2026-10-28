@@ -95,6 +95,77 @@ func TestTheWallsAManifestCannotRemove(t *testing.T) {
 	}
 }
 
+func TestAPageForHttpIsNotGivenToHttps(t *testing.T) {
+	o := &origin{}
+	_, h, _ := setup([]Rule{{Path: "/", Mode: ModeForce, TTL: 60}}, o)
+	visit := func(url string, headers ...string) string {
+		r := httptest.NewRequest("GET", url, nil) // https:// sets r.TLS
+		for _, kv := range headers {
+			k, v, _ := strings.Cut(kv, ": ")
+			r.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec.Header().Get("X-Middleware-Cache")
+	}
+	visit("http://a.example/x")
+	if got := visit("https://a.example/x"); got != "miss" {
+		t.Fatalf("https was answered %q from what http kept", got)
+	}
+	if got := visit("https://a.example/x"); got != "hit" {
+		t.Fatalf("https did not keep its own: %q", got)
+	}
+	// A direct client that says https is not believed, by the cache as
+	// by the site: it is plain http, and gets plain http's page.
+	if got := visit("http://a.example/x", "X-Forwarded-Proto: https"); got != "hit" || o.calls.Load() != 2 {
+		t.Fatalf("a forged X-Forwarded-Proto: %q after %d calls", got, o.calls.Load())
+	}
+}
+
+func TestEveryCacheControlLineIsRead(t *testing.T) {
+	h := http.Header{}
+	h.Add("Cache-Control", "public, max-age=60")
+	h.Add("Cache-Control", "private")
+	for _, mode := range []string{ModeOrigin, ModeForce} {
+		if ttl := ttlFor(Rule{Path: "/", Mode: mode, TTL: 60}, h, http.StatusOK); ttl != 0 {
+			t.Errorf("%s kept for %s a page whose second line says private", mode, ttl)
+		}
+	}
+}
+
+func TestASignedInPageIsNeitherKeptNorAnsweredFromTheCache(t *testing.T) {
+	// A site that renders the signed-in user's page and says nothing
+	// about caching it: force would keep it for everyone.
+	o := &origin{}
+	_, h, _ := setup([]Rule{{Path: "/", Mode: ModeForce, TTL: 60}}, o)
+	get(h, "/account", "Cookie: sid=alice")
+	anon := get(h, "/account")
+	if anon.Header().Get("X-Middleware-Cache") != "miss" || o.calls.Load() != 2 {
+		t.Fatalf("an anonymous visitor got %q after a signed-in one: %q", anon.Header().Get("X-Middleware-Cache"), anon.Body)
+	}
+	// What an anonymous visit kept is not given to the signed-in one.
+	if r := get(h, "/account", "Cookie: theme=dark; sid=bob"); r.Header().Get("X-Middleware-Cache") == "hit" {
+		t.Fatal("a request with a cookie was answered from the cache")
+	}
+	// A cookie the site's own parser reads although Go's does not.
+	if r := get(h, "/account", "Cookie: s{id=x"); r.Header().Get("X-Middleware-Cache") == "hit" {
+		t.Fatal("a cookie Go cannot parse was taken as no cookie")
+	}
+	// The house's own pass is not the visitor's: the page behind a
+	// password is kept for everyone past the door.
+	if r := get(h, "/account", "Cookie: mw_access=pass; mw_access_abc=z; mw_attack=ok"); r.Header().Get("X-Middleware-Cache") != "hit" {
+		t.Fatalf("the house's own cookies kept a request out of the cache: %q", r.Header().Get("X-Middleware-Cache"))
+	}
+
+	// ignore_cookies: the rule says its pages read none.
+	o2 := &origin{}
+	_, h2, _ := setup([]Rule{{Path: "/", Mode: ModeForce, TTL: 60, IgnoreCookies: true}}, o2)
+	get(h2, "/logo.png", "Cookie: _ga=1")
+	if r := get(h2, "/logo.png", "Cookie: _ga=2"); r.Header().Get("X-Middleware-Cache") != "hit" || o2.calls.Load() != 1 {
+		t.Fatalf("ignore_cookies: %q after %d calls", r.Header().Get("X-Middleware-Cache"), o2.calls.Load())
+	}
+}
+
 func TestRulesBySegmentAndNever(t *testing.T) {
 	o := &origin{}
 	_, h, _ := setup([]Rule{{Path: "/product", Mode: ModeForce, TTL: 60}, {Path: "/product/admin", Mode: ModeNever}}, o)
@@ -169,4 +240,78 @@ func TestTheBudgetIsTakenFromTheLargestSite(t *testing.T) {
 		t.Fatalf("the small site paid for the big one: %d -> %d", before, c.Stats("small.example").Bytes)
 	}
 	_ = io.Discard
+}
+
+// held is a site whose answers stay open until the test lets them end, the
+// way an event stream, a socket or a long download does. entered says each
+// time a request reaches it, after its headers (and body) went out.
+type held struct {
+	entered chan string
+	end     chan struct{}
+	write   func(w http.ResponseWriter)
+}
+
+func (s *held) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.write(w)
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	s.entered <- r.URL.Path
+	<-s.end
+}
+
+func TestTwoStreamsOnOneAddressBothFlow(t *testing.T) {
+	sse := func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, "data: hello\n\n")
+	}
+	plain := func(w http.ResponseWriter) { io.WriteString(w, "a plain page, which force would keep") }
+	big := func(w http.ResponseWriter) {
+		w.Header().Set("Cache-Control", "public, max-age=60")
+		w.Write(make([]byte, maxEntry+1))
+	}
+	cases := []struct {
+		name    string
+		rule    Rule
+		write   func(w http.ResponseWriter)
+		headers []string
+	}{
+		// The site's answer says it: released when its headers go out.
+		{"event stream", Rule{Path: "/", Mode: ModeOrigin}, sse, nil},
+		// The request says it, whatever the answer looks like (force
+		// would keep this one): the cache is not entered at all.
+		{"eventsource", Rule{Path: "/", Mode: ModeForce, TTL: 60}, plain, []string{"Accept: text/event-stream"}},
+		{"websocket", Rule{Path: "/", Mode: ModeForce, TTL: 60}, plain, []string{"Connection: Upgrade", "Upgrade: websocket"}},
+		// Kept until it outgrew maxEntry, then released.
+		{"long download", Rule{Path: "/", Mode: ModeForce, TTL: 60}, big, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &held{entered: make(chan string, 2), end: make(chan struct{}), write: tc.write}
+			c := New(64 << 20)
+			h := c.Wrap(s, func(*http.Request) (Site, bool) {
+				return Site{Domain: "a.example", Rules: []Rule{tc.rule}, Generation: "g1"}, true
+			})
+			var wg sync.WaitGroup
+			for i := 0; i < 2; i++ {
+				wg.Add(1)
+				go func() { defer wg.Done(); get(h, "/events", tc.headers...) }()
+			}
+			for i := 0; i < 2; i++ {
+				select {
+				case <-s.entered:
+				case <-time.After(3 * time.Second):
+					close(s.end)
+					wg.Wait()
+					t.Fatalf("only %d of two clients reached the site: the second waits for the first one's stream to end", i)
+				}
+			}
+			close(s.end)
+			wg.Wait()
+			if c.Stats("a.example").Entries != 0 {
+				t.Fatal("a stream was kept")
+			}
+		})
+	}
 }

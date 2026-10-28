@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/dcimorra/middleware-public/internal/engine"
+	"github.com/dcimorra/middleware-public/internal/httpcache"
 	"github.com/dcimorra/middleware-public/internal/manifest"
 )
 
@@ -93,6 +95,64 @@ func TestRunForwardsWithTheOriginalHostAndForwardedHeaders(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != 200 || gotHost != "a.test" || gotFor != "203.0.113.9" || w.Header().Get("X-Test") != "1" {
 		t.Fatalf("code=%d host=%q for=%q hdr=%q", w.Code, gotHost, gotFor, w.Header().Get("X-Test"))
+	}
+}
+
+func TestTheManifestsHeadersReplaceTheSitesOwn(t *testing.T) {
+	var calls atomic.Int64
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Access-Control-Allow-Origin", "https://other.test")
+		if r.URL.Path == "/account" {
+			w.Header().Set("Cache-Control", "private, max-age=0")
+		}
+		w.Write([]byte("up"))
+	}))
+	defer up.Close()
+	port, _ := strconv.Atoi(strings.TrimPrefix(up.URL, "http://127.0.0.1:"))
+	m, _ := manifest.Parse([]byte(`{"version":2,"run":{"command":["x"]},"headers":{"Access-Control-Allow-Origin":"*","Cache-Control":"public, max-age=60","X-Frame-Options":"DENY"}}`))
+	sites := map[string]engine.Snapshot{"a.test": {Domain: "a.test", Mode: manifest.ModeRun, Alive: true, Port: port, Manifest: m}}
+	// The cache in front of it, as the house wires it: what it reads is
+	// what the client gets.
+	c := httpcache.New(64 << 20)
+	h := c.Wrap(New(lookupFor(sites)), func(*http.Request) (httpcache.Site, bool) {
+		return httpcache.Site{Domain: "a.test", Rules: []httpcache.Rule{{Path: "/", Mode: httpcache.ModeOrigin}}, Generation: "g"}, true
+	})
+
+	resp := do(t, h, "a.test", "/account")
+	if v := resp.Header.Values("Access-Control-Allow-Origin"); len(v) != 1 || v[0] != "*" {
+		t.Fatalf("Access-Control-Allow-Origin %q: two of them and CORS fails", v)
+	}
+	cc := resp.Header.Values("Cache-Control")
+	if len(cc) != 1 || !strings.Contains(cc[0], "max-age=60") || !strings.Contains(cc[0], "private") {
+		t.Fatalf("Cache-Control %q: the manifest's, with the site's private kept", cc)
+	}
+	if v := resp.Header.Values("X-Frame-Options"); len(v) != 1 {
+		t.Fatalf("X-Frame-Options %q", v)
+	}
+	if do(t, h, "a.test", "/account").Header.Get("X-Middleware-Cache") == "hit" || calls.Load() != 2 {
+		t.Fatal("a page the site marked private was kept on the manifest's word")
+	}
+	// A page the site said nothing about is the manifest's to mark.
+	do(t, h, "a.test", "/")
+	if r := do(t, h, "a.test", "/"); r.Header.Get("X-Middleware-Cache") != "hit" {
+		t.Fatalf("the manifest's Cache-Control did not reach the cache: %q", r.Header.Get("X-Middleware-Cache"))
+	}
+
+	// What the house answers itself carries them too: a static file, and
+	// the page of a site that is not answering.
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("hello"), 0o644)
+	sm, _ := manifest.Parse([]byte(`{"version":2,"static":{"root":"."},"headers":{"X-Frame-Options":"DENY"},"cache":{"static_max_age":"1h"}}`))
+	sites["s.test"] = engine.Snapshot{Domain: "s.test", Dir: dir, Mode: manifest.ModeStatic, Manifest: sm}
+	sites["down.test"] = engine.Snapshot{Domain: "down.test", Mode: manifest.ModeRun, Alive: true, Port: 1, Manifest: m}
+	p := New(lookupFor(sites))
+	resp = do(t, p, "s.test", "/")
+	if resp.StatusCode != 200 || resp.Header.Get("X-Frame-Options") != "DENY" || resp.Header.Get("Cache-Control") != "public, max-age=3600" {
+		t.Fatalf("static: %d %v", resp.StatusCode, resp.Header)
+	}
+	if resp := do(t, p, "down.test", "/"); resp.StatusCode != 503 || resp.Header.Get("X-Frame-Options") != "DENY" {
+		t.Fatalf("down: %d %v", resp.StatusCode, resp.Header)
 	}
 }
 

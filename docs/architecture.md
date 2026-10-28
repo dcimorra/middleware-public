@@ -41,7 +41,8 @@ data/                        what this installation decided
   settings.json              panel domain, ports, listeners
   modules.json               which modules are on; credentials encrypted inside
   state/<domain>.json        running instance: pid, port, revision (for re-adoption)
-  logs/<domain>/             site output, rotated
+  logs/<domain>/             site output and its access.log, rotated
+  logs/access.log            requests for the names no site serves, one file
   events/                    audit trail, one file per day
 modules/                     binaries a module installed (cloudflared, wg, agent CLIs)
 ```

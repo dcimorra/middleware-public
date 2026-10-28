@@ -86,7 +86,7 @@ never shell strings. Paths are relative to the site folder.
     "static_max_age": "1h",
     "rules": [
       { "path": "/product", "mode": "origin" },
-      { "path": "/img", "mode": "force", "ttl": 3600, "note": "logos, never change" },
+      { "path": "/img", "mode": "force", "ttl": 3600, "ignore_cookies": true, "note": "logos, never change" },
       { "path": "/product/admin", "mode": "never" }
     ],
     "max_mb": 64
@@ -355,17 +355,37 @@ process.
   (`rate`, `max_body`, its own and the policy's). The block list and the
   bans for exploits, scanners and failed logins still apply: they protect
   the machine, and a block closes every site.
+- `headers` go on every answer of the site, the house's own pages included,
+  and replace the site's header of the same name rather than being sent
+  next to it (two `Access-Control-Allow-Origin` break CORS). A
+  `Cache-Control` here replaces the site's except for its `private`,
+  `no-store` and `no-cache`, which stay: a line written for the public
+  pages does not make the signed-in ones public. On static files
+  `cache.static_max_age` sets `Cache-Control` over both.
 - `cache.rules` are the house's response cache, kept in memory and served
   without asking the site, behind the door so nothing passes a password.
   `origin` keeps what the site marks (`s-maxage`, else `max-age`) for as
   long as it says, so switching it on over an app that sends nothing changes
   nothing; `force` keeps `ttl` seconds whatever the site says, for what is
   known to be public and still; `never` keeps nothing, for `/admin`.
-  Prefixes go by whole segments and the longest wins. What no rule can
+  Prefixes go by whole segments and the longest wins. An answer is kept by
+  scheme, name and URI, so a page made for `http://` is never given to
+  `https://`. What no rule can
   change: nothing with `Set-Cookie`, `private`, `no-store` or `no-cache`,
   `Vary: *`, `Cookie` or `Authorization`, nothing but a 200 to GET or HEAD,
-  nothing for a request with `Authorization`, no event streams. Simultaneous
-  misses reach the site as one, and a handover empties the site's cache.
+  nothing for a request with `Authorization`, no event streams and no
+  WebSockets (a request with `Upgrade` or `Accept: text/event-stream` never
+  enters the cache). Simultaneous misses reach the site as one, until the
+  first answer shows it will not be kept (its headers say so, or it passes
+  8 MB): then the others go to the site too, so a second client of a stream
+  does not wait for the first one's to end. A handover empties the site's
+  cache. A request with a cookie passes the cache by, neither answered from
+  it nor kept, because a signed-in user's page that says nothing about
+  caching would otherwise be kept under `force` and served to everyone;
+  the house's own cookies (the door's pass, the challenge's, the panel's
+  session) do not count. `"ignore_cookies": true` on a rule says its pages
+  read no cookie (images, an analytics cookie on every visitor) and keeps
+  and answers them as if they had none; it is refused on `never`.
   `max_mb` asks for less than the house's budget, never for more.
 - `vpn` makes the site exist only inside the VPN (the module of that name):
   it is served through the VPN door (the server's address in the tunnel, on

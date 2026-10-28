@@ -118,7 +118,9 @@ export function cacheTab(domain) {
     const save = h("button", { type: "button", class: "btn primary" }, t("common.save"));
     save.addEventListener("click", async () => {
       err.hidden = true;
-      const out = { ...cache, rules: rules.map((r) => ({ path: r.path, mode: r.mode, ...(r.mode === "force" ? { ttl: r.ttl } : {}), ...(r.note ? { note: r.note } : {}) })) };
+      // ignore_cookies has no control here; it is carried so that saving
+      // from this screen does not quietly drop what the manifest said.
+      const out ={ ...cache, rules: rules.map((r) => ({ path: r.path, mode: r.mode, ...(r.mode === "force" ? { ttl: r.ttl } : {}), ...(r.ignore_cookies && r.mode !== "never" ? { ignore_cookies: true } : {}), ...(r.note ? { note: r.note } : {}) })) };
       if (Number(maxMB.value) > 0) out.max_mb = Number(maxMB.value); else delete out.max_mb;
       if (!out.rules.length) delete out.rules;
       save.classList.add("busy");
