@@ -48,9 +48,18 @@ func TestAnArrivedSiteIsRepairedByTheHousesAIForAutomaticWork(t *testing.T) {
 	if job["done"] != true || job["error"] != nil || job["output"] != "ok" {
 		t.Fatalf("job: %v", job)
 	}
-	c, err := m.History("r.test")
+	// In the site's repair conversation, not the operator's, and with what
+	// the move said fenced as untrusted data.
+	if c, _ := m.History("r.test"); len(c.Turns) != 0 {
+		t.Fatal("the repair went into the operator's conversation")
+	}
+	name, _ := m.RepairConversation("r.test")
+	c, err := m.History(name)
 	if err != nil || len(c.Turns) == 0 || !strings.Contains(c.Turns[0].Text, "@prisma/client-2c3a") {
 		t.Fatalf("the AI was not told why: %+v %v", c, err)
+	}
+	if i, j := strings.Index(c.Turns[0].Text, "\n<<<UNTRUSTED-"), strings.Index(c.Turns[0].Text, "@prisma/client-2c3a"); i < 0 || j < i {
+		t.Fatalf("why is not inside the untrusted block:\n%s", c.Turns[0].Text)
 	}
 	if last := c.Turns[len(c.Turns)-1]; last.Provider != "claude" {
 		t.Fatalf("answered by %q", last.Provider)
