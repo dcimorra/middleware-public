@@ -152,6 +152,7 @@ func NewJail(root, workdir, home string) Jail {
 		sort.Strings(j.Deny)
 		return j
 	}
+	own := filepath.Base(workdir)
 	for _, ent := range readDir(root) {
 		p := filepath.Join(root, ent)
 		switch ent {
@@ -164,6 +165,19 @@ func NewJail(root, workdir, home string) Jail {
 					}
 					continue
 				}
+				// The logs one by one: the site's own are lent to it to
+				// read (OwnLogs), the others' and the tasks' stay denied.
+				// Denied whole, a site's conversation could not read what
+				// its own process said, and asked to look at its errors it
+				// could only ask for them to be pasted.
+				if ent == "data" && sub == "logs" {
+					for _, l := range readDir(q) {
+						if l != own {
+							deny(filepath.Join(q, l))
+						}
+					}
+					continue
+				}
 				deny(q)
 			}
 		default:
@@ -171,7 +185,21 @@ func NewJail(root, workdir, home string) Jail {
 		}
 	}
 	sort.Strings(j.Deny)
+	if logs := OwnLogs(root, own); logs != "" {
+		j.Lend(logs)
+	}
 	return j
+}
+
+// OwnLogs is a site's logs folder (data/logs/<domain>), what its process,
+// its workers and its moves write and its conversation may read; "" when
+// there is none yet.
+func OwnLogs(root, domain string) string {
+	p := filepath.Join(root, "data", "logs", domain)
+	if st, err := os.Stat(p); err != nil || !st.IsDir() {
+		return ""
+	}
+	return p
 }
 
 // Violations returns the denied paths that transcript mentions. It is a

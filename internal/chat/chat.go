@@ -1251,7 +1251,19 @@ func Preamble(domain, workdir string, j agent.Jail) string {
 		// is told to read the guide in its HOME, and Codex, given only the
 		// rule, refused to (Claude Code never asked, it loads it itself).
 		b.WriteString("You must not read, write or run anything outside it: other sites, the middleware's data, its tasks or its root are off limits, and every tool call is audited for that. ")
-		b.WriteString("The one exception is the house's guide, ~/.claude/skills/middleware/SKILL.md, which you may always read.\n")
+		// The guide by its full path, not ~: told "~/.claude/…", an agent
+		// on a V2 node went for the root's .claude, which is denied, and
+		// concluded the guide was off limits.
+		guide := "~/.claude/skills/middleware/SKILL.md"
+		if j.Home != "" {
+			guide = filepath.Join(j.Home, ".claude", "skills", SkillName, "SKILL.md")
+		}
+		b.WriteString("The exceptions are two. The house's guide, " + guide + ", which you may always read. ")
+		if logs := agent.OwnLogs(filepath.Dir(filepath.Dir(workdir)), domain); logs != "" {
+			b.WriteString("And your own logs, in " + logs + ", which the middleware writes and you may read with the Read tool, not write: site.log is the site's process, worker-<name>.log each worker's, move-<name>.log a move's commands, access.log the requests that reached it.\n")
+		} else {
+			b.WriteString("Your own logs, once the site has run, are in data/logs/" + domain + " under the installation's root, and you may read them.\n")
+		}
 		b.WriteString("When the manifest names deploy.github.repository and the GitHub module has a token, `git push` to that repository works as it is: the house lends the credential through its own address, without showing it, and refuses any other repository and any deletion. Do not ask for a token or write one to a file.\n")
 	}
 	b.WriteString("Do not start long-running processes: the middleware supervises the site's process from its manifest, and a change to the manifest or to a pointer file is how a deployment happens.\n")

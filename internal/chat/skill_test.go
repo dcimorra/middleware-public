@@ -57,7 +57,9 @@ func TestAgyGetsTheSkillWhereItLoadsSkillsAndAHintInThePreamble(t *testing.T) {
 	}
 	// Told to read a file outside the folder and also never to leave it,
 	// Codex chose the second: the rule has to name the exception.
-	if !strings.Contains(p.last().System, "The one exception is the house's guide, ~/.claude/skills/middleware/SKILL.md") {
+	// By its full path: told "~/.claude/…", an agent on a V2 node went for
+	// the root's .claude, which is denied.
+	if !strings.Contains(p.last().System, "The house's guide, "+filepath.Join(root, "data", "homes", "b.test", ".claude", "skills", "middleware", "SKILL.md")+", which you may always read") {
 		t.Fatalf("the rule about the folder does not name the guide:\n%s", p.last().System)
 	}
 }

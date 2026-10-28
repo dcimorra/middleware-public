@@ -64,7 +64,11 @@ site's. Sites run as the same Unix user as the supervisor, though: see
 "what is not protected".
 
 **The jail for agents.** A conversation's agent may read and write the
-site's folder and nothing above it, and no other site. The jail is enforced
+site's folder and nothing above it, and no other site. Two things outside
+it are its own to read and not write: the house's guide in its HOME, named
+to it by its full path, and its logs (`data/logs/<domain>/`: the site's
+process, its workers, its moves, its requests); the other sites' logs and
+the tasks' stay denied. The jail is enforced
 by the core before anything reaches the CLI: paths are resolved and checked
 against the site folder, symlinks included. The adapter is a subprocess with
 no say in it.

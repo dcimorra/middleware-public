@@ -326,3 +326,38 @@ func TestAnAgentStartsWithoutTheSupervisorsAmbientCapabilities(t *testing.T) {
 		t.Fatalf("wrapped without a reason: %s", p)
 	}
 }
+
+// A site's conversation reads its own logs, and only them: asked to look at
+// its errors, comparaloo's could only ask for them to be pasted, since the
+// whole of data/ was denied. They are lent (readable, not writable); the
+// other sites' logs and the tasks' stay denied. And the guide in its HOME
+// is never denied.
+func TestASiteJailLendsItsOwnLogsAndNotTheOthers(t *testing.T) {
+	root := makeRoot(t)
+	for _, d := range []string{"data/logs/a.test", "data/logs/b.test", "data/logs/tasks"} {
+		os.MkdirAll(filepath.Join(root, d), 0o755)
+	}
+	site := filepath.Join(root, "sites", "a.test")
+	home := filepath.Join(root, "data", "homes", "a.test")
+	j := NewJail(root, site, home)
+	own := filepath.Join(root, "data", "logs", "a.test")
+	guide := filepath.Join(home, ".claude", "skills", "middleware", "SKILL.md")
+	for _, d := range j.Deny {
+		if d == own || strings.HasPrefix(own, d+"/") || d == filepath.Join(root, "data", "logs") {
+			t.Errorf("its own logs are denied by %s", d)
+		}
+		if strings.HasPrefix(guide, d+"/") {
+			t.Errorf("the guide is denied by %s", d)
+		}
+	}
+	lent := strings.Join(j.Lent, "\n")
+	if !strings.Contains(lent, own) {
+		t.Errorf("its own logs are not lent (readable, not writable): %v", j.Lent)
+	}
+	denied := strings.Join(j.Deny, "\n")
+	for _, want := range []string{filepath.Join(root, "data", "logs", "b.test"), filepath.Join(root, "data", "logs", "tasks")} {
+		if !strings.Contains(denied, want) {
+			t.Errorf("%s is not denied", want)
+		}
+	}
+}
