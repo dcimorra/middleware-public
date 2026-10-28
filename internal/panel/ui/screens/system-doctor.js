@@ -9,12 +9,13 @@ import { t } from "../lib/i18n.js";
 import { api } from "../lib/api.js";
 import { toastError } from "../components/toast.js";
 import { checklist } from "../components/checklist.js";
+import { cardHead } from "./settings-kit.js";
 
 export function doctorCard() {
-  const el = h("div", { class: "card" });
+  const el = h("div", { class: "card sys-card" });
   const runBtn = h("button", { type: "button", class: "btn" }, icon("check"), t("doctor.run"));
   const out = h("div");
-  el.append(h("h2", null, t("doctor.title")), h("p", { class: "small muted" }, t("doctor.hint")), h("div", { class: "row" }, runBtn), out);
+  el.append(cardHead(t("doctor.title"), t("doctor.hint")), out, h("div", { class: "form-actions sys-foot" }, runBtn));
   runBtn.addEventListener("click", async () => {
     runBtn.classList.add("busy");
     try {

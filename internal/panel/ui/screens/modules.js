@@ -1,5 +1,6 @@
-// Modules: one card each, a form built from what the module says it
-// needs, and Verify / Enable that show the result lines as a checklist.
+// Modules: one line each, grouped by what they are for, and opened on
+// demand into a form built from what the module says it needs, with
+// Verify / Enable that show the result lines as a checklist.
 // Secrets are password fields and are never echoed back: the API masks
 // them, so an empty secret field on save means "keep what is stored".
 
@@ -45,11 +46,57 @@ export function modulesScreen() {
     for (const m of mods) groups.get(GROUP_OF[m.key] || "other").push(m);
     for (const [g, list] of groups) {
       if (!list.length) continue;
+      const on = list.filter((m) => m.enabled).length;
       body.append(h("section", { class: "module-group" },
-        h("h3", null, t("modules.group." + g)),
-        h("div", { class: "module-grid" }, ...list.map((m) => card(m, depBy)))));
+        h("div", { class: "mod-group-head" }, h("h3", null, t("modules.group." + g)),
+          h("span", { class: "mod-group-count" }, t("modules.groupOn", { n: on, total: list.length }))),
+        h("div", { class: "card pad0 mod-list" }, ...list.map((m) => row(m, depBy)))));
     }
     return null;
+  }
+
+  // The modules opened, by key: a module event draws the list again, and
+  // the one being set up must still be open after it.
+  const opened = new Set();
+
+  // A module is one line: what it is, whether it is on, and the one thing
+  // to do (set it up, or manage it). Every card used to carry its whole
+  // form, credentials and all, enabled or not: the page was 8,000px on a
+  // phone for the two modules anyone was there for. The form is built
+  // the first time the line is opened, and the sign-in polls with it.
+  function row(m, depBy) {
+    const id = "mod-body-" + m.key;
+    const panel = h("div", { class: "mod-body", id, hidden: true });
+    const stateEl = h("span", { class: "mod-state" });
+    const go = h("span", { class: "mod-go" });
+    const head = h("button", { type: "button", class: "mod-head", "aria-expanded": "false", "aria-controls": id },
+      h("span", { class: "module-icon" }, icon(ICON_OF[m.key] || "blocks")),
+      h("span", { class: "mod-text" },
+        h("span", { class: "mod-name" }, m.name || m.key),
+        h("span", { class: "mod-desc" }, said("modules.desc." + m.key, m.description || ""))),
+      stateEl, go, h("span", { class: "mod-chev", "aria-hidden": "true" }));
+    const el = h("div", { class: "mod-row" }, head, panel);
+    const paintState = () => {
+      el.classList.toggle("on", Boolean(m.enabled));
+      clear(stateEl).append(stateBadge(m));
+      const bin = AGENT_BIN[m.key] || TOOL_BIN[m.key];
+      const d = bin && depBy.get(bin);
+      if (m.enabled && d && d.outdated) stateEl.append(h("span", { class: "badge warn" }, t("modules.updateBadge")));
+      go.textContent = m.enabled ? t("modules.manage") : t("modules.setUp");
+      go.classList.toggle("primary", !m.enabled);
+    };
+    paintState();
+    let built = false;
+    const setOpen = (open) => {
+      if (open && !built) { panel.append(...card(m, depBy, paintState)); built = true; }
+      panel.hidden = !open;
+      head.setAttribute("aria-expanded", String(open));
+      el.classList.toggle("open", open);
+      if (open) opened.add(m.key); else opened.delete(m.key);
+    };
+    head.addEventListener("click", () => setOpen(panel.hidden));
+    if (opened.has(m.key)) setOpen(true);
+    return el;
   }
 
   const GROUPS = ["connect", "deploy", "agents", "work", "other"];
@@ -64,7 +111,9 @@ export function modulesScreen() {
   const TOOL_BIN = { openspec: "openspec" };
   const AGENT_BIN = { "agent-claude": "claude", "agent-agy": "agy", "agent-opencode": "opencode", "agent-openai": "codex", "agent-deepseek": "claude", "agent-zai": "claude", "agent-kimi": "kimi", "agent-qwen": "qwen", "agent-mistral": "vibe", "agent-xai": "grok" };
 
-  function card(m, depBy) {
+  // What an opened module shows: its sign-in, its program, its models and
+  // its form. paintState redraws the line above once it is enabled.
+  function card(m, depBy, paintState) {
     const inputs = {};
     const form = h("form", { novalidate: true, class: "needs" });
     // A module that needs nothing typed (every field has a default the
@@ -92,7 +141,9 @@ export function modulesScreen() {
     const verifyBtn = h("button", { type: "button", class: "btn", hidden: simple || !(m.needs && m.needs.length) }, t("modules.verify"));
     const enableBtn = h("button", { type: "submit", class: "btn primary", hidden: simple && m.enabled }, m.enabled ? t("modules.save") : t("modules.enable"));
     const disableBtn = h("button", { type: "button", class: "btn" + (simple ? " danger" : ""), hidden: !m.enabled }, t("modules.disable"));
-    const forgetBtn = h("button", { type: "button", class: "btn ghost sm", hidden: simple || !(m.needs && m.needs.length) }, t("modules.forget"));
+    // Forgetting the credentials is the rare and the destructive one: a
+    // quiet red word at the far end of the row, not a third button.
+    const forgetBtn = h("button", { type: "button", class: "btn ghost sm danger mod-forget", hidden: simple || !(m.needs && m.needs.length) }, t("modules.forget"));
     // On a switch, changing an advanced field and saving is the only reason
     // to press "save" while it is on.
     if (simple) {
@@ -128,7 +179,7 @@ export function modulesScreen() {
       e.preventDefault();
       const r = await run(enableBtn, `/modules/${enc(m.key)}/enable`, t("modules.enabled", { name: m.name }));
       if (r && r.ok !== false) {
-        m.enabled = true; state.replaceWith(stateBadge(m)); enableBtn.textContent = t("modules.save"); disableBtn.hidden = false;
+        m.enabled = true; paintState(); enableBtn.textContent = t("modules.save"); disableBtn.hidden = false;
         // A vendor's card shows its models once it is on: drawn again.
         if (simple || VENDORS.has(m.key)) load(body, render);
       }
@@ -141,14 +192,9 @@ export function modulesScreen() {
       if (!(await confirm({ title: t("modules.forgetQ", { name: m.name }), body: t("modules.forgetBody"), confirmLabel: t("modules.forget"), danger: true }))) return;
       try { await api.del(`/modules/${enc(m.key)}/credentials`); toast(t("modules.forgotten", { name: m.name }), "ok"); load(body, render); } catch (err) { toastError(err); }
     });
-    form.append(lines.el, h("div", { class: "form-actions" }, verifyBtn, enableBtn, disableBtn, forgetBtn));
-    const state = stateBadge(m);
+    form.append(lines.el, h("div", { class: "form-actions" }, enableBtn, verifyBtn, disableBtn, forgetBtn));
     const agentBin = AGENT_BIN[m.key];
-    return h("div", { class: "card module-card" + (m.enabled ? " on" : "") },
-      h("div", { class: "module-head" },
-        h("span", { class: "module-icon" }, icon(ICON_OF[m.key] || "blocks")),
-        h("div", { class: "grow" }, h("h2", null, m.name || m.key), h("p", { class: "dim small" }, said("modules.desc." + m.key, m.description || ""))),
-        state),
+    return [
       m.installed === false && m.enabled && !agentBin ? notice("warn", t("modules.notInstalled")) : null,
       // OpenCode has no sign-in of its own: a key per provider instead.
       m.key === "agent-opencode" ? openCodeProviders() : null,
@@ -159,7 +205,7 @@ export function modulesScreen() {
       agentBin ? binaryLine(agentBin, depBy.get(agentBin)) : null,
       TOOL_BIN[m.key] && m.enabled ? binaryLine(TOOL_BIN[m.key], depBy.get(TOOL_BIN[m.key])) : null,
       form,
-    );
+    ].filter(Boolean); // a native append writes null as the text "null"
   }
 
   // The sign-in with a subscription: the vendor's own flow, run on a
@@ -302,7 +348,7 @@ export function modulesScreen() {
     return sel;
   }
   function stateBadge(m) {
-    return m.enabled ? h("span", { class: "badge ok" }, t("modules.on")) : h("span", { class: "badge" }, t("modules.off"));
+    return m.enabled ? h("span", { class: "mod-on" }, h("span", { class: "dot ok" }), t("modules.on")) : h("span", { class: "mod-off" }, t("modules.off"));
   }
 
   load(body, render);

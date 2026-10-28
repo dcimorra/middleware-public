@@ -10,17 +10,18 @@ import { t } from "../lib/i18n.js";
 import { api } from "../lib/api.js";
 import { confirm, checkbox } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
+import { cardHead } from "./settings-kit.js";
 
 const BADGE = { running: "info", finished: "ok", restart: "warn", failed: "bad", interrupted: "bad" };
 
 export function requirementsCard() {
-  const el = h("div", { class: "card" });
+  const el = h("div", { class: "card sys-card" });
   const browser = checkbox(t("req.browser"));
   const runBtn = h("button", { type: "button", class: "btn primary" }, icon("download"), t("req.run"));
   const logBtn = h("button", { type: "button", class: "btn" }, icon("list"), t("req.seeLog"));
   const restartBtn = h("button", { type: "button", class: "btn", hidden: true }, icon("power"), t("req.restart"));
-  const stateEl = h("div", { class: "row" });
-  el.append(h("h2", null, t("req.title")), h("p", { class: "small muted" }, t("req.hint")), stateEl, browser.el, h("div", { class: "row" }, runBtn, logBtn, restartBtn));
+  const stateEl = h("div", { class: "sys-req-state" });
+  el.append(cardHead(t("req.title"), t("req.hint")), stateEl, h("div", { class: "field" }, browser.el), h("div", { class: "form-actions sys-foot" }, runBtn, logBtn, restartBtn));
   let st = { state: "none" };
   let dialog = null;
   let timer = null;

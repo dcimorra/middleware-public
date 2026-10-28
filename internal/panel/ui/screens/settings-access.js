@@ -5,14 +5,15 @@
 import { h, clear, fmtTime, fmtAgo } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
-import { table, cell, empty, notice, load } from "../components/page.js";
+import { table, cell, notice, load } from "../components/page.js";
 import { open, confirm, field, toggle } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 import { icon } from "../lib/icons.js";
 import * as passkeys from "../lib/passkeys.js";
+import { cardHead, saveBar, fold, quietEmpty } from "./settings-kit.js";
 
 export function passkeysCard() {
-  const el = h("div", { class: "card pad0" });
+  const el = h("div", { class: "card pad0 set-card" });
   async function render() {
     const list = await api.get("/auth/passkeys");
     const add = h("button", { type: "button", class: "btn sm primary" }, icon("key"), t("passkeys.add"));
@@ -45,10 +46,9 @@ export function passkeysCard() {
         cell(del, null, "right"));
     });
     clear(el).append(
-      h("div", { class: "log-bar card-pad" }, h("h2", { class: "grow" }, t("passkeys.title")), add),
-      h("p", { class: "small muted card-pad" }, passkeys.supported() ? t("passkeys.hint") : t("passkeys.unsupported")),
+      h("div", { class: "card-pad" }, cardHead(t("passkeys.title"), passkeys.supported() ? t("passkeys.hint") : t("passkeys.unsupported"), add)),
       rows.length ? table([{ label: t("passkeys.name") }, { label: t("passkeys.boundTo") }, { label: t("settings.created") }, { label: t("settings.lastUsed") }, { label: "" }], rows, { responsive: true }).el
-        : empty(t("passkeys.none"), t("passkeys.noneHint"), null, "key"),
+        : quietEmpty("key", t("passkeys.none"), t("passkeys.noneHint")),
     );
     return null;
   }
@@ -60,7 +60,10 @@ export function passkeysCard() {
 const suggest = (ip) => (ip && ip.includes(":") ? ip.split(":").slice(0, 4).join(":") + "::/64" : ip);
 
 export function panelAccessCard() {
-  const el = h("div", { class: "card" });
+  const el = h("div", { class: "card set-card" });
+  // A save draws the card again with the lists as the server keeps them;
+  // what the save said survives that, or it would flash and vanish.
+  let savedNow = false;
   async function render() {
     const a = await api.get("/auth/panel-access");
     const r = a.rules || {};
@@ -69,32 +72,35 @@ export function panelAccessCard() {
     const only = toggle(t("panelAccess.passkeyOnly"), { checked: Boolean(r.passkey_only) });
     const err = h("div", { class: "error-box", hidden: true, role: "alert" });
     const save = h("button", { type: "button", class: "btn primary" }, t("common.save"));
+    const bar = saveBar(save);
+    if (savedNow) { bar.saved(); savedNow = false; }
     const mine = suggest(a.your_address);
     const addMine = h("button", { type: "button", class: "btn sm" }, t("panelAccess.addMine", { ip: mine || "" }));
     addMine.hidden = !mine || a.from_machine;
-    addMine.addEventListener("click", () => { allow.value = (allow.value.trim() ? allow.value.trim() + "\n" : "") + mine; });
+    addMine.addEventListener("click", () => { allow.value = (allow.value.trim() ? allow.value.trim() + "\n" : "") + mine; bar.dirty(); });
     save.addEventListener("click", async () => {
       err.hidden = true;
       const lines = (s) => s.split(/[\n,]/).map((x) => x.trim()).filter(Boolean);
       save.classList.add("busy");
       try {
         await api.put("/auth/panel-access", { allow: lines(allow.value), deny: lines(deny.value), passkey_only: only.input.checked });
-        toast(t("panelAccess.saved"), "ok");
+        savedNow = true;
         load(el, render);
       } catch (e) { err.textContent = e.message; err.hidden = false; }
       finally { save.classList.remove("busy"); }
     });
-    clear(el).append(...[
-      h("h2", null, t("panelAccess.title")),
-      h("p", { class: "small muted" }, t("panelAccess.hint")),
+    const form = h("div", null, ...[
       a.open_until ? notice("bad", t("panelAccess.openNow", { at: fmtTime(a.open_until) })) : null,
-      h("p", { class: "small" }, a.from_machine ? t("panelAccess.fromMachine") : t("panelAccess.yours", { ip: a.your_address || "?" }), " ", addMine),
+      h("div", { class: "set-you" }, h("span", null, a.from_machine ? t("panelAccess.fromMachine") : t("panelAccess.yours", { ip: a.your_address || "?" })), addMine),
       field(t("panelAccess.allow"), allow, t("panelAccess.allowHint")),
-      field(t("panelAccess.deny"), deny),
-      h("div", { class: "field" }, only.el, h("div", { class: "hint" }, t("panelAccess.passkeyOnlyHint"))),
+      // The deny list is the rarer one: folded, unless it holds something.
+      fold(t("panelAccess.deny"), (r.deny || []).length ? t("panelAccess.denyCount", { n: r.deny.length }) : t("panelAccess.denyNone"), [field(t("panelAccess.deny"), deny)], (r.deny || []).length > 0),
+      h("div", { class: "field set-switch-field" }, only.el, h("div", { class: "hint" }, t("panelAccess.passkeyOnlyHint"))),
       err,
-      h("div", { class: "form-actions" }, save),
+      bar.el,
     ].filter(Boolean)); // a native append writes null as the text "null"
+    bar.watch(form);
+    clear(el).append(cardHead(t("panelAccess.title"), t("panelAccess.hint")), form);
     return null;
   }
   load(el, render);

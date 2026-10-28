@@ -4,10 +4,11 @@
 import { h, clear, fmtTime, fmtAgo } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api } from "../lib/api.js";
-import { table, cell, empty, load, notice } from "../components/page.js";
+import { table, cell, load } from "../components/page.js";
 import { checkbox, confirm } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 import { icon } from "../lib/icons.js";
+import { cardHead, quietEmpty } from "./settings-kit.js";
 
 const toBuf = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
 
@@ -16,7 +17,7 @@ function supported() {
 }
 
 export function pushCard() {
-  const el = h("div", { class: "card pad0" });
+  const el = h("div", { class: "card pad0 set-card" });
   async function render() {
     const info = await api.get("/push");
     let mine = null;
@@ -42,7 +43,7 @@ export function pushCard() {
       } catch (e) { toastError(e.name === "NotAllowedError" ? new Error(t("push.denied")) : e); }
       finally { on.classList.remove("busy"); }
     });
-    const test = h("button", { type: "button", class: "btn sm" }, t("push.test"));
+    const test = h("button", { type: "button", class: "btn sm ghost" }, t("push.test"));
     test.disabled = !info.devices.length;
     test.addEventListener("click", async () => {
       try { const r = await api.post("/push/test"); toast(r.error ? r.error : t("push.testSent", { n: r.sent }), r.error ? "bad" : "ok"); load(el, render); } catch (e) { toastError(e); }
@@ -65,12 +66,11 @@ export function pushCard() {
         cell(rm, null, "right"));
     });
     clear(el).append(
-      h("div", { class: "log-bar card-pad" }, h("h2", { class: "grow" }, t("push.title")), test, on),
       h("div", { class: "card-pad" },
-        h("p", { class: "small muted" }, supported() ? t("push.hint") : t("push.unsupported")),
-        h("div", { class: "form-row" }, ...kinds.map(({ box }) => box.el))),
+        cardHead(t("push.title"), supported() ? t("push.hint") : t("push.unsupported"), test, on),
+        h("div", { class: "set-kinds" }, h("div", { class: "set-kinds-label" }, t("push.kindsLabel")), h("div", { class: "set-kinds-list" }, ...kinds.map(({ box }) => box.el)))),
       rows.length ? table([{ label: t("push.device") }, { label: t("push.service") }, { label: t("push.kinds") }, { label: t("push.last") }, { label: "" }], rows, { responsive: true }).el
-        : empty(t("push.none"), t("push.noneHint"), null, "bell"),
+        : quietEmpty("bell", t("push.none"), t("push.noneHint")),
     );
     return null;
   }

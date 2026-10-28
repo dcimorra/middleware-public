@@ -14,30 +14,46 @@ import { onEvent } from "../lib/stream.js";
 import { page, load, table, cell, empty, kv, notice } from "../components/page.js";
 import { confirm, toggle, field } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
+import { cardHead, fold } from "./settings-kit.js";
 
 export function systemScreen() {
   const restartBtn = h("button", { type: "button", class: "btn danger" }, icon("power"), t("system.restart"));
   const p = page({ title: t("nav.system"), icon: "cpu", actions: restartBtn });
-  const stats = h("div", { class: "stats" });
-  const info = h("div", { class: "card" });
-  const procs = h("div", { class: "card pad0" });
-  const portsCard = h("div", { class: "card" });
-  const updateCard = h("div", { class: "card" });
+  const stats = h("div", { class: "sys-stats" });
+  const info = h("div", { class: "card sys-card" });
+  const procs = h("div", { class: "card pad0 sys-card" });
+  const portsCard = h("div", { class: "card sys-card" });
+  const updateCard = h("div", { class: "card sys-card" });
   const vitals = vitalsCard();
   const reqs = requirementsCard();
   const doctor = doctorCard();
   const leftovers = leftoversCard();
-  p.body.append(stats, vitals.el, info, updateCard, doctor.el, reqs.el, leftovers.el, procs, portsCard);
+  // In the order an operator comes for them: how the machine is now, the
+  // version and the process, what runs, and the tools for fixing the
+  // house last. Nine cards stacked in one column had no order at all.
+  const section = (key, ...cards) => h("section", { class: "sys-section" }, h("h3", { class: "sys-section-h" }, t("system.section." + key)), ...cards);
+  p.body.append(
+    stats, vitals.el,
+    section("software", h("div", { class: "sys-grid" }, updateCard, info)),
+    section("running", procs, portsCard),
+    section("care", h("div", { class: "sys-grid sys-grid-3" }, doctor.el, reqs.el, leftovers.el)),
+  );
   const subs = [];
   let timer = null;
 
-  function stat(label, value, mono) {
-    return h("div", { class: "stat" }, h("div", { class: "label" }, label), h("div", { class: "value " + (mono ? "mono" : "") }, value));
+  // A number with its line under it and, for what fills up, a bar: "1.3
+  // GB / 16 GB (8%)" in one large line wrapped into three on a phone.
+  function stat(label, value, sub, fill) {
+    const tile = h("div", { class: "sys-stat" }, h("div", { class: "sys-stat-label" }, label), h("div", { class: "sys-stat-value" }, value));
+    if (fill !== undefined && fill !== null) {
+      const bar = h("div", { class: "dash-bar-fill" + (fill >= 90 ? " bad" : fill >= 75 ? " warn" : "") });
+      bar.style.width = Math.min(100, Math.max(0, fill)).toFixed(0) + "%";
+      tile.append(h("div", { class: "dash-bar sys-stat-bar" }, bar));
+    }
+    if (sub) tile.append(h("div", { class: "sys-stat-sub" }, sub));
+    return tile;
   }
-  function pct(part, total) {
-    if (!part || !total) return "";
-    return ` (${Math.round((part / total) * 100)}%)`;
-  }
+  const share = (part, total) => (part !== undefined && total ? (part / total) * 100 : null);
 
   async function render() {
     const s = await api.get("/system");
@@ -45,21 +61,21 @@ export function systemScreen() {
     const disk = s.disk || {};
     // load is {"1m","5m","15m"} from the API; older builds sent an array.
     const l = s.load;
-    const load_ = Array.isArray(l) ? l.map((x) => Number(x).toFixed(2)).join(" ")
-      : l && typeof l === "object" ? ["1m", "5m", "15m"].map((k) => Number(l[k] ?? 0).toFixed(2)).join(" ")
-      : (l ?? "");
+    const loads = Array.isArray(l) ? l.map((x) => Number(x).toFixed(2))
+      : l && typeof l === "object" ? ["1m", "5m", "15m"].map((k) => Number(l[k] ?? 0).toFixed(2))
+      : [String(l ?? "")];
     // uptime arrives already formatted ("31s", "3h12m"); a number is seconds.
     const uptime = typeof s.uptime === "number" ? fmtDuration(s.uptime) : (s.uptime || (s.started ? fmtDuration((Date.now() - new Date(s.started)) / 1000) : ""));
     const memUsed = mem.used ?? (mem.total && mem.free ? mem.total - mem.free : undefined);
     const diskUsed = disk.used ?? (disk.total && disk.free ? disk.total - disk.free : undefined);
+    const memPct = share(memUsed, mem.total), diskPct = share(diskUsed, disk.total);
     clear(stats).append(
-      stat(t("system.version"), s.version || "", true),
-      stat(t("system.uptime"), uptime),
-      stat(t("system.load"), load_, true),
-      stat(t("system.memory"), memUsed !== undefined ? fmtBytes(memUsed) + " / " + fmtBytes(mem.total) + pct(memUsed, mem.total) : fmtBytes(mem.total)),
-      stat(t("system.disk"), diskUsed !== undefined ? fmtBytes(diskUsed) + " / " + fmtBytes(disk.total) + pct(diskUsed, disk.total) : fmtBytes(disk.total)),
+      stat(t("system.version"), h("span", { class: "mono" }, s.version || ""), uptime ? t("system.upFor", { t: uptime }) : ""),
+      stat(t("system.load"), loads[0], loads.length === 3 ? t("system.loadMore", { m5: loads[1], m15: loads[2] }) : ""),
+      stat(t("system.memory"), memPct !== null ? `${memPct.toFixed(0)}%` : fmtBytes(mem.total), memPct !== null ? t("system.ofTotal", { used: fmtBytes(memUsed), total: fmtBytes(mem.total) }) : "", memPct),
+      stat(t("system.disk"), diskPct !== null ? `${diskPct.toFixed(0)}%` : fmtBytes(disk.total), diskPct !== null ? t("system.ofTotal", { used: fmtBytes(diskUsed), total: fmtBytes(disk.total) }) : "", diskPct),
     );
-    clear(info).append(h("h2", null, t("system.process")), kv([
+    clear(info).append(cardHead(t("system.process"), t("system.processHint")), kv([
       [t("system.root"), h("code", null, s.root || "")],
       [t("system.listen"), h("code", null, s.listen || "")],
       [t("settings.panelDomain"), s.panel_domain || h("span", { class: "muted" }, t("system.loopbackOnly"))],
@@ -68,21 +84,34 @@ export function systemScreen() {
     return null;
   }
 
+  // The first few processes, and the rest on demand: a house with a
+  // site's forty children put the tools for fixing the house two screens
+  // below. Kept across the ten-second refresh once opened.
+  const FEW = 10;
+  let allProcs = false;
   async function renderProcs() {
-    const list = await api.get("/system/processes");
+    const all = (await api.get("/system/processes")) || [];
+    const list = allProcs ? all : all.slice(0, FEW);
     const rows = (list || []).map((pr) => h("tr", null,
-      cell(String(pr.pid), t("system.col.pid"), "mono num"),
+      cell(String(pr.pid), t("system.col.pid"), "mono num proc-pid"),
       cell(pr.domain ? h("a", { href: `#/sites/${enc(pr.domain)}` }, pr.domain) : "—", null, "primary"),
       cell(pr.kind || "", t("system.col.kind")),
       cell(fmtBytes(pr.rss), t("system.col.rss"), "num mono"),
       cell(pr.cpu !== undefined ? Number(pr.cpu).toFixed(1) + "%" : "", t("system.col.cpu"), "num mono"),
       cell(pr.started ? fmtDuration((Date.now() - new Date(pr.started)) / 1000) : "", t("system.col.age"), "num"),
     ));
-    clear(procs).append(
-      h("div", { class: "log-bar card-pad" }, h("h2", null, t("system.processes")), h("span", { class: "muted small" }, t("system.processCount", { n: rows.length }))),
-      rows.length ? table([{ label: t("system.col.pid"), class: "num" }, { label: t("system.col.domain") }, { label: t("system.col.kind") }, { label: t("system.col.rss"), class: "num" }, { label: t("system.col.cpu"), class: "num" }, { label: t("system.col.age"), class: "num" }], rows, { responsive: true }).el
-        : empty(t("system.noProcesses"), t("system.noProcessesHint")),
-    );
+    const tb = rows.length ? table([{ label: t("system.col.pid"), class: "num" }, { label: t("system.col.domain") }, { label: t("system.col.kind") }, { label: t("system.col.rss"), class: "num" }, { label: t("system.col.cpu"), class: "num" }, { label: t("system.col.age"), class: "num" }], rows, { responsive: true }) : null;
+    if (tb) tb.el.classList.add("proc-table");
+    let more = null;
+    if (all.length > FEW) {
+      more = h("button", { type: "button", class: "btn ghost sm sys-more" }, allProcs ? t("system.fewerProcesses") : t("system.allProcesses", { n: all.length }));
+      more.addEventListener("click", () => { allProcs = !allProcs; renderProcs().catch(() => {}); });
+    }
+    clear(procs).append(...[
+      h("div", { class: "card-pad" }, cardHead(t("system.processes"), t("system.processCount", { n: all.length }))),
+      tb ? tb.el : empty(t("system.noProcesses"), t("system.noProcessesHint")),
+      more ? h("div", { class: "sys-more-row" }, more) : null,
+    ].filter(Boolean));
     return null;
   }
 
@@ -90,9 +119,8 @@ export function systemScreen() {
     const pt = await api.get("/system/ports");
     const used = Object.entries(pt.in_use || {}).sort((a, b) => Number(a[0]) - Number(b[0]));
     append(clear(portsCard), [
-      h("h2", null, t("system.ports")),
-      h("p", { class: "small muted" }, t("system.portsRange", { from: pt.from, to: pt.to, n: used.length })),
-      used.length ? h("div", { class: "inline-list" }, ...used.map(([port, domain]) => h("span", { class: "badge" }, h("code", null, port), " ", domain))) : null,
+      cardHead(t("system.ports"), t("system.portsRange", { from: pt.from, to: pt.to, n: used.length })),
+      used.length ? h("div", { class: "sys-ports" }, ...used.map(([port, domain]) => h("span", { class: "sys-port" }, h("code", null, port), h("span", null, domain)))) : null,
     ]);
     return null;
   }
@@ -126,7 +154,10 @@ export function systemScreen() {
       checkBtn.classList.add("busy");
       try { await renderUpdate("force"); } catch (e) { toastError(e); } finally { checkBtn.classList.remove("busy"); }
     });
-    const installBtn = h("button", { type: "button", class: "btn primary", disabled: !(u.available && u.can_install) || u.installing }, icon("download"), t("system.update.install"));
+    // Update now is the primary action, and only there when there is
+    // something to install: a pale disabled blue button said "do this"
+    // to a build that cannot update at all.
+    const installBtn = h("button", { type: "button", class: "btn primary", hidden: !u.available, disabled: !(u.available && u.can_install) || u.installing }, icon("download"), t("system.update.install"));
     installBtn.addEventListener("click", async () => {
       if (!(await confirm({ title: t("system.update.installQ", { from: u.current, to: u.latest }), body: t("system.update.installBody"), confirmLabel: t("system.update.install") }))) return;
       installBtn.classList.add("busy");
@@ -135,24 +166,27 @@ export function systemScreen() {
       catch (e) { toastError(e); installBtn.disabled = false; }
       finally { installBtn.classList.remove("busy"); }
     });
+    // One line says where the house stands, coloured by it; the times of
+    // the checks are the quiet line under it.
     let state;
-    if (u.error) state = notice("warn", t("system.update.error", { error: u.error }));
-    else if (!u.checked_at) state = h("p", { class: "small muted" }, t("system.update.notChecked"));
-    else if (u.available) state = notice("ok", t("system.update.available", { v: u.latest }));
-    else state = h("p", { class: "small muted" }, t("system.update.current"));
+    if (u.error) state = h("div", { class: "sys-update-state warn" }, icon("alert", { size: 18 }), h("span", null, t("system.update.error", { error: u.error })));
+    else if (!u.checked_at) state = h("div", { class: "sys-update-state" }, icon("info", { size: 18 }), h("span", null, t("system.update.notChecked")));
+    else if (u.available) state = h("div", { class: "sys-update-state ok" }, icon("download", { size: 18 }), h("span", null, t("system.update.available", { v: u.latest })));
+    else state = h("div", { class: "sys-update-state ok" }, icon("check", { size: 18 }), h("span", null, t("system.update.current")));
+    const when = (iso) => (iso && !iso.startsWith("0001") ? new Date(iso).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" }) : "—");
     append(clear(updateCard), [
-      h("h2", null, t("system.update.title")),
-      kv([
-        [t("system.update.running"), h("code", null, u.current || "")],
-        [t("system.update.latest"), u.latest ? h("code", null, u.latest) : h("span", { class: "muted" }, "—")],
-        [t("system.update.checked"), u.checked_at ? new Date(u.checked_at).toLocaleString() : h("span", { class: "muted" }, "—")],
-        [t("system.update.next"), u.next_check && !u.next_check.startsWith("0001") ? new Date(u.next_check).toLocaleString() : h("span", { class: "muted" }, "—")],
-      ]),
+      cardHead(t("system.update.title"), null),
+      h("div", { class: "sys-versions" },
+        h("div", null, h("span", { class: "sys-v-label" }, t("system.update.running")), h("code", { class: "sys-v" }, u.current || "—")),
+        h("div", null, h("span", { class: "sys-v-label" }, t("system.update.latest")), h("code", { class: "sys-v" }, u.latest || "—"))),
       state,
-      u.can_install ? null : notice("warn", t("system.update.why." + u.why)),
-      field(t("system.update.every"), every, t("system.update.everyHint")),
-      h("div", { class: "field" }, auto.el, h("p", { class: "small muted" }, t("system.update.autoHint"))),
-      h("div", { class: "form-actions" }, checkBtn, installBtn),
+      u.can_install ? null : h("p", { class: "sys-why" }, t("system.update.why." + u.why)),
+      h("p", { class: "sys-checks" }, t("system.update.checks", { last: when(u.checked_at), next: when(u.next_check) })),
+      h("div", { class: "form-actions" }, installBtn, checkBtn),
+      fold(t("system.update.autoTitle"), t("system.update.autoNote", { n: u.every_minutes || 60, state: t(u.auto ? "system.update.autoIsOn" : "system.update.autoIsOff") }), [
+        field(t("system.update.every"), every, t("system.update.everyHint")),
+        h("div", { class: "field" }, auto.el, h("p", { class: "hint" }, t("system.update.autoHint"))),
+      ]),
     ]);
     return null;
   }

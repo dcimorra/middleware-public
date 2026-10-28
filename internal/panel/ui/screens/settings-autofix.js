@@ -7,10 +7,11 @@ import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
 import { load } from "../components/page.js";
 import { field, toggle } from "../components/dialog.js";
-import { toast, toastError } from "../components/toast.js";
+import { toastError } from "../components/toast.js";
+import { cardHead, saveBar, fold } from "./settings-kit.js";
 
 export function autofixCard() {
-  const el = h("div", { class: "card" });
+  const el = h("div", { class: "card set-card" });
   async function render() {
     const s = await api.get("/settings");
     const a = s.autofix || {};
@@ -19,24 +20,33 @@ export function autofixCard() {
     const wait = h("input", { type: "number", min: "5", max: "1440", value: a.wait_minutes || 30 });
     const usd = h("input", { type: "number", min: "0.1", step: "0.1", value: a.daily_usd || 2 });
     const save = h("button", { type: "button", class: "btn primary" }, t("common.save"));
+    const bar = saveBar(save);
     save.addEventListener("click", async () => {
       save.classList.add("busy");
       try {
         const cur = await api.get("/settings");
         await api.put("/settings", { ...cur, autofix: { enabled: on.input.checked, attempts: Number(attempts.value), wait_minutes: Number(wait.value), daily_usd: Number(usd.value) } });
-        toast(t("autofix.saved"), "ok");
+        bar.saved();
       } catch (e) { toastError(e); } finally { save.classList.remove("busy"); }
     });
     const repairs = (await api.get("/autofix").catch(() => [])).slice(-8).reverse();
+    // The switch is the decision; the brakes are right for most and fold,
+    // saying what they are now.
+    const brakes = t("autofix.brakesNote", { attempts: attempts.value, wait: wait.value, usd: usd.value });
+    const form = h("div", null,
+      h("div", { class: "field set-switch-field" }, on.el),
+      fold(t("autofix.brakes"), brakes, [h("div", { class: "form-row" }, field(t("autofix.attempts"), attempts), field(t("autofix.wait"), wait), field(t("autofix.daily"), usd))]),
+      bar.el);
+    bar.watch(form);
     clear(el).append(
-      h("h2", null, t("autofix.title")),
-      h("p", { class: "small muted" }, t("autofix.hint")),
-      h("div", { class: "field" }, on.el),
-      h("div", { class: "form-row" }, field(t("autofix.attempts"), attempts), field(t("autofix.wait"), wait), field(t("autofix.daily"), usd)),
-      h("div", { class: "form-actions" }, save),
-      repairs.length ? h("div", { class: "stack-sm small" }, h("h3", null, t("autofix.recent")), ...repairs.map((r) => h("div", null,
-        h("a", { href: `#/sites/${enc(r.domain)}` }, r.domain), " · ", h("span", { title: fmtTime(r.at) }, fmtAgo(r.at, t)), " · ",
-        r.skipped ? h("span", { class: "muted" }, r.skipped) : h("span", { class: r.recovered === false ? "level-error" : "" }, (r.outcome || r.reason) + (r.cost_usd ? ` (${r.cost_usd.toFixed(2)} $)` : ""))))) : h("p", { class: "small muted" }, t("autofix.none")),
+      cardHead(t("autofix.title"), t("autofix.hint")),
+      form,
+      h("div", { class: "set-recent" }, h("h3", null, t("autofix.recent")),
+        repairs.length ? h("ul", { class: "set-recent-list" }, ...repairs.map((r) => h("li", null,
+          h("a", { href: `#/sites/${enc(r.domain)}` }, r.domain),
+          r.skipped ? h("span", { class: "muted" }, r.skipped) : h("span", { class: r.recovered === false ? "level-error" : "" }, (r.outcome || r.reason) + (r.cost_usd ? ` (${r.cost_usd.toFixed(2)} $)` : "")),
+          h("span", { class: "muted", title: fmtTime(r.at) }, fmtAgo(r.at, t)))))
+          : h("p", { class: "hint" }, t("autofix.none"))),
     );
     return null;
   }
@@ -49,7 +59,7 @@ export function autofixCard() {
 // house's conversation, where the operator picks whom to talk to each
 // time: this one acts with nobody there, so it is chosen once, here.
 export function automationCard() {
-  const el = h("div", { class: "card" });
+  const el = h("div", { class: "card set-card" });
   async function render() {
     const [s, agents] = await Promise.all([api.get("/settings"), api.get("/agents").catch(() => ({ providers: [] }))]);
     const auto = s.automation || {};
@@ -66,20 +76,18 @@ export function automationCard() {
     prov.addEventListener("change", fillModels);
     fillModels();
     const save = h("button", { type: "button", class: "btn primary" }, t("common.save"));
+    const bar = saveBar(save);
     save.addEventListener("click", async () => {
       save.classList.add("busy");
       try {
         const cur = await api.get("/settings");
         await api.put("/settings", { ...cur, automation: prov.value ? { provider: prov.value, model: model.value || undefined } : {} });
-        toast(t("automation.saved"), "ok");
+        bar.saved();
       } catch (e) { toastError(e); } finally { save.classList.remove("busy"); }
     });
-    clear(el).append(
-      h("h2", null, t("automation.title")),
-      h("p", { class: "small muted" }, t("automation.hint")),
-      h("div", { class: "form-row" }, field(t("automation.provider"), prov), field(t("automation.model"), model)),
-      h("div", { class: "form-actions" }, save),
-    );
+    const form = h("div", null, h("div", { class: "form-row" }, field(t("automation.provider"), prov), field(t("automation.model"), model)), bar.el);
+    bar.watch(form);
+    clear(el).append(cardHead(t("automation.title"), t("automation.hint")), form);
     return null;
   }
   load(el, render);
