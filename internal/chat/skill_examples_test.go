@@ -81,3 +81,25 @@ func TestEveryTaskExampleInTheSkillParses(t *testing.T) {
 		t.Fatalf("%s: no task examples found", skillSource)
 	}
 }
+
+var savedTask = regexp.MustCompile("(?s)middleware site tasks \\S+ save \\S+ - <<'JSON'\n(.*?)\nJSON\n")
+
+// TestEveryTaskSavedInTheSkillParses checks the tasks the skill has a site's
+// agent save with `middleware site tasks … save` from a heredoc: they sit in
+// a shell block, where the test above does not look, and they are the ones
+// a site's agent copies first.
+func TestEveryTaskSavedInTheSkillParses(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("skills", "middleware", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := savedTask.FindAllStringSubmatch(string(data), -1)
+	if len(found) == 0 {
+		t.Fatalf("%s: no `middleware site tasks … save` example", skillSource)
+	}
+	for _, m := range found {
+		if _, err := tasks.Parse([]byte(m[1])); err != nil {
+			t.Errorf("%s: a task saved with `site tasks save` does not parse: %v\n%s", skillSource, err, m[1])
+		}
+	}
+}

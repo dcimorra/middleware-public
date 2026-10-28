@@ -123,14 +123,30 @@ open `data/api.sock`. The socket reads who connected (`SO_PEERCRED`) and
 walks that process's parents: when one of them is a site conversation's
 turn (the chat manager's running turns, or the `MIDDLEWARE_CHAT_ID` mark
 every turn's environment carries, its ancestors' included), the request is
-that site's and opens what a token scoped `read`, `restart` and `deploy`
-for it opens, plus the events about it; no tokens, no settings, no other
-site, not the house's conversation. Refusals emit `api.turn_refused`. A
+that site's and opens what a token scoped `read`, `restart`, `deploy` and
+`tasks` for it opens, plus the events about it; no tokens, no settings, no
+other site, not the house's conversation. `tasks` lets the turn manage its
+own site's scheduled tasks (`middleware site tasks <domain>`): the ones
+whose `site` is that site, which run in its folder with its environment,
+where its deployed code already runs. It cannot see, run or replace a task
+of another site or of the root (404, and 409 to write over one), cannot
+write a task for another site (400), and never reaches `/tasks`, which is
+every task of the house. Refusals emit `api.turn_refused`. A
 connection whose process cannot be looked at is not trusted. `middleware
 exec` reads the same chain and runs only in the turn's own site. The
 house's own conversation stays the operator, by design. This is a fence
 against an agent (or a prompt injected into it) using the obvious door,
 not a user boundary: see "what is not protected".
+
+**Service doors.** A token with scopes opens a closed list of routes,
+optionally for one site (`internal/auth/scopes.go`, the one place that
+says what each opens): `read`, `restart`, `deploy`, and `tasks`, the six
+`/sites/{domain}/tasks` routes, for a program that manages a site's
+scheduled work from outside. `tasks:<domain>` gives what a site's turn has
+over its tasks and no more: the routes check the task is that site's, and
+`/tasks` stays the operator's. A task written through it is signed
+`token:<name>` in the audit trail. A `tasks` scope with no site opens every
+site's tasks, never the root's.
 
 **Credentials encrypted at rest.** Module credentials live in
 `data/modules.json`, AES-256-GCM, key from `MIDDLEWARE_SECRET_KEY` or

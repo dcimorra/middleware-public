@@ -54,6 +54,9 @@ in the API ([api.md](api.md)) and the panel.
 | `site logs <domain> [-f] [--lines 200] [--worker name]` | the instance's output |
 | `site deploy <domain>` | run `deploy.github.build` and write the pointer, [deploy.md](deploy.md); through the github module's runner when it is enabled |
 | `site rm <domain> [--archive]` | remove, or move to `data/archive/` |
+| `site tasks <domain>` (or `… list`) | the site's own tasks (the ones whose `site` is that domain) with their schedule, next and last run; `--json` prints the API's rows |
+| `site tasks <domain> save <name> <file.json\|->` | write a task from a file or stdin; with no `site` it is this one's. Refused when the name is another site's or the root's |
+| `site tasks <domain> rm <name>` / `run <name>` / `stop <name>` / `log <name> [--lines n]` | delete it (history and log stay), start a run now without waiting, stop a run, its output. Through `/sites/{domain}/tasks` ([api.md](api.md#tasks)), so it is what a site's agent turn and a `tasks:<domain>` token may do; `middleware tasks` is the house's, over every file |
 
 ## Everything else
 
@@ -71,7 +74,7 @@ in the API ([api.md](api.md)) and the panel.
 | `inbound local [on\|off] [--http addr] [--dns addr]` | the development bench: plain HTTP and a name server for the sites on this machine; prints the resolver snippet. See [install.md](install.md#local-development-bench) |
 | `waf list` / `waf block <ip> [duration] [reason]` / `waf unblock <ip>` | the block list, [security.md](security.md); the duration defaults to one day. Under-attack mode (`attack` in the manifest, [manifest.md](manifest.md)) and the traffic are `/waf/under-attack` and `/waf/traffic` in the API |
 | `guard incidents` | what the guard found and has not been dismissed; dismissing is `POST /guard/incidents/{id}/dismiss` |
-| `tasks` (or `tasks list`) / `tasks run <name>` | scheduled work, [manifest.md](manifest.md#tasks-tasksnamejson); `run` waits and prints the log's path. The log itself is `GET /tasks/{name}/log` |
+| `tasks` (or `tasks list`) / `tasks run <name>` | scheduled work, [manifest.md](manifest.md#tasks-tasksnamejson); `run` waits and prints the log's path. The log itself is `GET /tasks/{name}/log`. One site's tasks through the API: `site tasks <domain>` above |
 | `agents [--json]` | the providers, whether each can run, and the capacity: how many turns run of the cap, per provider, and which conversations hold them (`GET /agents`) |
 | `chat [--model m] <domain> <text…>` / `chat middleware <text…>` | a turn with the site's agent; progress is printed from the event stream |
 | `skill install [dir]` | write the skill the conversations run with (embedded in the binary, installed into every conversation's HOME before each turn) to `<root>/.claude/skills/middleware/`, or to `dir`, so Claude Code run by hand on the server loads it too. Needs no running process |
