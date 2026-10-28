@@ -7,7 +7,7 @@
 
 import { seenCard } from "./site-seen.js";
 import { h, clear, fmtTime, fmtAgo } from "../lib/dom.js";
-import { t } from "../lib/i18n.js";
+import { t, has } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
 import { store } from "../lib/store.js";
 import { table, cell, empty, notice, loading, errorBox } from "../components/page.js";
@@ -139,7 +139,12 @@ export function securityTab(domain) {
   function rulesCard(sec) {
     const bots = sec.bots || {};
     const denied = new Set((bots.deny || []).map((x) => x.toLowerCase()));
-    const fam = catalog.families.map((f) => ({ f, box: checkbox(f.name, { checked: denied.has(f.key) }) }));
+    // The families' names and notes come from the server in English; the
+    // catalog says them in the panel's language, and a family added on the
+    // server before the catalog knows it still shows, in English.
+    const famName = (f) => (has("security.family." + f.key) ? t("security.family." + f.key) : f.name);
+    const famNote = (f) => (has("security.familyNote." + f.key) ? t("security.familyNote." + f.key) : f.note);
+    const fam = catalog.families.map((f) => ({ f, box: checkbox(famName(f), { checked: denied.has(f.key) }) }));
     const except = h("input", { type: "text", value: (bots.except || []).join(", ") });
     const noUA = checkbox(t("security.bots.noUA"), { checked: Boolean(bots.no_ua) });
     const w = bots.window || {};
@@ -164,7 +169,7 @@ export function securityTab(domain) {
       h("h2", null, t("security.rules.title")),
       h("p", { class: "small muted" }, t("security.rules.hint")),
       h("h3", null, t("security.bots.title")),
-      h("div", { class: "stack-sm" }, ...fam.map(({ f, box }) => h("div", null, box.el, h("div", { class: "hint" }, f.note)))),
+      h("div", { class: "sec-families" }, ...fam.map(({ f, box }) => h("div", { class: "sec-family" }, box.el, h("div", { class: "hint" }, famNote(f))))),
       denied.has("search") ? notice("warn", t("security.bots.searchWarn")) : null,
       field(t("security.bots.except"), except, t("security.bots.exceptHint")),
       h("div", { class: "field" }, noUA.el),

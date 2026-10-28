@@ -61,7 +61,7 @@ export function accessTab(domain) {
       h("h2", null, t("access.wafTitle")),
       off.el,
       h("p", { class: "small muted" }, t("access.wafOffHint")),
-      h("div", { class: "form-row" },
+      h("div", { class: "form-row site-limits" },
         field(t("access.rateRequests"), requests),
         field(t("access.rateWindow"), window_),
         field(t("access.rateBurst"), burst),
@@ -178,7 +178,7 @@ function zonesEditor(routes) {
     list.append(box);
     return r;
   }
-  const empty = h("p", { class: "small muted" }, t("access.zonesNone"));
+  const empty = h("p", { class: "site-none" }, t("access.zonesNone"));
   function paintEmpty() { empty.hidden = rows.length > 0; }
   list.append(empty);
   for (const [p, ra] of Object.entries(routes)) row(p, ra);

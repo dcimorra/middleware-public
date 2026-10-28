@@ -7,7 +7,6 @@ import { h, clear, fmtBytes } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
 import { store } from "../lib/store.js";
-import { kv } from "../components/page.js";
 import { toast, toastError } from "../components/toast.js";
 import { confirm } from "../components/dialog.js";
 import { icon } from "../lib/icons.js";
@@ -77,11 +76,14 @@ export function cacheTab(domain) {
       purge.addEventListener("click", async () => {
         try { await api.del(`/sites/${enc(domain)}/cache`); toast(t("cache.purged"), "ok"); loadStats(); } catch (e) { toastError(e); }
       });
-      clear(stats).append(kv([
-        [t("cache.entries"), String(s.entries)],
-        [t("cache.bytes"), fmtBytes(s.bytes) + (s.limit ? " / " + fmtBytes(s.limit) : "")],
-        [t("cache.hitRate"), total ? `${Math.round((s.hits * 100) / total)}% (${s.hits} / ${total})` : "—"],
-      ]), h("div", { class: "actions" }, purge));
+      // Three numbers read at a glance as tiles; the hit rate with no
+      // request yet says so in words instead of a dash.
+      const tile = (label, value, note) => h("div", { class: "stat" }, h("div", { class: "label" }, label), h("div", { class: "value" }, value), note ? h("div", { class: "small muted" }, note) : null);
+      clear(stats).append(h("div", { class: "stats site-stats" },
+        tile(t("cache.entries"), String(s.entries)),
+        tile(t("cache.bytes"), fmtBytes(s.bytes), s.limit ? t("sitepage.cacheOf", { limit: fmtBytes(s.limit) }) : null),
+        tile(t("cache.hitRate"), total ? `${Math.round((s.hits * 100) / total)}%` : t("sitepage.cacheNoHits"), total ? `${s.hits} / ${total}` : t("sitepage.cacheNoHitsHint"))),
+      ...(s.entries ? [h("div", { class: "actions" }, purge)] : []));
     } catch (e) { clear(stats).append(h("p", { class: "small muted" }, e.message)); }
   }
 
@@ -93,7 +95,7 @@ export function cacheTab(domain) {
     const list = h("div", { class: "stack-sm" });
     function draw() {
       clear(list);
-      if (!rules.length) list.append(h("p", { class: "small muted" }, t("cache.noRules")));
+      if (!rules.length) list.append(h("p", { class: "site-none" }, t("cache.noRules")));
       rules.forEach((r, i) => {
         const path = h("input", { type: "text", class: "mono", value: r.path || "/", "aria-label": t("cache.path") });
         path.addEventListener("input", () => { r.path = path.value.trim(); });
@@ -131,8 +133,8 @@ export function cacheTab(domain) {
       } catch (e) { err.textContent = e.message; err.hidden = false; }
       finally { save.classList.remove("busy"); }
     });
-    clear(rulesBox).append(list, h("div", { class: "actions" }, add),
-      h("div", { class: "form-row" }, h("div", { class: "field" }, h("label", null, t("cache.maxMB")), maxMB, h("div", { class: "hint" }, t("cache.maxMBHint")))),
+    clear(rulesBox).append(list, h("div", { class: "actions site-cache-add" }, add),
+      h("div", { class: "form-row site-cache-max" }, h("div", { class: "field" }, h("label", null, t("cache.maxMB")), maxMB, h("div", { class: "hint" }, t("cache.maxMBHint")))),
       err, h("div", { class: "form-actions" }, save));
   }
 

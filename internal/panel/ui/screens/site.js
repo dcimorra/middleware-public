@@ -2,19 +2,20 @@
 // re-renders from the store so a restart pressed here shows "handing
 // over" within the tick that does it, from the same event the list sees.
 
-import { h, clear, append, shortRev, fmtTime, fmtBytes } from "../lib/dom.js";
+import { h, clear, append, shortRev, fmtTime, fmtAgo, fmtBytes, busy } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, apiURL, enc } from "../lib/api.js";
 import { currentNode } from "../lib/node.js";
 import { onEvent } from "../lib/stream.js";
 import { store } from "../lib/store.js";
 import { navigate } from "../lib/router.js";
-import { page, kv, table, cell, empty, loading, errorBox, notice } from "../components/page.js";
+import { page, table, cell, empty, loading, errorBox, notice } from "../components/page.js";
 import { icon } from "../lib/icons.js";
 
 import { modeBadge, aliveStatus, siteMode } from "../components/badge.js";
 import { tabs } from "../components/tabs.js";
-import { open, confirm, field, checkbox } from "../components/dialog.js";
+import { open, confirm, field, checkbox, toggle } from "../components/dialog.js";
+import { menu } from "./site-menu.js";
 import { toast, toastError } from "../components/toast.js";
 import { jsonEditor } from "../components/editor.js";
 import { movesCard, openMove } from "../components/moves.js";
@@ -28,6 +29,11 @@ import { cacheTab } from "./site-cache.js";
 import { doorCard } from "./site-door.js";
 import { specsTab } from "./site-specs.js";
 
+// No browser to take pictures with on this machine: learnt from the
+// first refusal and kept for the visit, so every overview after it says
+// so instead of offering a button that fails.
+let shotsOff = false;
+
 const TABS = ["overview", "activity", "manifest", "logs", "files", "chat", "specs", "access", "security", "cache", "moves"];
 const TAB_ICON = { overview: "gauge", activity: "activity", manifest: "code", logs: "list", files: "folder", chat: "chat", specs: "file", access: "lock", security: "shield", cache: "box", moves: "upload" };
 
@@ -37,24 +43,44 @@ export function siteScreen({ domain, tab, query }) {
   // workers card links there).
   const pickWorker = (query && query.get("worker")) || "";
   const base = `#/sites/${enc(domain)}`;
-  const statusLine = h("div", { class: "actions" });
+  const statusLine = h("div", { class: "site-head-state" });
+  // The crumb is the way back, not a second copy of the title beside it.
   const p = page({
     title: domain,
-    crumbs: [h("a", { href: "#/sites" }, t("nav.sites")), " / ", domain],
+    crumbs: [h("a", { href: "#/sites" }, t("nav.sites"))],
     actions: statusLine,
   });
-  p.body.append(tabs(TABS.map((k) => ({ key: k, href: `${base}/${k}`, label: t("site.tab." + k), icon: TAB_ICON[k] })), active));
-  const body = h("div");
+  p.head.classList.add("site-head");
+  // The site's own name for itself (manifest title), quiet under the
+  // domain: "Shop" says which one this is faster than the domain does.
+  const sub = h("p", { class: "sub site-head-title", hidden: true });
+  p.head.append(sub);
+  const nav = tabs(TABS.map((k) => ({ key: k, href: `${base}/${k}`, label: t("site.tab." + k), icon: TAB_ICON[k] })), active);
+  nav.classList.add("site-tabs");
+  p.body.append(nav);
+  const body = h("div", { class: "site-body" });
   p.body.append(body);
   const subs = [];
   let view = null;
+  subs.push(tabsScroller(nav));
 
   function renderStatus() {
     const s = store.site(domain);
     clear(statusLine);
     if (!s) return;
-    statusLine.append(modeBadge(s), aliveStatus(s));
-    if (siteMode(s) !== "unmanaged") statusLine.append(h("a", { class: "btn sm", href: `https://${domain}`, target: "_blank", rel: "noopener" }, icon("external"), t("site.open")));
+    const mode = siteMode(s);
+    const title = (s.manifest && s.manifest.title) || "";
+    sub.textContent = title && title !== domain ? title : "";
+    sub.hidden = !sub.textContent;
+    // The state in words, in a soft pill; the mode beside it only when it
+    // says something the state does not ("held" twice read as a stutter).
+    statusLine.append(h("span", { class: "site-pill" }, aliveStatus(s)));
+    if (!["hold", "stopped", "unmanaged"].includes(mode)) statusLine.append(modeBadge(s));
+    // A project has no name to open, and an unmanaged folder is not
+    // served: the link went to https://<project> and nowhere.
+    if (mode !== "unmanaged" && mode !== "project") {
+      statusLine.append(h("a", { class: "btn sm", href: `https://${domain}`, target: "_blank", rel: "noopener" }, t("sitepage.open"), icon("external", { size: 14 })));
+    }
   }
 
   function mountTab() {
@@ -98,18 +124,49 @@ export function siteScreen({ domain, tab, query }) {
   return { el: p.el, destroy() { subs.forEach((u) => u()); if (view && view.destroy) view.destroy(); } };
 }
 
+// Eleven tabs do not fit a phone, nor a laptop with the sidebar open, and
+// the bar scrolls sideways with its scrollbar hidden: the tab that was
+// open could sit off screen (Moves always did) with nothing saying there
+// was more. The open tab is brought into view, and each edge fades while
+// there is more beyond it.
+function tabsScroller(nav) {
+  const paint = () => {
+    const max = nav.scrollWidth - nav.clientWidth;
+    nav.classList.toggle("more-left", nav.scrollLeft > 2);
+    nav.classList.toggle("more-right", nav.scrollLeft < max - 2);
+  };
+  const center = () => {
+    const a = nav.querySelector('[aria-current="page"]');
+    if (a) nav.scrollLeft = a.offsetLeft - (nav.clientWidth - a.offsetWidth) / 2;
+    paint();
+  };
+  nav.addEventListener("scroll", paint, { passive: true });
+  const ro = new ResizeObserver(paint);
+  ro.observe(nav);
+  requestAnimationFrame(center);
+  return () => ro.disconnect();
+}
+
 // ---------- overview ----------
 
 function overviewTab(domain) {
   const el = h("div");
   const subs = [];
-  const envBox = h("div");
+  const envBox = h("div", { class: "site-env-body" });
+  const envCount = h("span", { class: "small muted" });
+  // The environment is read when something goes wrong, not every time
+  // the site is opened: folded, with how many variables it holds in the
+  // line that unfolds it. Built once, so a re-render keeps it open.
+  const envCard = h("details", { class: "card site-env" },
+    h("summary", null, h("h2", null, t("site.env")), envCount, icon("chevronDown", { size: 18, class: "site-env-chev" })),
+    h("p", { class: "small muted" }, t("site.envHint")), envBox);
   // Built once: the overview re-renders on every store change, and the
   // door's form must not lose what is being typed into it.
   const door = doorCard(domain);
   // The names the house published for this site, from GET /publish:
   // [name, record] pairs, refreshed on publish.* events.
   let published = [];
+  let publishedLoaded = false;
   // The other nodes of this one's network, online: where the site can be
   // moved. Empty without a network, and the button is not shown.
   let otherNodes = [];
@@ -132,6 +189,7 @@ function overviewTab(domain) {
       const recs = await api.get("/publish");
       published = Object.entries(recs || {}).filter(([, r]) => r.site === domain).sort(([a], [b]) => a.localeCompare(b));
     } catch { published = []; }
+    publishedLoaded = true;
     render();
   }
   subs.push(onEvent("publish.", () => loadPublished()));
@@ -143,7 +201,6 @@ function overviewTab(domain) {
   function domainsCard(m) {
     const aliases = [...(m.aliases || [])];
     const apex = domain.split(".").length === 2;
-    const list = h("div", { class: "stack-sm" });
     const save = async (next, www) => {
       const patch = { aliases: next.length ? next : null };
       if (www !== undefined) patch.www = www ? null : false;
@@ -152,31 +209,37 @@ function overviewTab(domain) {
         toast(t("site.domainsSaved"), "ok");
       } catch (e) { toastError(e); }
     };
-    const rows = [h("div", null, h("code", null, domain), " ", h("span", { class: "badge" }, t("site.domainMain")))];
-    if (apex) {
-      const www = checkbox(t("site.wwwToo", { name: "www." + domain }), { checked: m.www !== false });
-      www.input.addEventListener("change", () => save(aliases, www.input.checked));
-      rows.push(www.el);
-    }
+    // One line per name, the main one first and marked, each alias with
+    // its own × at the end of its line; the www of an apex is a switch on
+    // a line of its own, since it is a yes or no and not a name to type.
+    const rows = [h("li", { class: "site-addr" }, icon("globe", { size: 16 }), h("code", { class: "grow" }, domain), h("span", { class: "badge" }, t("site.domainMain")))];
     for (const a of aliases) {
-      const x = h("button", { type: "button", class: "btn sm ghost", "aria-label": t("site.domainRemove", { name: a }) }, "×");
+      const x = h("button", { type: "button", class: "icon-btn sm", "aria-label": t("site.domainRemove", { name: a }), title: t("site.domainRemove", { name: a }) }, icon("x", { size: 16 }));
       x.addEventListener("click", async () => {
         if (!(await confirm({ title: t("site.domainRemoveQ", { name: a }), body: t("site.domainRemoveBody", { name: a }), confirmLabel: t("site.domainRemoveBtn"), danger: true }))) return;
         save(aliases.filter((y) => y !== a));
       });
-      rows.push(h("div", { class: "row" }, h("code", { class: "grow" }, a), x));
+      rows.push(h("li", { class: "site-addr" }, icon("link", { size: 16 }), h("code", { class: "grow" }, a), x));
     }
-    list.append(...rows);
-    const input = h("input", { type: "text", placeholder: "otro-dominio.com", autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
+    let www = null;
+    if (apex) {
+      www = toggle(t("site.wwwToo", { name: "www." + domain }), { checked: m.www !== false });
+      www.input.addEventListener("change", () => save(aliases, www.input.checked));
+    }
+    const input = h("input", { type: "text", placeholder: t("sitepage.domainPlaceholder"), "aria-label": t("site.domainAdd"), autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
     const add = h("button", { type: "submit", class: "btn" }, icon("plus"), t("site.domainAdd"));
-    const form = h("form", { class: "row", novalidate: true }, input, add);
+    const form = h("form", { class: "site-inline-form", novalidate: true }, input, add);
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       const v = input.value.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
       if (!v || v === domain || aliases.includes(v)) return;
       save([...aliases, v]);
     });
-    return h("div", { class: "card" }, h("h2", null, t("site.domains")), h("p", { class: "small muted" }, t("site.domainsHint")), list, form);
+    return h("section", { class: "card site-section" },
+      h("h2", null, t("site.domains")), h("p", { class: "small muted" }, t("site.domainsHint")),
+      h("ul", { class: "site-addr-list" }, ...rows),
+      www ? h("div", { class: "site-www" }, www.el) : null,
+      form);
   }
 
   // Out of its container, onto the machine as a normal process: the same
@@ -314,22 +377,25 @@ function overviewTab(domain) {
         toast(t("site.redirectsSaved"), "ok");
       } catch (e) { toastError(e); }
     };
-    const list = h("div", { class: "stack-sm" });
-    if (!rules.length) list.append(h("p", { class: "small muted" }, t("site.redirectsNone")));
+    // In order, since the first that matches wins: from, an arrow, to,
+    // the code as a quiet badge and a × at the end.
+    const list = h("ol", { class: "site-redirects" });
     rules.forEach((r, i) => {
-      const x = h("button", { type: "button", class: "btn sm ghost", "aria-label": t("site.redirectRemove") }, "×");
+      const x = h("button", { type: "button", class: "icon-btn sm", "aria-label": t("site.redirectRemove"), title: t("site.redirectRemove") }, icon("x", { size: 16 }));
       x.addEventListener("click", () => save(rules.filter((_, j) => j !== i)));
-      list.append(h("div", { class: "row redirect-row" },
-        h("code", { class: "grow" }, r.from), h("span", { class: "muted" }, "→"), h("code", { class: "grow" }, r.to),
-        h("span", { class: "badge" }, String(r.code || 301)), x));
+      list.append(h("li", { class: "site-redirect" },
+        h("code", { class: "from" }, r.from), h("span", { class: "arrow", "aria-hidden": "true" }, "→"), h("code", { class: "to" }, r.to),
+        h("span", { class: "badge", title: t("site.redirectCode." + (r.code || 301)) }, String(r.code || 301)), x));
     });
     const from = h("input", { type: "text", placeholder: "/viejo, /blog/*, " + domain + "/*", autocomplete: "off", spellcheck: "false" });
     const to = h("input", { type: "text", placeholder: "https://nuevo.example.com/*", autocomplete: "off", spellcheck: "false" });
     const code = h("select", null, ...[301, 302, 307, 308, 303].map((c) => h("option", { value: String(c) }, t("site.redirectCode." + c))));
     const add = h("button", { type: "submit", class: "btn" }, icon("plus"), t("site.redirectAdd"));
-    const form = h("form", { novalidate: true, class: "stack-sm" },
-      h("div", { class: "form-row" }, field(t("site.redirectFrom"), from), field(t("site.redirectTo"), to)),
-      h("div", { class: "row" }, code, add));
+    // One line on a wide screen (from, to, the code, Add), stacked on a
+    // phone with the code and Add sharing the last line.
+    const form = h("form", { novalidate: true, class: "site-redirect-form" },
+      field(t("site.redirectFrom"), from), field(t("site.redirectTo"), to), field(t("sitepage.redirectCode"), code),
+      h("div", { class: "field site-redirect-add" }, add));
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       const f = from.value.trim(), d = to.value.trim();
@@ -337,7 +403,10 @@ function overviewTab(domain) {
       const c = Number(code.value);
       save([...rules, c === 301 ? { from: f, to: d } : { from: f, to: d, code: c }]);
     });
-    return h("div", { class: "card" }, h("h2", null, t("site.redirects")), h("p", { class: "small muted" }, t("site.redirectsHint")), list, form);
+    return h("section", { class: "card site-section" },
+      h("h2", null, t("site.redirects")), h("p", { class: "small muted" }, t("site.redirectsHint")),
+      rules.length ? list : h("p", { class: "site-none" }, t("sitepage.redirectsNone")),
+      form);
   }
 
   // A name the zone already points somewhere else: said, and taken only
@@ -364,69 +433,112 @@ function overviewTab(domain) {
     const m = s.manifest || {};
     const unmanaged = mode === "unmanaged";
 
-    // Actions. Each one is a verb on this site, and the destructive ones
-    // confirm with the domain in the question.
-    const actions = h("div", { class: "actions" });
-    if (!unmanaged) {
-      if (mode === "run" || mode === "upstream") actions.append(btn(t("site.restart"), "refresh", () => act("restart", `/sites/${enc(domain)}/restart`, t("site.restarted"))));
-      if (m.disabled) actions.append(btn(t("site.start"), "play", () => act("start", `/sites/${enc(domain)}/start`, t("site.started")), "primary"));
-      else actions.append(btn(t("site.stop"), "stop", async () => {
-        if (await confirm({ title: t("site.stopQ", { domain }), body: t("site.stopBody"), confirmLabel: t("site.stop"), danger: true })) {
-          await act("stop", `/sites/${enc(domain)}/stop`, t("site.stopped"));
-        }
-      }));
-      if (m.hold && m.hold.enabled) actions.append(btn(t("site.release"), "unlock", () => hold(false)));
-      else actions.append(btn(t("site.hold"), "pause", () => hold(true)));
-      if (m.deploy && m.deploy.github) actions.append(btn(t("site.deploy"), "upload", () => act("deploy", `/sites/${enc(domain)}/deploy`, t("site.deployStarted"))));
+    const held = Boolean(m.hold && m.hold.enabled);
+    const project = mode === "project";
+    const serves = !unmanaged && !project;
+
+    // Actions, in two places. In sight: what this state asks for, one of
+    // them the primary (start a stopped site, release a held one, publish
+    // one nobody can reach yet) and at most two plain ones beside it.
+    // Under "…": the rest, which are used a few times in a site's life,
+    // and Delete last, set apart and red. Ten equal buttons in a row made
+    // "Start" read like "Download". Each verb still confirms what
+    // destroys, with the domain in the question.
+    const stopIt = async () => {
+      if (await confirm({ title: t("site.stopQ", { domain }), body: t("site.stopBody"), confirmLabel: t("site.stop"), danger: true })) {
+        await act("stop", `/sites/${enc(domain)}/stop`, t("site.stopped"));
+      }
+    };
+    const startIt = () => act("start", `/sites/${enc(domain)}/start`, t("site.started"));
+    const restartIt = () => act("restart", `/sites/${enc(domain)}/restart`, t("site.restarted"));
+    const shown = [];
+    const folded = [];
+    if (unmanaged) {
+      shown.push(btn(t("site.adopt"), "plus", adopt, "primary"));
     } else {
-      actions.append(btn(t("site.adopt"), "plus", adopt, "primary"));
-    }
-    if (!unmanaged && mode !== "project") {
-      actions.append(btn(t("site.publish"), "upload", publish));
-      if (published.length) actions.append(btn(t("site.unpublish"), "door", unpublish));
-    }
-    if (!unmanaged) {
+      // Publish is the primary only once the names are known to be none:
+      // before /publish answers it would flash blue on every site.
+      const publishShown = serves && publishedLoaded && !published.length && !m.disabled && !held;
+      if (m.disabled) shown.push(btn(t("site.start"), "play", startIt, "primary"));
+      else if (held) shown.push(btn(t("site.release"), "unlock", () => hold(false), "primary"));
+      else if (project) shown.push(btn(t("site.giveDomain"), "globe", rename, "primary"));
+      else if (publishShown) shown.push(btn(t("site.publish"), "upload", publish, "primary"));
+      if (!m.disabled && !held && (mode === "run" || mode === "upstream")) shown.push(btn(t("site.restart"), "refresh", restartIt));
+      if (!m.disabled && !project) shown.push(btn(t("site.stop"), "stop", stopIt));
+      if (m.deploy && m.deploy.github) shown.push(btn(t("site.deploy"), "upload", () => act("deploy", `/sites/${enc(domain)}/deploy`, t("site.deployStarted"))));
+
+      if (!m.disabled && project) folded.push({ label: t("site.stop"), icon: "stop", onClick: stopIt });
+      if (m.disabled && (mode === "run" || mode === "upstream")) folded.push({ label: t("site.restart"), icon: "refresh", onClick: restartIt });
+      if (held && !m.disabled) folded.push({ label: t("site.stop"), icon: "stop", onClick: stopIt });
+      if (held && m.disabled) folded.push({ label: t("site.release"), icon: "unlock", onClick: () => hold(false) });
+      if (!held) folded.push({ label: t("site.hold"), icon: "pause", onClick: () => hold(true) });
+      if (serves) {
+        if (!publishShown) folded.push({ label: t("site.publish"), icon: "upload", onClick: publish });
+        if (published.length) folded.push({ label: t("site.unpublish"), icon: "door", onClick: unpublish });
+      }
+      folded.push({ separator: true });
       // A plain link: the browser downloads with the session cookie, and a
       // site of gigabytes streams instead of passing through memory.
-      actions.append(h("a", { class: "btn", href: apiURL(`/sites/${enc(domain)}/download.zip`), download: `${domain}.zip`, title: t("site.downloadHint") }, icon("download"), t("site.download")));
-      actions.append(btn(t(mode === "project" ? "site.giveDomain" : "site.rename"), "edit", rename));
-      actions.append(btn(t("site.exec"), "terminal", runCommand));
-      if (otherNodes.length) actions.append(btn(t("site.move"), "upload", moveSite));
+      folded.push({ label: t("site.download"), icon: "download", href: apiURL(`/sites/${enc(domain)}/download.zip`), download: `${domain}.zip`, title: t("site.downloadHint") });
+      if (!project) folded.push({ label: t("site.rename"), icon: "edit", onClick: rename });
+      folded.push({ label: t("site.exec"), icon: "terminal", onClick: runCommand });
+      if (otherNodes.length) folded.push({ label: t("site.move"), icon: "upload", onClick: moveSite });
       // In a container, or out of one with its container kept to go back to.
-      if (m.run && m.run.runtime === "docker") actions.append(btn(t("site.uncontain"), "box", () => setRuntime(m, "process")));
-      else if (mode === "run") actions.append(btn(t(m.run && m.run.docker ? "site.contain" : "site.containize"), "box", containSite));
+      if (m.run && m.run.runtime === "docker") folded.push({ label: t("site.uncontain"), icon: "box", onClick: () => setRuntime(m, "process") });
+      else if (mode === "run") folded.push({ label: t(m.run && m.run.docker ? "site.contain" : "site.containize"), icon: "box", onClick: containSite });
     }
-    actions.append(btn(t("site.delete"), "trash", del, "danger"));
+    folded.push({ separator: true }, { label: t("site.delete"), icon: "trash", onClick: del, danger: true });
+    const actions = h("div", { class: "site-actions" }, ...shown, menu(t("sitepage.more"), folded, { class: "site-actions-more" }));
 
-    const pairs = [
-      [t("site.mode"), modeBadge(s)],
-      [t("site.status"), aliveStatus(s)],
+    // What there is to know about it, as short facts: a label over its
+    // value, in as many columns as fit. Facts the site does not have are
+    // left out rather than shown as a dash.
+    const facts = [
       [t("site.port"), s.port ? h("code", null, String(s.port)) : null],
       [t("site.revision"), s.revision ? h("code", { title: s.revision }, shortRev(s.revision)) : null],
-      [t("site.error"), s.error ? h("span", { class: "level-error" }, s.error) : null],
-      [t("site.missing"), (s.missing || []).length ? h("div", { class: "stack-sm" }, ...s.missing.map((x) => h("span", { class: "level-warn" }, x))) : null],
-      [t("site.handing"), s.handing ? t("common.yes") : null],
       [t("site.runtime"), m.run && m.run.runtime ? m.run.runtime : null],
-      [t("site.upstream"), m.upstream || null],
-      [t("site.staticRoot"), m.static ? (m.static.root || "public") : null],
-      [t("site.holdTitle"), m.hold && m.hold.enabled ? (m.hold.title || "—") : null],
-      [t("site.picture"), mode === "project" || unmanaged ? null : sitePicture()],
-      [t("site.published"), published.length ? h("div", { class: "stack-sm" }, ...published.map(([name, r]) => h("div", null,
-        h("code", null, name), " ",
-        h("span", { class: "badge " + ({ published: "ok", failed: "bad", manual: "warn", retiring: "warn", conflict: "bad" }[r.state] || ""), title: r.error || "" }, t("publish.state." + r.state)),
-        " ", h("span", { class: "small muted" }, t("inbound.door." + r.door)),
-        r.state === "conflict" ? conflictEl(name, r) : r.error ? h("div", { class: "small dim" }, r.error) : null,
-      ))) : (mode === "project" ? null : h("span", { class: "muted" }, t("site.notPublished")))],
+      [t("site.upstream"), m.upstream ? h("code", null, m.upstream) : null],
+      [t("site.staticRoot"), m.static ? h("code", null, (m.static.root || "public") + "/") : null],
+      [t("site.holdTitle"), held ? (m.hold.title || t("sitepage.holdNoTitle")) : null],
+      [t("site.handing"), s.handing ? t("common.yes") : null],
+    ].filter(([, v]) => v);
+
+    // Names the house published for it, each with how that went.
+    let names = null;
+    if (serves) {
+      names = h("div", { class: "site-names" }, h("div", { class: "site-label" }, t("site.published")),
+        !publishedLoaded ? h("span", { class: "muted small" }, t("common.loading"))
+          : published.length ? h("div", { class: "site-name-list" }, ...published.map(([name, r]) => h("div", { class: "site-name-row" },
+            h("code", null, name),
+            h("span", { class: "badge " + ({ published: "ok", failed: "bad", manual: "warn", retiring: "warn", conflict: "bad" }[r.state] || ""), title: r.error || "" }, t("publish.state." + r.state)),
+            h("span", { class: "small muted" }, t("inbound.door." + r.door)),
+            r.state === "conflict" ? conflictEl(name, r) : r.error ? h("div", { class: "small dim site-name-err" }, r.error) : null,
+          )))
+            : h("span", { class: "small dim" }, t("sitepage.notPublishedHint")));
+    }
+
+    const problems = [
+      s.error ? notice("bad", h("strong", null, t("site.error")), " ", s.error) : null,
+      (s.missing || []).length ? notice("warn", h("strong", null, t("site.missing")), h("ul", { class: "site-missing" }, ...s.missing.map((x) => h("li", null, x)))) : null,
     ];
 
+    const hero = h("section", { class: "card site-hero" + (serves ? "" : " no-shot") },
+      serves ? sitePicture() : null,
+      h("div", { class: "site-hero-main" },
+        h("div", { class: "site-hero-state" }, h("span", { class: "site-state-big" }, aliveStatus(s)), ["hold", "stopped", "unmanaged"].includes(mode) ? null : modeBadge(s)),
+        ...problems,
+        facts.length ? h("dl", { class: "site-facts" }, ...facts.map(([k, v]) => h("div", null, h("dt", null, k), h("dd", null, v)))) : null,
+        names,
+        actions));
+
     append(el, [
-      h("div", { class: "card" }, h("h2", null, t("site.tab.overview")), kv(pairs), h("hr"), actions),
+      hero,
       unmanaged ? notice("warn", t("site.unmanagedNotice")) : null,
-      unmanaged || mode === "project" ? null : domainsCard(m),
-      unmanaged || mode === "project" ? null : redirectsCard(m),
       workersCard(s),
+      serves ? domainsCard(m) : null,
+      serves ? redirectsCard(m) : null,
       unmanaged ? null : door,
-      unmanaged ? null : h("div", { class: "card" }, h("h2", null, t("site.env")), h("p", { class: "small muted" }, t("site.envHint")), envBox),
+      unmanaged ? null : envCard,
     ]);
   }
 
@@ -435,30 +547,33 @@ function overviewTab(domain) {
     const names = Object.keys(m.workers || {});
     if (names.length === 0) return null;
     const usage = {};
-    const rows = names.map((name) => {
+    // A worker a line: its state and name, its command quiet under them,
+    // what it takes now, and its buttons at the end. A table squeezed the
+    // command into two lines and the buttons into two rows.
+    const items = names.map((name) => {
       const w = (s.workers && s.workers[name]) || {};
       const def = m.workers[name] || {};
-      return h("tr", null,
-        cell(h("code", null, name), null, "primary"),
-        cell(w.alive ? h("span", { class: "status" }, h("span", { class: "dot ok" }), t("status.up")) : h("span", { class: "status", title: w.error || "" }, h("span", { class: "dot bad" }), t("status.down")), t("site.status")),
-        cell(def.port || w.port ? String(def.port || w.port) : "", t("site.port"), "num mono"),
-        cell(def.command ? h("code", null, def.command.join(" ")) : "", t("site.command"), "mono"),
-        cell(usage[name] = h("span", { class: "small muted" }, "…"), t("site.usage"), "nowrap"),
-        cell(w.error ? h("span", { class: "level-error small" }, w.error) : "", t("site.error")),
-        cell(workerActions(name, def, w), null, "right nowrap"),
-      );
+      const port = def.port || w.port;
+      const state = def.disabled ? h("span", { class: "status" }, h("span", { class: "dot" }), t("status.stopped"))
+        : w.alive ? h("span", { class: "status" }, h("span", { class: "dot ok" }), t("status.up"))
+          : h("span", { class: "status", title: w.error || "" }, h("span", { class: "dot bad" }), t("status.down"));
+      return h("li", { class: "site-worker" },
+        h("div", { class: "site-worker-main" },
+          h("div", { class: "site-worker-head" }, h("strong", null, name), state, port ? h("code", { class: "small muted" }, ":" + port) : null,
+            usage[name] = h("span", { class: "small muted site-worker-usage" })),
+          def.command ? h("code", { class: "site-worker-cmd", title: def.command.join(" ") }, def.command.join(" ")) : null,
+          w.error ? h("div", { class: "small level-error" }, w.error) : null),
+        workerActions(name, def, w));
     });
     // What each takes now, from the site's last sample (one request for
     // all of them, after the card is drawn).
     api.get(`/sites/${enc(domain)}/resources`).then((r) => {
       for (const name of names) {
         const x = (r.workers || {})[name];
-        clear(usage[name]).append(x ? t("site.usageNow", { cpu: x.cpu, mem: fmtBytes(x.rss) }) : t("site.usageNone"));
+        clear(usage[name]).append(x ? t("site.usageNow", { cpu: x.cpu, mem: fmtBytes(x.rss) }) : "");
       }
     }).catch(() => { for (const name of names) clear(usage[name]); });
-    return h("div", { class: "card pad0" }, h("div", { class: "log-bar card-pad" }, h("h2", null, t("site.workers"))), table([
-      { label: t("site.worker") }, { label: t("site.status") }, { label: t("site.port"), class: "num" }, { label: t("site.command") }, { label: t("site.usage") }, { label: t("site.error") }, { label: "" },
-    ], rows, { responsive: true }).el);
+    return h("section", { class: "card site-section" }, h("h2", null, t("site.workers")), h("ul", { class: "site-workers" }, ...items));
   }
 
   // Restart is for now; stop and start are written to the manifest
@@ -468,9 +583,9 @@ function overviewTab(domain) {
     // whose base the first version of these links used and broke the
     // overview of every site with a worker.
     const tabs = `#/sites/${enc(domain)}`;
-    const box = h("div", { class: "actions" },
-      h("a", { class: "btn sm", href: `${tabs}/logs?worker=${enc(name)}` }, icon("list"), t("site.workerLogs")),
-      h("a", { class: "btn sm", href: `${tabs}/activity?worker=${enc(name)}` }, icon("gauge"), t("site.workerUsage")));
+    const box = h("div", { class: "site-worker-actions" },
+      h("a", { class: "btn sm ghost", href: `${tabs}/logs?worker=${enc(name)}` }, icon("list"), t("site.workerLogs")),
+      h("a", { class: "btn sm ghost", href: `${tabs}/activity?worker=${enc(name)}` }, icon("gauge"), t("site.workerUsage")));
     const path = `/sites/${enc(domain)}/workers/${enc(name)}`;
     if (def.disabled) {
       box.append(btn(t("site.workerStart"), "play", () => act("start", path + "/start", t("site.workerStarted", { name })), "sm"));
@@ -519,11 +634,15 @@ function overviewTab(domain) {
       const resolved = (r && r.resolved) || {};
       const keys = Object.keys(resolved).sort();
       clear(envBox);
-      if (keys.length === 0) { envBox.append(h("p", { class: "muted small" }, t("site.envEmpty"))); return; }
-      envBox.append(table([{ label: t("site.envKey") }, { label: t("site.envValue") }],
-        keys.map((k) => h("tr", null, cell(h("code", null, k)), cell(h("code", null, String(resolved[k]))))), {}).el);
+      envCount.textContent = keys.length ? String(keys.length) : t("sitepage.envNone");
+      envCount.className = keys.length ? "badge" : "small muted";
+      if (keys.length === 0) { envBox.append(h("p", { class: "site-none" }, t("site.envEmpty"))); return; }
+      // Name over value, wrapping anywhere: a table cut the paths in the
+      // middle on a phone and scrolled the card sideways.
+      envBox.append(h("dl", { class: "site-env-list" }, ...keys.map((k) => h("div", null, h("dt", null, k), h("dd", null, String(resolved[k]))))));
     } catch (e) {
-      clear(envBox).append(h("p", { class: "muted small" }, e.message));
+      envCount.textContent = "";
+      clear(envBox).append(errorBox(e));
     }
   }
 
@@ -573,22 +692,40 @@ function overviewTab(domain) {
   }
 
   // The site as a visitor sees it, taken through a door that skips its
-  // password; a picture that is not there yet just does not show.
+  // password. With no picture yet the frame says so and offers to take
+  // one, instead of a blank row with a lone "take again" in it; on a
+  // machine with no browser to take it, the frame says that and the
+  // button goes, for the rest of the visit (shotsOff).
   function sitePicture() {
+    const frame = h("div", { class: "site-shot-frame" });
     const img = h("img", { class: "site-shot", alt: t("site.pictureAlt", { domain }), src: apiURL(`/sites/${enc(domain)}/shot.png?t=${Math.floor(Date.now() / 60000)}`), loading: "lazy" });
-    const box = h("div", { class: "stack-sm" }, img);
-    img.addEventListener("error", () => { img.hidden = true; });
-    const again = h("button", { type: "button", class: "btn sm ghost" }, icon("refresh"), t("site.pictureAgain"));
-    again.addEventListener("click", async () => {
-      try { await api.post(`/sites/${enc(domain)}/shot`); toast(t("site.pictureTaking"), "ok"); } catch (e) { toastError(e); }
-    });
-    box.append(again);
-    return box;
+    const again = h("button", { type: "button", class: "btn sm ghost site-shot-again" }, icon("refresh", { size: 14 }), t("site.pictureAgain"));
+    const placeholder = h("div", { class: "site-shot-none" });
+    const take = async () => {
+      try { await api.post(`/sites/${enc(domain)}/shot`); toast(t("site.pictureTaking"), "ok"); }
+      catch (e) {
+        if (e.status === 501) { shotsOff = true; paintNone(); return; }
+        toastError(e);
+      }
+    };
+    function paintNone() {
+      const b = h("button", { type: "button", class: "btn sm" }, icon("eye", { size: 14 }), t("sitepage.pictureTake"));
+      b.addEventListener("click", () => busy(b, take)());
+      clear(placeholder).append(icon("monitor", { size: 28 }),
+        h("strong", null, t(shotsOff ? "sitepage.pictureOff" : "sitepage.pictureNone")),
+        h("span", { class: "small muted" }, t(shotsOff ? "sitepage.pictureOffHint" : "sitepage.pictureNoneHint")),
+        ...(shotsOff ? [] : [b]));
+    }
+    again.addEventListener("click", () => busy(again, take)());
+    img.addEventListener("error", () => { frame.classList.add("unshot"); paintNone(); });
+    img.addEventListener("load", () => frame.classList.remove("unshot"));
+    frame.append(img, placeholder, again);
+    return frame;
   }
   subs.push(onEvent("shot.taken", (ev) => {
     if (ev.subject !== domain) return;
     const img = el.querySelector("img.site-shot");
-    if (img) { img.hidden = false; img.src = apiURL(`/sites/${enc(domain)}/shot.png?t=${Date.now()}`); }
+    if (img) img.src = apiURL(`/sites/${enc(domain)}/shot.png?t=${Date.now()}`);
   }));
 
   async function publish() {
@@ -723,8 +860,8 @@ function historyCard(domain, editor) {
       if (!versions.length) { box.append(h("p", { class: "small muted" }, t("manifest.historyNone"))); return; }
       box.append(table([{ label: t("manifest.historyAt") }, { label: t("manifest.historySize"), class: "num" }, { label: "" }],
         versions.map((v, i) => h("tr", null,
-          cell(h("span", { title: fmtTime(v.at) }, fmtTime(v.at)), t("manifest.historyAt")),
-          cell(String(v.bytes) + " B", t("manifest.historySize"), "num"),
+          cell(h("span", { title: fmtTime(v.at) }, fmtTime(v.at), " ", h("span", { class: "muted small" }, fmtAgo(v.at, t))), t("manifest.historyAt")),
+          cell(fmtBytes(v.bytes), t("manifest.historySize"), "num"),
           cell(i === 0 ? h("span", { class: "badge ok" }, t("manifest.historyCurrent")) : versionActions(v), null, "right nowrap"),
         )), { responsive: true }).el);
     } catch (e) { clear(box).append(errorBox(e)); }
