@@ -364,8 +364,13 @@ process.
   Prefixes go by whole segments and the longest wins. What no rule can
   change: nothing with `Set-Cookie`, `private`, `no-store` or `no-cache`,
   `Vary: *`, `Cookie` or `Authorization`, nothing but a 200 to GET or HEAD,
-  nothing for a request with `Authorization`, no event streams. Simultaneous
-  misses reach the site as one, and a handover empties the site's cache.
+  nothing for a request with `Authorization`, no event streams and no
+  WebSockets (a request with `Upgrade` or `Accept: text/event-stream` never
+  enters the cache). Simultaneous misses reach the site as one, until the
+  first answer shows it will not be kept (its headers say so, or it passes
+  8 MB): then the others go to the site too, so a second client of a stream
+  does not wait for the first one's to end. A handover empties the site's
+  cache.
   `max_mb` asks for less than the house's budget, never for more.
 - `vpn` makes the site exist only inside the VPN (the module of that name):
   it is served through the VPN door (the server's address in the tunnel, on

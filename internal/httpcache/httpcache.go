@@ -7,7 +7,8 @@
 // What is kept is kept for everyone, so there are walls a manifest cannot
 // remove: nothing with Set-Cookie; nothing private, no-store or no-cache;
 // nothing with Vary: * or Vary: Cookie; nothing but a 200 to a GET or
-// HEAD; nothing for a request with Authorization; no event streams. What a
+// HEAD; nothing for a request with Authorization; no event streams and no
+// WebSockets, which do not even wait behind one another. What a
 // manifest chooses is only which paths and for how long. A site that gets
 // its cache section wrong can be slow or serve something old; it cannot
 // serve someone what was someone else's.
@@ -309,29 +310,55 @@ func varyOf(h http.Header) []string {
 }
 
 // recorder writes through to the client and keeps a copy while it fits.
+// keepable says, once the status and headers are known, whether the answer
+// could be kept at all; when it cannot, or once the body outgrows
+// maxEntry, release lets the requests waiting on the same key go.
 type recorder struct {
 	http.ResponseWriter
-	status  int
-	buf     bytes.Buffer
-	tooBig  bool
-	written bool
+	status   int
+	buf      bytes.Buffer
+	tooBig   bool
+	unkept   bool
+	written  bool
+	keepable func(status int) bool
+	release  func()
+}
+
+func (r *recorder) settle(code int) {
+	if r.written {
+		return
+	}
+	r.status, r.written = code, true
+	if r.keepable != nil && !r.keepable(code) {
+		r.unkept = true
+		r.letGo()
+	}
+}
+
+func (r *recorder) letGo() {
+	if r.release != nil {
+		r.release()
+	}
 }
 
 func (r *recorder) WriteHeader(code int) {
-	if !r.written {
-		r.status, r.written = code, true
+	// An informational answer (103 Early Hints) comes before the real
+	// one; taken as the status, it made every such page one never kept.
+	if code >= 200 {
+		r.settle(code)
 	}
 	r.ResponseWriter.WriteHeader(code)
 }
 
 func (r *recorder) Write(p []byte) (int, error) {
-	if !r.written {
-		r.status, r.written = http.StatusOK, true
-	}
-	if !r.tooBig {
+	r.settle(http.StatusOK)
+	// What will not be kept is not copied either: an hour of an event
+	// stream held in memory only to be thrown away.
+	if !r.tooBig && !r.unkept {
 		if r.buf.Len()+len(p) > maxEntry {
 			r.tooBig = true
 			r.buf.Reset()
+			r.letGo()
 		} else {
 			r.buf.Write(p)
 		}

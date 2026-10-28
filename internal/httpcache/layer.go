@@ -4,7 +4,8 @@ import (
 	"net/http"
 	"path"
 	"strconv"
-
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,7 +26,7 @@ type Site struct {
 func (c *Cache) Wrap(next http.Handler, lookup func(r *http.Request) (Site, bool)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		site, ok := lookup(r)
-		if !ok || len(site.Rules) == 0 || (r.Method != http.MethodGet && r.Method != http.MethodHead) || r.Header.Get("Authorization") != "" {
+		if !ok || len(site.Rules) == 0 || (r.Method != http.MethodGet && r.Method != http.MethodHead) || r.Header.Get("Authorization") != "" || streaming(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -35,6 +36,14 @@ func (c *Cache) Wrap(next http.Handler, lookup func(r *http.Request) (Site, bool
 			return
 		}
 		k := key(r)
+		fk := site.Domain + " " + k
+		// release lets the others waiting on this key go. It runs when the
+		// handler returns, and earlier, from the recorder, the moment the
+		// answer is known not to be kept: an event stream, a page the site
+		// did not mark, a download past maxEntry. Released only at the end,
+		// the second client of /events waited for the first one's stream
+		// to close, which for a stream is never.
+		var release func()
 		for attempt := 0; attempt < 2; attempt++ {
 			if c.serveHit(w, r, site, k) {
 				return
@@ -44,17 +53,23 @@ func (c *Cache) Wrap(next http.Handler, lookup func(r *http.Request) (Site, bool
 			// Without this the first visit to an expensive page with the
 			// cache empty is fifty requests to the process at once.
 			c.mu.Lock()
-			f := c.flights[site.Domain+" "+k]
+			f := c.flights[fk]
 			if f == nil {
 				f = &flight{done: make(chan struct{})}
-				c.flights[site.Domain+" "+k] = f
+				c.flights[fk] = f
 				c.mu.Unlock()
-				defer func() {
-					c.mu.Lock()
-					delete(c.flights, site.Domain+" "+k)
-					c.mu.Unlock()
-					close(f.done)
-				}()
+				var once sync.Once
+				release = func() {
+					once.Do(func() {
+						c.mu.Lock()
+						if c.flights[fk] == f {
+							delete(c.flights, fk)
+						}
+						c.mu.Unlock()
+						close(f.done)
+					})
+				}
+				defer release()
 				break
 			}
 			c.mu.Unlock()
@@ -66,9 +81,11 @@ func (c *Cache) Wrap(next http.Handler, lookup func(r *http.Request) (Site, bool
 		}
 		c.miss(site.Domain)
 		w.Header().Set("X-Middleware-Cache", "miss")
-		rec := &recorder{ResponseWriter: w}
+		rec := &recorder{ResponseWriter: w, release: release, keepable: func(status int) bool {
+			return r.Method == http.MethodGet && ttlFor(rule, w.Header(), status) > 0
+		}}
 		next.ServeHTTP(rec, r)
-		if r.Method != http.MethodGet || rec.tooBig {
+		if r.Method != http.MethodGet || rec.tooBig || rec.unkept {
 			return
 		}
 		ttl := ttlFor(rule, w.Header(), rec.status)
@@ -77,6 +94,28 @@ func (c *Cache) Wrap(next http.Handler, lookup func(r *http.Request) (Site, bool
 		}
 		c.keep(site, k, r, w.Header(), rec.status, rec.buf.Bytes(), ttl)
 	})
+}
+
+// streaming is a request whose answer is a connection rather than a
+// document: a WebSocket, an event stream. Nothing of it is ever kept, and
+// waiting behind one for it to be kept is waiting for it to close.
+func streaming(r *http.Request) bool {
+	if r.Header.Get("Upgrade") != "" {
+		return true
+	}
+	for _, v := range r.Header.Values("Connection") {
+		for _, f := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(f), "upgrade") {
+				return true
+			}
+		}
+	}
+	for _, v := range r.Header.Values("Accept") {
+		if strings.Contains(strings.ToLower(v), "text/event-stream") {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Cache) miss(domain string) {

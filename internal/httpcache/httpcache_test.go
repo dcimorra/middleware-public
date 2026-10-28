@@ -170,3 +170,77 @@ func TestTheBudgetIsTakenFromTheLargestSite(t *testing.T) {
 	}
 	_ = io.Discard
 }
+
+// held is a site whose answers stay open until the test lets them end, the
+// way an event stream, a socket or a long download does. entered says each
+// time a request reaches it, after its headers (and body) went out.
+type held struct {
+	entered chan string
+	end     chan struct{}
+	write   func(w http.ResponseWriter)
+}
+
+func (s *held) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.write(w)
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	s.entered <- r.URL.Path
+	<-s.end
+}
+
+func TestTwoStreamsOnOneAddressBothFlow(t *testing.T) {
+	sse := func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, "data: hello\n\n")
+	}
+	plain := func(w http.ResponseWriter) { io.WriteString(w, "a plain page, which force would keep") }
+	big := func(w http.ResponseWriter) {
+		w.Header().Set("Cache-Control", "public, max-age=60")
+		w.Write(make([]byte, maxEntry+1))
+	}
+	cases := []struct {
+		name    string
+		rule    Rule
+		write   func(w http.ResponseWriter)
+		headers []string
+	}{
+		// The site's answer says it: released when its headers go out.
+		{"event stream", Rule{Path: "/", Mode: ModeOrigin}, sse, nil},
+		// The request says it, whatever the answer looks like (force
+		// would keep this one): the cache is not entered at all.
+		{"eventsource", Rule{Path: "/", Mode: ModeForce, TTL: 60}, plain, []string{"Accept: text/event-stream"}},
+		{"websocket", Rule{Path: "/", Mode: ModeForce, TTL: 60}, plain, []string{"Connection: Upgrade", "Upgrade: websocket"}},
+		// Kept until it outgrew maxEntry, then released.
+		{"long download", Rule{Path: "/", Mode: ModeForce, TTL: 60}, big, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &held{entered: make(chan string, 2), end: make(chan struct{}), write: tc.write}
+			c := New(64 << 20)
+			h := c.Wrap(s, func(*http.Request) (Site, bool) {
+				return Site{Domain: "a.example", Rules: []Rule{tc.rule}, Generation: "g1"}, true
+			})
+			var wg sync.WaitGroup
+			for i := 0; i < 2; i++ {
+				wg.Add(1)
+				go func() { defer wg.Done(); get(h, "/events", tc.headers...) }()
+			}
+			for i := 0; i < 2; i++ {
+				select {
+				case <-s.entered:
+				case <-time.After(3 * time.Second):
+					close(s.end)
+					wg.Wait()
+					t.Fatalf("only %d of two clients reached the site: the second waits for the first one's stream to end", i)
+				}
+			}
+			close(s.end)
+			wg.Wait()
+			if c.Stats("a.example").Entries != 0 {
+				t.Fatal("a stream was kept")
+			}
+		})
+	}
+}
