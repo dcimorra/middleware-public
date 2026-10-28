@@ -1,10 +1,12 @@
 package chat
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
 
 // SiteOfProcess finds a site's turn above a process, by the running turns
@@ -20,11 +22,21 @@ func TestASiteTurnIsFoundAboveAProcess(t *testing.T) {
 			}
 		}
 		cmd.Env = append(cmd.Env, env...)
+		cmd.Env = append(cmd.Env, "MW_EXECED=1")
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
-		return cmd.Process.Pid
+		// Start returns as the exec begins, and for a moment after it /proc
+		// still shows the environment from before it.
+		pid := cmd.Process.Pid
+		for i := 0; i < 400; i++ {
+			if env, _ := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid)); strings.Contains(string(env), "MW_EXECED=1") {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		return pid
 	}
 	self := os.Getpid()
 	cases := []struct {
