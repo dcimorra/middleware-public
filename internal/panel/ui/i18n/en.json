@@ -1859,5 +1859,10 @@
   "sitelist.col.chat": "Chat",
   "sitelist.chat": "Open the chat of {domain}",
   "sitelist.chatAsking": "The chat of {domain} is waiting for your answer",
-  "sitelist.chatTalking": "The agent of {domain} is working"
+  "sitelist.chatTalking": "The agent of {domain} is working",
+  "site.tab.tasks": "Tasks",
+  "tasks.siteSub": "Scheduled work that runs in this site's folder, with its environment.",
+  "tasks.siteEmptyTitle": "No tasks yet",
+  "tasks.siteEmptyHint": "A task runs a command of {domain} on a schedule: a nightly backup, a cache warm-up, a report.",
+  "tasks.siteJsonHint": "The task runs in the folder of {domain} with its environment; site is always {domain}."
 }

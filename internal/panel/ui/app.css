@@ -2380,3 +2380,8 @@ details.site-env[open] > summary { margin-bottom: 10px; }
   }
   .sites-table td.site-chat-cell { grid-area: chat; width: auto; padding: 0; align-self: center; }
 }
+
+/* ---------- a site's tasks ---------- */
+.site-tasks-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.site-tasks-head h2 { margin: 0 0 2px; }
+.site-tasks-head p { margin: 0; max-width: 60ch; }

@@ -1859,5 +1859,10 @@
   "sitelist.col.chat": "Chat",
   "sitelist.chat": "Abrir el chat de {domain}",
   "sitelist.chatAsking": "El chat de {domain} espera tu respuesta",
-  "sitelist.chatTalking": "El agente de {domain} está trabajando"
+  "sitelist.chatTalking": "El agente de {domain} está trabajando",
+  "site.tab.tasks": "Tareas",
+  "tasks.siteSub": "Trabajo programado que corre en la carpeta de este sitio, con su entorno.",
+  "tasks.siteEmptyTitle": "Aún no hay tareas",
+  "tasks.siteEmptyHint": "Una tarea ejecuta una orden de {domain} cada cierto tiempo: una copia nocturna, calentar la caché, un informe.",
+  "tasks.siteJsonHint": "La tarea corre en la carpeta de {domain} con su entorno; site es siempre {domain}."
 }

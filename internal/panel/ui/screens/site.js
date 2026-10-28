@@ -26,6 +26,7 @@ import { accessTab } from "./site-access.js";
 import { securityTab } from "./site-security.js";
 import { activityTab } from "./site-activity.js";
 import { cacheTab } from "./site-cache.js";
+import { siteTasksTab } from "./tasks.js";
 import { doorCard } from "./site-door.js";
 import { specsTab } from "./site-specs.js";
 
@@ -34,8 +35,8 @@ import { specsTab } from "./site-specs.js";
 // so instead of offering a button that fails.
 let shotsOff = false;
 
-const TABS = ["overview", "activity", "manifest", "logs", "files", "chat", "specs", "access", "security", "cache", "moves"];
-const TAB_ICON = { overview: "gauge", activity: "activity", manifest: "code", logs: "list", files: "folder", chat: "chat", specs: "file", access: "lock", security: "shield", cache: "box", moves: "upload" };
+const TABS = ["overview", "activity", "manifest", "logs", "files", "chat", "tasks", "specs", "access", "security", "cache", "moves"];
+const TAB_ICON = { overview: "gauge", activity: "activity", manifest: "code", logs: "list", files: "folder", chat: "chat", tasks: "clock", specs: "file", access: "lock", security: "shield", cache: "box", moves: "upload" };
 
 export function siteScreen({ domain, tab, query }) {
   const active = TABS.includes(tab) ? tab : "overview";
@@ -93,6 +94,7 @@ export function siteScreen({ domain, tab, query }) {
       case "logs": view = logsTab(domain, pickWorker); break;
       case "files": view = filesTab(domain); break;
       case "chat": view = chatTab(domain); break;
+      case "tasks": view = siteTasksTab(domain); break;
       case "specs": view = specsTab(domain); break;
       case "access": view = accessTab(domain); break;
       case "security": view = securityTab(domain); break;
