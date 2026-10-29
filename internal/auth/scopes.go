@@ -43,6 +43,8 @@ var scopeRoutes = map[string][]string{
 		"DELETE /api/v1/sites/{domain}/tasks/{name}",
 		"POST /api/v1/sites/{domain}/tasks/{name}/run",
 		"POST /api/v1/sites/{domain}/tasks/{name}/stop",
+		"POST /api/v1/sites/{domain}/tasks/{name}/disable",
+		"POST /api/v1/sites/{domain}/tasks/{name}/enable",
 		"GET /api/v1/sites/{domain}/tasks/{name}/log",
 	},
 	// import is a site arriving from another installation (V1): its

@@ -557,6 +557,8 @@ is not valid JSON is left in the text and ignored.
 | PUT | `/tasks/{name}` | task JSON ([manifest.md](manifest.md#tasks-tasksnamejson)) → the task's row; 400 with the field when it does not validate |
 | DELETE | `/tasks/{name}` | → `{ok}`; the history and the log stay |
 | POST | `/tasks/{name}/stop` | → `{ok}`; ends a run in progress, recorded as `stopped`; 409 when none runs |
+| POST | `/tasks/{name}/disable` | → the task's row; writes `disabled: true` to the file and nothing else, so it stays off across restarts; a run in progress ends on its own. Emits `task.disabled`. 404 when there is no such task, 400 when its file does not parse |
+| POST | `/tasks/{name}/enable` | → the task's row; clears `disabled`, as above. Emits `task.enabled` |
 | POST | `/tasks/{name}/run` | → `{ok, log}` at once; the run is on `/events/stream` as `task.*`, and `task.skipped` when it was already running |
 | GET | `/tasks/{name}/log` | `?lines=500` → `text/plain`, the last lines of `data/logs/tasks/{name}.log` |
 
@@ -574,6 +576,8 @@ for the whole house, so a name the root or another site holds is 409 to PUT.
 | DELETE | `/sites/{domain}/tasks/{name}` | → `{ok}`; the history and the log stay |
 | POST | `/sites/{domain}/tasks/{name}/run` | → `{ok, log}` at once, as `POST /tasks/{name}/run` |
 | POST | `/sites/{domain}/tasks/{name}/stop` | → `{ok}`; 409 when none runs |
+| POST | `/sites/{domain}/tasks/{name}/disable` | → the task's row, as `POST /tasks/{name}/disable`; `task.disabled` carries `site` |
+| POST | `/sites/{domain}/tasks/{name}/enable` | → the task's row, as `POST /tasks/{name}/enable` |
 | GET | `/sites/{domain}/tasks/{name}/log` | `?lines=500` → `text/plain`, as `GET /tasks/{name}/log` |
 
 ## Nodes

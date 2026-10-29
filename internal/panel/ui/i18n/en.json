@@ -1935,5 +1935,14 @@
   "users.agents.otherModels": "Other models, separated by commas",
   "users.agents.modelsHint": "No model ticked or typed: every model of this agent.",
   "users.agents.none": "No agent is known here yet. Turn one on in Modules, or save no agent at all.",
-  "users.agents.noAgent": "no agent"
+  "users.agents.noAgent": "no agent",
+  "tasks.on": "Active",
+  "tasks.off": "Stopped",
+  "tasks.onTitle": "Runs on its schedule",
+  "tasks.offTitle": "Turned off: it does not run on its schedule until it is turned on again",
+  "tasks.offNext": "does not run on its schedule",
+  "tasks.turnOff": "Turn off",
+  "tasks.turnOn": "Turn on",
+  "tasks.turnedOff": "{name} turned off",
+  "tasks.turnedOn": "{name} turned on"
 }
