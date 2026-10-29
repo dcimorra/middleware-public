@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/dcimorra/middleware-public/internal/archive"
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/archive"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 // What a move will do, said before it does it: what is copied, where the

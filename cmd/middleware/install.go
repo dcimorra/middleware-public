@@ -9,10 +9,10 @@ import (
 	"os/user"
 	"strings"
 
-	"github.com/dcimorra/middleware-public/internal/installer"
-	"github.com/dcimorra/middleware-public/internal/manifest"
-	"github.com/dcimorra/middleware-public/internal/settings"
-	"github.com/dcimorra/middleware-public/internal/shots"
+	"github.com/dcimorra/the-middleware/internal/installer"
+	"github.com/dcimorra/the-middleware/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/settings"
+	"github.com/dcimorra/the-middleware/internal/shots"
 )
 
 func init() {

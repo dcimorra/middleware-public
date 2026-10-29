@@ -13,7 +13,7 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/wireguard"
+	"github.com/dcimorra/the-middleware/internal/wireguard"
 )
 
 // Version of the protocol, returned by ping so a client built against a

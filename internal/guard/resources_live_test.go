@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/manifest"
-	"github.com/dcimorra/middleware-public/internal/runtime"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/runtime"
 )
 
 // A real container worker, read from the real /proc: it has memory and the

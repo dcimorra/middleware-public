@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/dcimorra/middleware-public/internal/push"
+	"github.com/dcimorra/the-middleware/internal/push"
 )
 
 // RegisterPush adds the /push routes. s may be nil: 503.

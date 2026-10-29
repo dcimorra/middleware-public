@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/dcimorra/middleware-public/internal/proxy"
+	"github.com/dcimorra/the-middleware/internal/proxy"
 )
 
 // RegisterUnrouted mounts the record of names nobody serves.

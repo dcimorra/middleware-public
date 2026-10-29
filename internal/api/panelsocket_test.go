@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/auth"
+	"github.com/dcimorra/the-middleware/internal/auth"
 )
 
 // unixClient serves h on a real unix socket, as the hook and the site

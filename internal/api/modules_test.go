@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/modules"
+	"github.com/dcimorra/the-middleware/internal/modules"
 )
 
 // fakeModule is a module with no needs whose routes are declared in the

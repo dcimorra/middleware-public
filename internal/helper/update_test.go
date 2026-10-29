@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/release"
+	"github.com/dcimorra/the-middleware/internal/release"
 )
 
 // fakeReleases serves a release whose binary is a script that says its

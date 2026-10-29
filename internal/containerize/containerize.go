@@ -32,8 +32,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/manifest"
-	"github.com/dcimorra/middleware-public/internal/runtime"
+	"github.com/dcimorra/the-middleware/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/runtime"
 )
 
 // Plan is the container decided for a site, and why.

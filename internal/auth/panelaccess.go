@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/fsx"
 )
 
 // The panel is protected like a site, with two exceptions, and both exist

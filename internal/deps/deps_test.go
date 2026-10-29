@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/the-middleware/internal/events"
 )
 
 func TestNewerComparesSemverNotStrings(t *testing.T) {

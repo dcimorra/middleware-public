@@ -7,7 +7,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/dcimorra/middleware-public/internal/wireguard"
+	"github.com/dcimorra/the-middleware/internal/wireguard"
 )
 
 // MeshTable is the nftables table of the nodes' mesh. Its own table, not a

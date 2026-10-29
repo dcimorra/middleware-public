@@ -4,7 +4,7 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/dcimorra/middleware-public/internal/security"
+	"github.com/dcimorra/the-middleware/internal/security"
 )
 
 // SecurityOptions wire the security door's routes. Door may be nil if

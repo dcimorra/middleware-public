@@ -9,9 +9,9 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/dcimorra/middleware-public/internal/auth"
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/tasks"
+	"github.com/dcimorra/the-middleware/internal/auth"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/tasks"
 )
 
 // TasksOptions wire the tasks section.

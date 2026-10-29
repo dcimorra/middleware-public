@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/relocate"
-	"github.com/dcimorra/middleware-public/internal/runtime"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/relocate"
+	"github.com/dcimorra/the-middleware/internal/runtime"
 )
 
 // dumpSite is a site on f whose worker's data moves by command, its

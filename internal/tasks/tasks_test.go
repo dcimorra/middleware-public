@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/the-middleware/internal/events"
 )
 
 // clock is a movable Now for the scheduler: a test sets the minute and the

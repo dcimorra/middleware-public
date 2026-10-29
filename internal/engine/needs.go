@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 // What a site needs to do its job: another site, or one of a site's

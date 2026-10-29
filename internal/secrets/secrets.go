@@ -23,7 +23,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/fsx"
 )
 
 // EnvKey is the environment variable that can carry the key.

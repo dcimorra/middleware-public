@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/engine"
-	"github.com/dcimorra/middleware-public/internal/httpcache"
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/engine"
+	"github.com/dcimorra/the-middleware/internal/httpcache"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 func lookupFor(sites map[string]engine.Snapshot) Lookup {

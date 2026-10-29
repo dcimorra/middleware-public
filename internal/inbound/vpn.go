@@ -9,9 +9,9 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/acme"
-	"github.com/dcimorra/middleware-public/internal/localdns"
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/acme"
+	"github.com/dcimorra/the-middleware/internal/localdns"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 // VPN is the door inside the VPN: the server's address in the tunnel, on

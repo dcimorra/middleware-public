@@ -17,7 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/dcimorra/middleware-public/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/agent"
 )
 
 // Config is the command template.

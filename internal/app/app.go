@@ -13,11 +13,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/engine"
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/ports"
-	"github.com/dcimorra/middleware-public/internal/proxy"
-	"github.com/dcimorra/middleware-public/internal/settings"
+	"github.com/dcimorra/the-middleware/internal/engine"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/ports"
+	"github.com/dcimorra/the-middleware/internal/proxy"
+	"github.com/dcimorra/the-middleware/internal/settings"
 )
 
 // App is the process.

@@ -3,8 +3,8 @@ package nodes
 import (
 	"context"
 
-	"github.com/dcimorra/middleware-public/internal/helper"
-	"github.com/dcimorra/middleware-public/internal/wireguard"
+	"github.com/dcimorra/the-middleware/internal/helper"
+	"github.com/dcimorra/the-middleware/internal/wireguard"
 )
 
 // HelperNetwork is the mesh's interface and firewall through the helper:

@@ -11,8 +11,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/dcimorra/middleware-public/internal/app"
-	"github.com/dcimorra/middleware-public/internal/settings"
+	"github.com/dcimorra/the-middleware/internal/app"
+	"github.com/dcimorra/the-middleware/internal/settings"
 )
 
 // Version is set by the build (-ldflags "-X main.Version=...").

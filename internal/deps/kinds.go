@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/fsx"
 )
 
 // Not every agent comes from npm. Two more kinds, each installed under the

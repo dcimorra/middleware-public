@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/the-middleware/internal/events"
 )
 
 // The kinds of notification, a closed list: what a device can ask for,

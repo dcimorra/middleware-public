@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/modules"
-	"github.com/dcimorra/middleware-public/internal/secrets"
+	"github.com/dcimorra/the-middleware/internal/modules"
+	"github.com/dcimorra/the-middleware/internal/secrets"
 )
 
 func TestFindZonePicksTheLongestSuffix(t *testing.T) {

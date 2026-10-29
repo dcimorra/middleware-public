@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 // TestADockerSiteSeesItsOwnPathsBehindItsWalls runs a real container, so

@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/archive"
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/manifest"
-	"github.com/dcimorra/middleware-public/internal/migrate"
+	"github.com/dcimorra/the-middleware/internal/archive"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/migrate"
 )
 
 // Importing a site from a V1 house into a V2 one is a move whose source is

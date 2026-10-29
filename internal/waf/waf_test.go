@@ -3,7 +3,7 @@ package waf
 import (
 	"errors"
 	"fmt"
-	"github.com/dcimorra/middleware-public/internal/attack"
+	"github.com/dcimorra/the-middleware/internal/attack"
 	"io"
 	"net"
 	"net/http"
@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 // clock is a fake time source the tests move by hand.

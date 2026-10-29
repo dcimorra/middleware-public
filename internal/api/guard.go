@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/dcimorra/middleware-public/internal/guard"
+	"github.com/dcimorra/the-middleware/internal/guard"
 )
 
 // GuardOptions wire the guard section.

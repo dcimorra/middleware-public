@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/agent"
 )
 
 func TestTheEmbeddedSkillIsInstalledInTheHomeBeforeATurn(t *testing.T) {

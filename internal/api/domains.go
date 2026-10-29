@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/dcimorra/middleware-public/internal/domains"
+	"github.com/dcimorra/the-middleware/internal/domains"
 )
 
 // DefaultTLDs are searched when the request names none.

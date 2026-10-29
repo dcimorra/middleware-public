@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/archive"
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/archive"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 // Target is the node a site moves to, as the mover talks to it: over the

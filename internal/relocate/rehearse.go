@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/manifest"
-	"github.com/dcimorra/middleware-public/internal/runtime"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/runtime"
 )
 
 // A worker's export that cannot work was found only once the site had

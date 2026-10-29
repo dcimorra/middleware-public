@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/dcimorra/middleware-public/internal/modules"
+	"github.com/dcimorra/the-middleware/internal/modules"
 )
 
 // extraRoutes are the panel's edge screens: records, edge cache, Access,

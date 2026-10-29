@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/agent"
-	"github.com/dcimorra/middleware-public/internal/agent/claude"
+	"github.com/dcimorra/the-middleware/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/agent/claude"
 )
 
 // What Qwen Code 0.26 printed for a turn with a wrong key.

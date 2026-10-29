@@ -23,10 +23,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/acme"
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/acme"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 // Issuer obtains a chain for one domain with the given key. The ACME

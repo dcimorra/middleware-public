@@ -13,7 +13,13 @@ import (
 // Repo is where the releases are published. The helper downloads from
 // here and nowhere else: a URL in a request would make the socket a way
 // to put any executable in /usr/local/bin as root.
-const Repo = "dcimorra/middleware-public"
+//
+// The repository was dcimorra/middleware-public until v2.0.0-alpha.81.
+// Binaries from before carry that name and still find their updates
+// through GitHub's redirect of a renamed repository, which lasts only
+// while nothing else takes the old name: a new repository called
+// middleware-public on that account would cut every one of them off.
+const Repo = "dcimorra/the-middleware"
 
 // DownloadBase is the release download prefix; a variable for tests.
 var DownloadBase = "https://github.com/" + Repo + "/releases/download"

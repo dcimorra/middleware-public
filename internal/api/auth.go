@@ -3,8 +3,8 @@ package api
 import (
 	"net/http"
 
-	"github.com/dcimorra/middleware-public/internal/auth"
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/auth"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 func (s *Server) registerAuth() {

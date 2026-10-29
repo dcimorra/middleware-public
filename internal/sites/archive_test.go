@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 // Archiving a site moved to another node packs it with the manifest it

@@ -27,7 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/the-middleware/internal/events"
 )
 
 // NoBrowser says what to do when there is no browser.

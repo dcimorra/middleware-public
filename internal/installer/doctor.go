@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/nodeenv"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/nodeenv"
 )
 
 // Check is one line of `middleware doctor`.

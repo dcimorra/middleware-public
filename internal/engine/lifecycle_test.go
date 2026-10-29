@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/manifest"
-	"github.com/dcimorra/middleware-public/internal/ports"
-	"github.com/dcimorra/middleware-public/internal/runtime"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/ports"
+	"github.com/dcimorra/the-middleware/internal/runtime"
 )
 
 // zombie reports whether pid has exited and waits to be reaped. In a

@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/runtime"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/runtime"
 )
 
 // A site's resources over time: CPU (percent of one core) and resident

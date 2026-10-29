@@ -6,11 +6,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/dcimorra/middleware-public/internal/app"
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/manifest"
-	"github.com/dcimorra/middleware-public/internal/modules/openspec"
-	"github.com/dcimorra/middleware-public/internal/specs"
+	"github.com/dcimorra/the-middleware/internal/app"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/modules/openspec"
+	"github.com/dcimorra/the-middleware/internal/specs"
 )
 
 // specsInit runs `openspec init` in a site's folder: with the site's own

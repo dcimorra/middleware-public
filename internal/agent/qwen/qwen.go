@@ -14,9 +14,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/dcimorra/middleware-public/internal/agent"
-	"github.com/dcimorra/middleware-public/internal/agent/claude"
-	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/agent/claude"
+	"github.com/dcimorra/the-middleware/internal/fsx"
 )
 
 // DefaultBaseURL is QwenCloud's international pay-as-you-go endpoint.

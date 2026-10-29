@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/inbound"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/inbound"
 )
 
 // A migration moves many domains from one door to another, one at a time,

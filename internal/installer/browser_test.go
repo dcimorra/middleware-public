@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/shots"
+	"github.com/dcimorra/the-middleware/internal/shots"
 )
 
 func fakeChromeForTesting(t *testing.T) *httptest.Server {

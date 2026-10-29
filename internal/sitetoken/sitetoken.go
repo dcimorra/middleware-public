@@ -18,8 +18,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 // Keys derives and checks tokens with one key under data/.

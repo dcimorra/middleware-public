@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/modules"
+	"github.com/dcimorra/the-middleware/internal/modules"
 )
 
 // ModulesOptions wire the modules section.

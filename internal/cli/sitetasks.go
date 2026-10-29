@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/tasks"
+	"github.com/dcimorra/the-middleware/internal/tasks"
 )
 
 const siteTasksUsage = `usage: middleware site tasks <domain> [command]

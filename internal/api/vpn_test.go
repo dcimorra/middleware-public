@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/helper"
-	"github.com/dcimorra/middleware-public/internal/modules"
-	"github.com/dcimorra/middleware-public/internal/modules/vpn"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/helper"
+	"github.com/dcimorra/the-middleware/internal/modules"
+	"github.com/dcimorra/the-middleware/internal/modules/vpn"
 )
 
 // The VPN is the one module whose routes are mux patterns and whose

@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/dcimorra/middleware-public/internal/httpcache"
+	"github.com/dcimorra/the-middleware/internal/httpcache"
 )
 
 // RegisterCache adds the response cache's routes.

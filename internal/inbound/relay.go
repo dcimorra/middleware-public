@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/acme"
+	"github.com/dcimorra/the-middleware/internal/acme"
 )
 
 // A device on this node's VPN reaches the other nodes of the network

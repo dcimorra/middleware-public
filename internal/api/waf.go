@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/attack"
-	"github.com/dcimorra/middleware-public/internal/traffic"
-	"github.com/dcimorra/middleware-public/internal/waf"
+	"github.com/dcimorra/the-middleware/internal/attack"
+	"github.com/dcimorra/the-middleware/internal/traffic"
+	"github.com/dcimorra/the-middleware/internal/waf"
 )
 
 // WAFOptions wire the WAF section. Either may be nil when the package did

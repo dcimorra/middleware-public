@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/agent"
-	"github.com/dcimorra/middleware-public/internal/chat"
-	"github.com/dcimorra/middleware-public/internal/containerize"
-	"github.com/dcimorra/middleware-public/internal/engine"
-	"github.com/dcimorra/middleware-public/internal/ports"
-	"github.com/dcimorra/middleware-public/internal/runtime"
+	"github.com/dcimorra/the-middleware/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/chat"
+	"github.com/dcimorra/the-middleware/internal/containerize"
+	"github.com/dcimorra/the-middleware/internal/engine"
+	"github.com/dcimorra/the-middleware/internal/ports"
+	"github.com/dcimorra/the-middleware/internal/runtime"
 )
 
 // containFixture is a house whose "docker" runtime is a plain process, so

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/the-middleware/internal/events"
 )
 
 // The browser reaper. A headless Chromium started by a site, a test run,

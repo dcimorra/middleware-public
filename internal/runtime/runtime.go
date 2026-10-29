@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 // Instance is one running copy of a site.

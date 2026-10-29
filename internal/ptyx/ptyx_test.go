@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/ptyx"
+	"github.com/dcimorra/the-middleware/internal/ptyx"
 )
 
 // TestAProgramSeesARealTerminal is the whole reason the package exists:

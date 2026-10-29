@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/agent"
 )
 
 // With AGY_BIN and AGY_TOKEN (a signed-in antigravity-oauth-token file),

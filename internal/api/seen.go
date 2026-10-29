@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/dcimorra/middleware-public/internal/seen"
+	"github.com/dcimorra/the-middleware/internal/seen"
 )
 
 // RegisterSeen mounts a site's tally of callers.

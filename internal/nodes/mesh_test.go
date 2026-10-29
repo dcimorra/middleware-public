@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/helper"
-	"github.com/dcimorra/middleware-public/internal/wireguard"
+	"github.com/dcimorra/the-middleware/internal/helper"
+	"github.com/dcimorra/the-middleware/internal/wireguard"
 )
 
 // fakeNet is the interface without the kernel: it records what the mesh

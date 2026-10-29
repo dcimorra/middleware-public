@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/engine"
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/ports"
+	"github.com/dcimorra/the-middleware/internal/engine"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/ports"
 )
 
 func waitHistory(t *testing.T, m *Manager, domain string, n int) []engine.Version {

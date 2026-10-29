@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/shots"
+	"github.com/dcimorra/the-middleware/internal/shots"
 )
 
 // BrowserWhy is what the operator is told before being asked: what the

@@ -13,11 +13,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/auth"
-	"github.com/dcimorra/middleware-public/internal/chat"
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/manifest"
-	"github.com/dcimorra/middleware-public/internal/sitetoken"
+	"github.com/dcimorra/the-middleware/internal/auth"
+	"github.com/dcimorra/the-middleware/internal/chat"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/sitetoken"
 )
 
 // The site door is the third door of the house: the panel is for whoever

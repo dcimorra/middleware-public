@@ -4,7 +4,7 @@
 # middleware group, and never takes a string that reaches a shell.
 [Unit]
 Description=middleware privileged helper
-Documentation=https://github.com/dcimorra/middleware-public/blob/main/docs/security.md
+Documentation=https://github.com/dcimorra/the-middleware/blob/main/docs/security.md
 After=network-online.target
 Before=middleware.service
 

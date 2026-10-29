@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/helper"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/helper"
 )
 
 func countType(bus *events.Bus, typ string) int {

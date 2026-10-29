@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/fsx"
 )
 
 // FileSecrets is AES-256-GCM keyed from MIDDLEWARE_SECRET_KEY (64 hex

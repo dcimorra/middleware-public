@@ -7,8 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/runtime"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/runtime"
 	"io"
 	"net/http"
 	"os"
@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/relocate"
-	"github.com/dcimorra/middleware-public/internal/sites"
+	"github.com/dcimorra/the-middleware/internal/relocate"
+	"github.com/dcimorra/the-middleware/internal/sites"
 )
 
 // httpTarget is the target node as the mesh would reach it, minus the

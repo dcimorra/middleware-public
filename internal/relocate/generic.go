@@ -11,9 +11,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/dcimorra/middleware-public/internal/archive"
-	"github.com/dcimorra/middleware-public/internal/manifest"
-	"github.com/dcimorra/middleware-public/internal/migrate"
+	"github.com/dcimorra/the-middleware/internal/archive"
+	"github.com/dcimorra/the-middleware/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/migrate"
 )
 
 // Importing an app from any server, not only a V1 house: a folder

@@ -5,12 +5,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/app"
-	"github.com/dcimorra/middleware-public/internal/attack"
-	"github.com/dcimorra/middleware-public/internal/edge"
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/proxy"
-	"github.com/dcimorra/middleware-public/internal/waf"
+	"github.com/dcimorra/the-middleware/internal/app"
+	"github.com/dcimorra/the-middleware/internal/attack"
+	"github.com/dcimorra/the-middleware/internal/edge"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/proxy"
+	"github.com/dcimorra/the-middleware/internal/waf"
 )
 
 var theAttack *attack.Guard

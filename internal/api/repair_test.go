@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/agent"
-	"github.com/dcimorra/middleware-public/internal/chat"
-	"github.com/dcimorra/middleware-public/internal/settings"
+	"github.com/dcimorra/the-middleware/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/chat"
+	"github.com/dcimorra/the-middleware/internal/settings"
 )
 
 // An arrived site that does not start is handed to the house's AI for

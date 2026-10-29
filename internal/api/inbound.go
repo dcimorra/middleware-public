@@ -2,15 +2,15 @@ package api
 
 import (
 	"context"
-	"github.com/dcimorra/middleware-public/internal/auth"
+	"github.com/dcimorra/the-middleware/internal/auth"
 	"net"
 	"net/http"
 	"slices"
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/inbound"
-	"github.com/dcimorra/middleware-public/internal/publish"
+	"github.com/dcimorra/the-middleware/internal/inbound"
+	"github.com/dcimorra/the-middleware/internal/publish"
 )
 
 // DNSInfo is what a DNS provider knows about one name.

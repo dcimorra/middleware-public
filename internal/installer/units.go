@@ -139,7 +139,7 @@ var templates = map[string]string{
 # Re-run "middleware install" to regenerate; edits here are overwritten.
 [Unit]
 Description=middleware supervisor
-Documentation=https://github.com/dcimorra/middleware-public
+Documentation=https://github.com/dcimorra/the-middleware
 After=network-online.target
 Wants=network-online.target
 Requires={{.SocketUnitName}}
@@ -214,7 +214,7 @@ WantedBy=sockets.target
 # {{.Group}} group, and never takes a string that reaches a shell.
 [Unit]
 Description=middleware privileged helper
-Documentation=https://github.com/dcimorra/middleware-public/blob/main/docs/security.md
+Documentation=https://github.com/dcimorra/the-middleware/blob/main/docs/security.md
 After=network-online.target
 Before={{.ServiceUnitName}}
 

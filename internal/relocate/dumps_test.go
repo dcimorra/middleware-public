@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/manifest"
-	"github.com/dcimorra/middleware-public/internal/runtime"
+	"github.com/dcimorra/the-middleware/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/runtime"
 )
 
 // An export that fails halfway leaves no half dump in the folder: its

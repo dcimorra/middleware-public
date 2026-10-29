@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/chat"
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/tasks"
+	"github.com/dcimorra/the-middleware/internal/chat"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/tasks"
 )
 
 // siteTasksFixture is two sites, a task at the root and one of the

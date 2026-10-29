@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/the-middleware/internal/events"
 )
 
 func run(t *testing.T, dir string, args ...string) string {

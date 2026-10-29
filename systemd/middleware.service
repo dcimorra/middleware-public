@@ -2,7 +2,7 @@
 # Re-run "middleware install" to regenerate; edits here are overwritten.
 [Unit]
 Description=middleware supervisor
-Documentation=https://github.com/dcimorra/middleware-public
+Documentation=https://github.com/dcimorra/the-middleware
 After=network-online.target
 Wants=network-online.target
 Requires=middleware.socket

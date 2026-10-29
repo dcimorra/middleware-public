@@ -12,7 +12,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/fsx"
 )
 
 // Paths are the system directories the installer writes to. Variables so

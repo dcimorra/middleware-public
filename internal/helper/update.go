@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/release"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/release"
 )
 
 // UpdateArgs is the input of update.install: the release's name and

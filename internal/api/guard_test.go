@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/guard"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/guard"
 )
 
 func TestGuardListsRulesAndIncidentsAndDismissesOne(t *testing.T) {

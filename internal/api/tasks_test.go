@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/tasks"
+	"github.com/dcimorra/the-middleware/internal/tasks"
 )
 
 func TestTasksAreWrittenListedRunAndDeletedThroughTheAPI(t *testing.T) {

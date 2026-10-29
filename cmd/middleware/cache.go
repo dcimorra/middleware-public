@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/dcimorra/middleware-public/internal/app"
-	"github.com/dcimorra/middleware-public/internal/httpcache"
-	"github.com/dcimorra/middleware-public/internal/proxy"
+	"github.com/dcimorra/the-middleware/internal/app"
+	"github.com/dcimorra/the-middleware/internal/httpcache"
+	"github.com/dcimorra/the-middleware/internal/proxy"
 )
 
 // theCache is the house's response cache; the API reads its numbers.

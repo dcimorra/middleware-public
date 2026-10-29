@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/agent"
 )
 
 // fakeAnthropic answers every Messages call with "done", streamed when

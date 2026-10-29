@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 // MarkVar is put in every turn's environment, and everything a turn

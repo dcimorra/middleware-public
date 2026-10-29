@@ -32,7 +32,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/fsx"
 )
 
 var b64 = base64.RawURLEncoding

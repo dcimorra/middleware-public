@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/agent"
 )
 
 // The automatic repairs run in a conversation of their own, the same one

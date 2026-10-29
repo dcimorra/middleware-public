@@ -19,11 +19,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/auth"
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/inbound"
-	"github.com/dcimorra/middleware-public/internal/settings"
-	"github.com/dcimorra/middleware-public/internal/sites"
+	"github.com/dcimorra/the-middleware/internal/auth"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/inbound"
+	"github.com/dcimorra/the-middleware/internal/settings"
+	"github.com/dcimorra/the-middleware/internal/sites"
 )
 
 // Usage is what `middleware help` adds for these commands.

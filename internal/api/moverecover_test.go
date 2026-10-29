@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/relocate"
-	"github.com/dcimorra/middleware-public/internal/tasks"
+	"github.com/dcimorra/the-middleware/internal/relocate"
+	"github.com/dcimorra/the-middleware/internal/tasks"
 )
 
 // fastRecovery makes a move put right after a restart begin at once and

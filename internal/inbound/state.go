@@ -18,8 +18,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 // Door names one of the three.

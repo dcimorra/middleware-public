@@ -21,9 +21,9 @@ import (
 	// that never runs.
 	_ "time/tzdata"
 
-	"github.com/dcimorra/middleware-public/internal/cron"
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/cron"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 // Version is the only supported schema version.

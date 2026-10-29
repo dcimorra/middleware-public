@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/dcimorra/middleware-public/internal/migrate"
-	"github.com/dcimorra/middleware-public/internal/settings"
+	"github.com/dcimorra/the-middleware/internal/migrate"
+	"github.com/dcimorra/the-middleware/internal/settings"
 )
 
 func init() {

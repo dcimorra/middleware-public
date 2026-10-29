@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/the-middleware/internal/events"
 )
 
 // fakeNPM writes an npm that prints what npm audit --json prints (the

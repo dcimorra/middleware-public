@@ -14,15 +14,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/agent"
-	"github.com/dcimorra/middleware-public/internal/agent/claude"
-	"github.com/dcimorra/middleware-public/internal/agent/codex"
-	"github.com/dcimorra/middleware-public/internal/agent/grok"
-	"github.com/dcimorra/middleware-public/internal/agent/kimi"
-	"github.com/dcimorra/middleware-public/internal/agent/qwen"
-	"github.com/dcimorra/middleware-public/internal/agent/vibe"
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/modules"
+	"github.com/dcimorra/the-middleware/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/agent/claude"
+	"github.com/dcimorra/the-middleware/internal/agent/codex"
+	"github.com/dcimorra/the-middleware/internal/agent/grok"
+	"github.com/dcimorra/the-middleware/internal/agent/kimi"
+	"github.com/dcimorra/the-middleware/internal/agent/qwen"
+	"github.com/dcimorra/the-middleware/internal/agent/vibe"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/modules"
 )
 
 // A vendor's module runs the vendor's own agent when it has one that works

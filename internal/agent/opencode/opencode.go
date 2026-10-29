@@ -21,8 +21,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/dcimorra/middleware-public/internal/agent"
-	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/fsx"
 )
 
 // Config is the command template.

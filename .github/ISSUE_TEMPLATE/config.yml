@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/dcimorra/middleware-public/security/advisories/new
+    url: https://github.com/dcimorra/the-middleware/security/advisories/new
     about: Report privately. Please do not open a public issue for a security problem.

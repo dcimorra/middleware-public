@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/dcimorra/middleware-public/internal/vitals"
+	"github.com/dcimorra/the-middleware/internal/vitals"
 )
 
 // RegisterVitals mounts the machine's live numbers and its episodes.

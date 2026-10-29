@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/app"
-	"github.com/dcimorra/middleware-public/internal/edge"
-	"github.com/dcimorra/middleware-public/internal/proxy"
-	"github.com/dcimorra/middleware-public/internal/seen"
+	"github.com/dcimorra/the-middleware/internal/app"
+	"github.com/dcimorra/the-middleware/internal/edge"
+	"github.com/dcimorra/the-middleware/internal/proxy"
+	"github.com/dcimorra/the-middleware/internal/seen"
 )
 
 // orderSeen counts a site's callers after the WAF (a banned address

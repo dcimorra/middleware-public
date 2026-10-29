@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/relocate"
+	"github.com/dcimorra/the-middleware/internal/relocate"
 )
 
 func get(t *testing.T, h http.Handler, p string) *httptest.ResponseRecorder {

@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/access"
-	"github.com/dcimorra/middleware-public/internal/api"
-	"github.com/dcimorra/middleware-public/internal/app"
-	"github.com/dcimorra/middleware-public/internal/auth"
-	"github.com/dcimorra/middleware-public/internal/manifest"
-	"github.com/dcimorra/middleware-public/internal/settings"
+	"github.com/dcimorra/the-middleware/internal/access"
+	"github.com/dcimorra/the-middleware/internal/api"
+	"github.com/dcimorra/the-middleware/internal/app"
+	"github.com/dcimorra/the-middleware/internal/auth"
+	"github.com/dcimorra/the-middleware/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/settings"
 )
 
 // TestServeAnswersEverySectionOfTheAPI builds the process the way `serve`

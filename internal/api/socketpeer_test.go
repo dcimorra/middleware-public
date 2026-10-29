@@ -14,7 +14,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/chat"
+	"github.com/dcimorra/the-middleware/internal/chat"
 )
 
 // TestSocketPeerHelper is the other end of the socket in the tests below:

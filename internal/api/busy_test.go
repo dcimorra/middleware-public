@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/relocate"
+	"github.com/dcimorra/the-middleware/internal/relocate"
 )
 
 // What the updater asks before it restarts the house: a move from here,

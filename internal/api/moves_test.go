@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/relocate"
+	"github.com/dcimorra/the-middleware/internal/relocate"
 )
 
 // A move is read afterwards as its operations: which went, which failed

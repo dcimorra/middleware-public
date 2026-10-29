@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/dcimorra/middleware-public/internal/pages"
+	"github.com/dcimorra/the-middleware/internal/pages"
 )
 
 // registerPages: the designs of the visitor pages, and a preview of one,

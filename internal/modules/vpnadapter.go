@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/dcimorra/middleware-public/internal/modules/vpn"
-	"github.com/dcimorra/middleware-public/internal/secrets"
+	"github.com/dcimorra/the-middleware/internal/modules/vpn"
+	"github.com/dcimorra/the-middleware/internal/secrets"
 )
 
 // The vpn package was written against its own copy of the Module shape so

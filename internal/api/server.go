@@ -17,14 +17,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/auth"
-	"github.com/dcimorra/middleware-public/internal/engine"
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/manifest"
-	"github.com/dcimorra/middleware-public/internal/nodes"
-	"github.com/dcimorra/middleware-public/internal/publish"
-	"github.com/dcimorra/middleware-public/internal/settings"
-	"github.com/dcimorra/middleware-public/internal/sites"
+	"github.com/dcimorra/the-middleware/internal/auth"
+	"github.com/dcimorra/the-middleware/internal/engine"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/nodes"
+	"github.com/dcimorra/the-middleware/internal/publish"
+	"github.com/dcimorra/the-middleware/internal/settings"
+	"github.com/dcimorra/the-middleware/internal/sites"
 )
 
 // Prefix is where the API lives.

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/auth"
-	"github.com/dcimorra/middleware-public/internal/installer"
+	"github.com/dcimorra/the-middleware/internal/auth"
+	"github.com/dcimorra/the-middleware/internal/installer"
 )
 
 // The house's requirements, installed from Sistema (the helper's

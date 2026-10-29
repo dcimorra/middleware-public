@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 // ExecOptions are a one-off command in a site's environment.

@@ -31,8 +31,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/fsx"
 )
 
 // Site is what the auditor needs.

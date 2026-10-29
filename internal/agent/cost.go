@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/fsx"
 )
 
 // Ledger is the per-site cost record at data/agents/cost/<domain>.json: a

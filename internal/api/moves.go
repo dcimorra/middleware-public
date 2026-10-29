@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/relocate"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/relocate"
 )
 
 // A move is a list of operations, each with its state, kept on disk. The

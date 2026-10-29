@@ -34,11 +34,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/archive"
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/manifest"
-	"github.com/dcimorra/middleware-public/internal/runtime"
-	"github.com/dcimorra/middleware-public/internal/tasks"
+	"github.com/dcimorra/the-middleware/internal/archive"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/runtime"
+	"github.com/dcimorra/the-middleware/internal/tasks"
 )
 
 // Parts are what moves with a site: its folder, and what the house keeps

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/runtime"
+	"github.com/dcimorra/the-middleware/internal/runtime"
 )
 
 // TestMain lets the test binary double as a supervised site: with

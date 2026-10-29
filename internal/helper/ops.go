@@ -13,8 +13,8 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/wireguard"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/wireguard"
 )
 
 // TableName is the nftables table the helper owns. Everything it does is

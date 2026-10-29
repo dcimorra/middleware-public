@@ -33,12 +33,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/attack"
-	"github.com/dcimorra/middleware-public/internal/edge"
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/manifest"
-	"github.com/dcimorra/middleware-public/internal/pages"
+	"github.com/dcimorra/the-middleware/internal/attack"
+	"github.com/dcimorra/the-middleware/internal/edge"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/pages"
 )
 
 // Policy is the global layer-7 policy, data/waf/policy.json. A site's

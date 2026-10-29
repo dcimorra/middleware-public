@@ -53,7 +53,7 @@ chose.
 ## The procedure
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/dcimorra/middleware-public/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/dcimorra/the-middleware/main/scripts/install.sh | sh
 ```
 
 or, with a binary you built or downloaded yourself:
@@ -123,12 +123,12 @@ sudo systemctl restart middleware-helper middleware
 
 Any other release: install the previous binary the same way; the state files are forward and
 backward compatible within a major version. Releases are at
-`https://github.com/dcimorra/middleware-public/releases`; each has its
+`https://github.com/dcimorra/the-middleware/releases`; each has its
 `.sha256`.
 
 ```sh
-curl -fsSL -o middleware https://github.com/dcimorra/middleware-public/releases/download/v2.0.0/middleware-linux-amd64
-curl -fsSL https://github.com/dcimorra/middleware-public/releases/download/v2.0.0/middleware-linux-amd64.sha256 | sed 's/ .*//' > want
+curl -fsSL -o middleware https://github.com/dcimorra/the-middleware/releases/download/v2.0.0/middleware-linux-amd64
+curl -fsSL https://github.com/dcimorra/the-middleware/releases/download/v2.0.0/middleware-linux-amd64.sha256 | sed 's/ .*//' > want
 sha256sum middleware | sed 's/ .*//' | diff - want && chmod +x middleware && ./middleware install
 ```
 

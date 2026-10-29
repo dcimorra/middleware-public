@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/helper"
-	"github.com/dcimorra/middleware-public/internal/nodes"
-	"github.com/dcimorra/middleware-public/internal/settings"
-	"github.com/dcimorra/middleware-public/internal/wireguard"
+	"github.com/dcimorra/the-middleware/internal/helper"
+	"github.com/dcimorra/the-middleware/internal/nodes"
+	"github.com/dcimorra/the-middleware/internal/settings"
+	"github.com/dcimorra/the-middleware/internal/wireguard"
 )
 
 // meshNet stands in for the kernel's interface; the mesh door and every

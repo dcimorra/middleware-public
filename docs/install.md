@@ -8,7 +8,7 @@ through `sudo` and prints as it goes. Requirements: Linux with systemd,
 ## One-liner
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/dcimorra/middleware-public/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/dcimorra/the-middleware/main/scripts/install.sh | sh
 ```
 
 The script refuses to run as root, detects the architecture (amd64, arm64),
@@ -32,8 +32,8 @@ curl -fsSL …/install.sh | MIDDLEWARE_VERSION=v2.0.0-alpha.1 sh
 Needs Go (version in `go.mod`), nothing else: the core has no dependencies.
 
 ```sh
-git clone https://github.com/dcimorra/middleware-public
-cd middleware-public
+git clone https://github.com/dcimorra/the-middleware
+cd the-middleware
 scripts/build-from-source.sh            # builds ./middleware and runs install
 scripts/build-from-source.sh --no-install
 ```

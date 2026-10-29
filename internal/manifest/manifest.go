@@ -19,10 +19,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/attack"
-	"github.com/dcimorra/middleware-public/internal/httpcache"
-	"github.com/dcimorra/middleware-public/internal/pages"
-	"github.com/dcimorra/middleware-public/internal/security"
+	"github.com/dcimorra/the-middleware/internal/attack"
+	"github.com/dcimorra/the-middleware/internal/httpcache"
+	"github.com/dcimorra/the-middleware/internal/pages"
+	"github.com/dcimorra/the-middleware/internal/security"
 )
 
 // FileName is the manifest's name inside a site folder.

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/agent"
-	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/the-middleware/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/events"
 )
 
 func send(t *testing.T, m *Manager, name, text string, ch <-chan events.Event) {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/chat"
+	"github.com/dcimorra/the-middleware/internal/chat"
 )
 
 // TestExecHelper runs `middleware exec` with the arguments in

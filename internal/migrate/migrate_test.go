@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/access"
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/access"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 // v1Hash writes a password the way V1's panel did.

@@ -21,11 +21,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/access"
-	"github.com/dcimorra/middleware-public/internal/attack"
-	"github.com/dcimorra/middleware-public/internal/httpcache"
-	"github.com/dcimorra/middleware-public/internal/manifest"
-	"github.com/dcimorra/middleware-public/internal/security"
+	"github.com/dcimorra/the-middleware/internal/access"
+	"github.com/dcimorra/the-middleware/internal/attack"
+	"github.com/dcimorra/the-middleware/internal/httpcache"
+	"github.com/dcimorra/the-middleware/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/security"
 )
 
 // Result is one site's conversion.

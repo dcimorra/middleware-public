@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/tasks"
+	"github.com/dcimorra/the-middleware/internal/tasks"
 )
 
 // `middleware site tasks` round-trips through the real API: what it

@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/dcimorra/middleware-public/internal/acme"
-	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/acme"
+	"github.com/dcimorra/the-middleware/internal/fsx"
 )
 
 // ACMEIssuer obtains certificates from a CA with one account kept under

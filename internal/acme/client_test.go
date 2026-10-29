@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/acme"
-	"github.com/dcimorra/middleware-public/internal/acme/acmetest"
+	"github.com/dcimorra/the-middleware/internal/acme"
+	"github.com/dcimorra/the-middleware/internal/acme/acmetest"
 )
 
 func newClient(t *testing.T, ca *acmetest.Server) *acme.Client {

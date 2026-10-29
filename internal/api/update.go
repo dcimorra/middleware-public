@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/update"
+	"github.com/dcimorra/the-middleware/internal/update"
 )
 
 // RegisterUpdate mounts the self-update.

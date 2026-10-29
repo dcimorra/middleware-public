@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/acme"
+	"github.com/dcimorra/the-middleware/internal/acme"
 )
 
 // Server is the fake CA. Fields are read at request time, so a test may

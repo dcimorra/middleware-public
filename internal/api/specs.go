@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/dcimorra/middleware-public/internal/specs"
+	"github.com/dcimorra/the-middleware/internal/specs"
 )
 
 // SpecsOptions wire the Specs tab: a site's openspec/ folder read for the

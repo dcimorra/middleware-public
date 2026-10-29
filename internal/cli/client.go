@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/api"
-	"github.com/dcimorra/middleware-public/internal/settings"
+	"github.com/dcimorra/the-middleware/internal/api"
+	"github.com/dcimorra/the-middleware/internal/settings"
 )
 
 // TokenEnv names the token the client sends when the socket is out of

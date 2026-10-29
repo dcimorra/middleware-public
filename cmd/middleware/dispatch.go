@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/dcimorra/middleware-public/internal/app"
+	"github.com/dcimorra/the-middleware/internal/app"
 )
 
 // extraUsage lists the subcommands other files register.

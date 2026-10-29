@@ -115,6 +115,6 @@ jobs:
           body: |
             Install or update on a Linux server:
 
-                curl -fsSL https://raw.githubusercontent.com/dcimorra/middleware-public/main/scripts/install.sh | sh
+                curl -fsSL https://raw.githubusercontent.com/dcimorra/the-middleware/main/scripts/install.sh | sh
 
             Each binary has a `.sha256` next to it; the script verifies it before running anything.

@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/dcimorra/middleware-public/docs"
+	"github.com/dcimorra/the-middleware/docs"
 )
 
 func (s *Server) registerDocs() {

@@ -3,8 +3,8 @@ package api
 import (
 	"encoding/json"
 
-	"github.com/dcimorra/middleware-public/internal/chat"
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/chat"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 	"net/http"
 	"sort"
 	"strconv"

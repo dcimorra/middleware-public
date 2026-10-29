@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/manifest"
-	"github.com/dcimorra/middleware-public/internal/runtime"
-	"github.com/dcimorra/middleware-public/internal/tasks"
+	"github.com/dcimorra/the-middleware/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/runtime"
+	"github.com/dcimorra/the-middleware/internal/tasks"
 )
 
 func seedV1(t *testing.T, root string, taskFiles map[string]string) {

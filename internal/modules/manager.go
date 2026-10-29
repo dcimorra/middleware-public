@@ -11,8 +11,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/secrets"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/secrets"
 )
 
 // Manager holds the registered modules and the store.

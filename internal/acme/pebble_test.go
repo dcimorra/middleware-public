@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/acme"
+	"github.com/dcimorra/the-middleware/internal/acme"
 )
 
 // TestPebbleIssuesACertificateThroughHTTP01 runs the client against Pebble,

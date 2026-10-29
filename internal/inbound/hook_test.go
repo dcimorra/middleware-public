@@ -15,12 +15,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/acme"
-	"github.com/dcimorra/middleware-public/internal/acme/acmetest"
-	"github.com/dcimorra/middleware-public/internal/certs"
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/inbound"
-	"github.com/dcimorra/middleware-public/internal/localdns"
+	"github.com/dcimorra/the-middleware/internal/acme"
+	"github.com/dcimorra/the-middleware/internal/acme/acmetest"
+	"github.com/dcimorra/the-middleware/internal/certs"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/inbound"
+	"github.com/dcimorra/the-middleware/internal/localdns"
 )
 
 type house struct {

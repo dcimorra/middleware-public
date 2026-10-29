@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/deps"
-	"github.com/dcimorra/middleware-public/internal/modules"
+	"github.com/dcimorra/the-middleware/internal/deps"
+	"github.com/dcimorra/the-middleware/internal/modules"
 )
 
 // Key is the module's key; Bin the command it installs.

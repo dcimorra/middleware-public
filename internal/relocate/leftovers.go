@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/runtime"
+	"github.com/dcimorra/the-middleware/internal/runtime"
 )
 
 // What moves leave behind on a node, to be seen and collected from the

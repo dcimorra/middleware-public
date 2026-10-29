@@ -1,5 +1,5 @@
 #!/bin/sh
-# Bootstrap for: curl -fsSL https://raw.githubusercontent.com/dcimorra/middleware-public/main/scripts/install.sh | sh
+# Bootstrap for: curl -fsSL https://raw.githubusercontent.com/dcimorra/the-middleware/main/scripts/install.sh | sh
 #
 # Downloads the latest release binary for this machine, verifies its sha256
 # against the file published next to it, and hands over to `middleware
@@ -7,7 +7,7 @@
 # purpose: the machine may have nothing but busybox.
 set -eu
 
-REPO="dcimorra/middleware-public"
+REPO="dcimorra/the-middleware"
 
 # MIDDLEWARE_VERSION=v2.0.0 pins a release. Otherwise the newest release
 # is asked from the API, prereleases included: GitHub's "latest" link skips

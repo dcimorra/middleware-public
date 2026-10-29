@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/helper"
-	"github.com/dcimorra/middleware-public/internal/installer"
+	"github.com/dcimorra/the-middleware/internal/helper"
+	"github.com/dcimorra/the-middleware/internal/installer"
 )
 
 // The panel follows the run by its log alone: its last line says how it

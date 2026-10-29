@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/sitetoken"
+	"github.com/dcimorra/the-middleware/internal/sitetoken"
 )
 
 // gitUpstream is GitHub played by git's own http-backend: it wants the

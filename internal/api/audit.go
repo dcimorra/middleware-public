@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/dcimorra/middleware-public/internal/audit"
+	"github.com/dcimorra/the-middleware/internal/audit"
 )
 
 // RegisterAudit adds the dependency audit's routes. a may be nil: 503.

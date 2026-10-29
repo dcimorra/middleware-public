@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/dcimorra/middleware-public/internal/installer"
+	"github.com/dcimorra/the-middleware/internal/installer"
 )
 
 // DoctorCheck is one line of `middleware doctor`, as the panel reads it.

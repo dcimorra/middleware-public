@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/deps"
+	"github.com/dcimorra/the-middleware/internal/deps"
 )
 
 // DepsOptions wire the /deps section: the external CLIs the modules run.

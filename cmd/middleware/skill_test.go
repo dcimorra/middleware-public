@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/chat"
+	"github.com/dcimorra/the-middleware/internal/chat"
 )
 
 func TestSkillInstallWritesTheEmbeddedSkillUnderTheRootOrWhereTold(t *testing.T) {

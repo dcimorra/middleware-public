@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/traffic"
-	"github.com/dcimorra/middleware-public/internal/waf"
+	"github.com/dcimorra/the-middleware/internal/traffic"
+	"github.com/dcimorra/the-middleware/internal/waf"
 )
 
 func wafFixture(t *testing.T) (*fixture, *waf.WAF) {

@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/fsx"
 )
 
 // Diagnostics on SIGUSR1: `kill -USR1 <pid>` writes data/diag/<time>.txt

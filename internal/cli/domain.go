@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/inbound"
-	"github.com/dcimorra/middleware-public/internal/manifest"
-	"github.com/dcimorra/middleware-public/internal/settings"
+	"github.com/dcimorra/the-middleware/internal/inbound"
+	"github.com/dcimorra/the-middleware/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/settings"
 )
 
 // setPanelDomain gives the panel its name and puts it on a door: ports

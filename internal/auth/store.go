@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/brake"
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/brake"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/fsx"
 )
 
 // SessionTTL is how long a cookie session lives. Thirty days matches what

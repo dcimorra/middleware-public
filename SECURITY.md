@@ -5,7 +5,7 @@
 Please do not open a public issue for a security problem.
 
 Use GitHub's private reporting: **Security → Report a vulnerability** on
-[github.com/dcimorra/middleware-public](https://github.com/dcimorra/middleware-public/security/advisories/new).
+[github.com/dcimorra/the-middleware](https://github.com/dcimorra/the-middleware/security/advisories/new).
 If that is not available to you, email the maintainer at the address on the
 GitHub profile with `[middleware security]` in the subject.
 

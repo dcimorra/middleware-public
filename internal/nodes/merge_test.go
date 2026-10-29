@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/wireguard"
+	"github.com/dcimorra/the-middleware/internal/wireguard"
 )
 
 func pubKey(t *testing.T) wireguard.Key {

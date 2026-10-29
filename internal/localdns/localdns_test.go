@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/localdns"
+	"github.com/dcimorra/the-middleware/internal/localdns"
 )
 
 func newServer(t *testing.T, sites ...string) *localdns.Server {

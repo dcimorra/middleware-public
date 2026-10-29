@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/inbound"
+	"github.com/dcimorra/the-middleware/internal/inbound"
 )
 
 // An idle keep-alive connection to 80 or 443 used to be held for good, and

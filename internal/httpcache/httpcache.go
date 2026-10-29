@@ -29,7 +29,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/edge"
+	"github.com/dcimorra/the-middleware/internal/edge"
 )
 
 // Rule is one entry of the manifest's cache.rules.

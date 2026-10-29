@@ -10,8 +10,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/modules"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/modules"
 )
 
 // Key is the module's key.

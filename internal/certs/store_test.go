@@ -20,10 +20,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/acme"
-	"github.com/dcimorra/middleware-public/internal/acme/acmetest"
-	"github.com/dcimorra/middleware-public/internal/certs"
-	"github.com/dcimorra/middleware-public/internal/events"
+	"github.com/dcimorra/the-middleware/internal/acme"
+	"github.com/dcimorra/the-middleware/internal/acme/acmetest"
+	"github.com/dcimorra/the-middleware/internal/certs"
+	"github.com/dcimorra/the-middleware/internal/events"
 )
 
 // door answers HTTP-01 on a loopback port for the fake CA to knock on.

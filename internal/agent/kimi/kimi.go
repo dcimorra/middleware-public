@@ -23,8 +23,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dcimorra/middleware-public/internal/agent"
-	"github.com/dcimorra/middleware-public/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/fsx"
 )
 
 // DefaultBaseURL is the Kimi platform's (an API key from

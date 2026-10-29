@@ -24,11 +24,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/agent"
-	"github.com/dcimorra/middleware-public/internal/agent/agy"
-	"github.com/dcimorra/middleware-public/internal/agent/claude"
-	"github.com/dcimorra/middleware-public/internal/deps"
-	"github.com/dcimorra/middleware-public/internal/modules"
+	"github.com/dcimorra/the-middleware/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/agent/agy"
+	"github.com/dcimorra/the-middleware/internal/agent/claude"
+	"github.com/dcimorra/the-middleware/internal/deps"
+	"github.com/dcimorra/the-middleware/internal/modules"
 )
 
 // Keys of the two modules.

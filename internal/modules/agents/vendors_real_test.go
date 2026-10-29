@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/agent"
 )
 
 // With CLAUDE_BIN, Claude Code runs a DeepSeek turn and a Z.AI turn with

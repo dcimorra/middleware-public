@@ -33,11 +33,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/brake"
-	"github.com/dcimorra/middleware-public/internal/edge"
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/manifest"
-	"github.com/dcimorra/middleware-public/internal/pages"
+	"github.com/dcimorra/the-middleware/internal/brake"
+	"github.com/dcimorra/the-middleware/internal/edge"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/pages"
 )
 
 // Site is what access needs to know about the site a request is for.

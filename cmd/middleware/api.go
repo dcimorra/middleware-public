@@ -1,9 +1,9 @@
 package main
 
 import (
-	"github.com/dcimorra/middleware-public/internal/api"
-	"github.com/dcimorra/middleware-public/internal/app"
-	"github.com/dcimorra/middleware-public/internal/cli"
+	"github.com/dcimorra/the-middleware/internal/api"
+	"github.com/dcimorra/the-middleware/internal/app"
+	"github.com/dcimorra/the-middleware/internal/cli"
 )
 
 // The API hook and the operator CLI. The hook answers the panel host and

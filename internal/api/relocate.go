@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/dcimorra/middleware-public/internal/auth"
-	goruntime "github.com/dcimorra/middleware-public/internal/runtime"
+	"github.com/dcimorra/the-middleware/internal/auth"
+	goruntime "github.com/dcimorra/the-middleware/internal/runtime"
 	"io"
 	"net/http"
 	"os"
@@ -17,13 +17,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/inbound"
-	"github.com/dcimorra/middleware-public/internal/manifest"
-	"github.com/dcimorra/middleware-public/internal/nodes"
-	"github.com/dcimorra/middleware-public/internal/relocate"
-	"github.com/dcimorra/middleware-public/internal/sites"
-	"github.com/dcimorra/middleware-public/internal/tasks"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/inbound"
+	"github.com/dcimorra/the-middleware/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/nodes"
+	"github.com/dcimorra/the-middleware/internal/relocate"
+	"github.com/dcimorra/the-middleware/internal/sites"
+	"github.com/dcimorra/the-middleware/internal/tasks"
 )
 
 // Moving a site to another node of the network. Both ends are here: the
@@ -240,7 +240,7 @@ func (s *Server) registerImportToken() {
 		if v := s.opts.Version; strings.HasPrefix(v, "v2.") {
 			release = "download/" + v
 		}
-		cmd := fmt.Sprintf("curl -fsSL -o /tmp/middleware-v2 https://github.com/dcimorra/middleware-public/releases/%s/middleware-linux-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') && chmod +x /tmp/middleware-v2 && /tmp/middleware-v2 import --to %s --token %s --domain %s <the app's folder>", release, base, secret, domain)
+		cmd := fmt.Sprintf("curl -fsSL -o /tmp/middleware-v2 https://github.com/dcimorra/the-middleware/releases/%s/middleware-linux-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') && chmod +x /tmp/middleware-v2 && /tmp/middleware-v2 import --to %s --token %s --domain %s <the app's folder>", release, base, secret, domain)
 		return map[string]any{"token": secret, "expires": pub.Expires, "domain": domain, "command": cmd}, nil
 	})
 }

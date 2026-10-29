@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/security"
+	"github.com/dcimorra/the-middleware/internal/security"
 )
 
 // The bans: fail2ban inside the house. A request that tries to exploit

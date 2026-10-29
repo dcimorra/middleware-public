@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 // A site in a container writes its own folder, and the house reads that

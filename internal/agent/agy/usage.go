@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/agent"
 )
 
 // Usage asks the CLI for the subscription's limits: `agy -p /usage

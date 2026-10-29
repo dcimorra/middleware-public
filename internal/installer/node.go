@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/nodeenv"
+	"github.com/dcimorra/the-middleware/internal/nodeenv"
 )
 
 // nvm on every machine, with the current LTS. The house installs any Node

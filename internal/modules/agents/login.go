@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/agent/agy"
-	"github.com/dcimorra/middleware-public/internal/ptyx"
+	"github.com/dcimorra/the-middleware/internal/agent/agy"
+	"github.com/dcimorra/the-middleware/internal/ptyx"
 )
 
 // Signing in with a subscription, from the panel.

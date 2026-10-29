@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/dcimorra/middleware-public/internal/repos"
+	"github.com/dcimorra/the-middleware/internal/repos"
 )
 
 // RegisterRepos adds the /repos routes. m may be nil; they answer 503.

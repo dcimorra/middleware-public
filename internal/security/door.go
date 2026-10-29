@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/pages"
+	"github.com/dcimorra/the-middleware/internal/pages"
 )
 
 // Site is what the door needs to know about the site a request is for.

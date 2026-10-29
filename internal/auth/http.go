@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/dcimorra/middleware-public/internal/edge"
+	"github.com/dcimorra/the-middleware/internal/edge"
 )
 
 // CookieName is the session cookie.

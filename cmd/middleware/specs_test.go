@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 // A site that serves its whole folder would publish openspec/ (every

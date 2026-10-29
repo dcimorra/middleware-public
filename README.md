@@ -178,7 +178,7 @@ event stream and a CLI.
 ## Get started
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/dcimorra/middleware-public/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/dcimorra/the-middleware/main/scripts/install.sh | sh
 ```
 
 The installer sets up the service, the privileged helper and the root

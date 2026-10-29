@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/dcimorra/middleware-public/internal/app"
-	"github.com/dcimorra/middleware-public/internal/panel"
+	"github.com/dcimorra/the-middleware/internal/app"
+	"github.com/dcimorra/the-middleware/internal/panel"
 )
 
 // The panel is static files behind the API: the API answers /api/v1 on the

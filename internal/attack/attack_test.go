@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/shots"
+	"github.com/dcimorra/the-middleware/internal/shots"
 )
 
 type clock struct{ t time.Time }

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/agent"
 )
 
 // With CODEX_BIN, the real CLI runs a turn as the house starts one, with a

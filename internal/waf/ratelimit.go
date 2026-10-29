@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/manifest"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 // shard is one slice of the bucket map. Sixty-four shards keep a flood from

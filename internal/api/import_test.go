@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/relocate"
-	"github.com/dcimorra/middleware-public/internal/tasks"
+	"github.com/dcimorra/the-middleware/internal/relocate"
+	"github.com/dcimorra/the-middleware/internal/tasks"
 )
 
 // A V1 site comes into a V2 house with the token the V2 panel made for it:

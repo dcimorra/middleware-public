@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/wireguard"
+	"github.com/dcimorra/the-middleware/internal/wireguard"
 )
 
 // testHelper is a real server on a real unix socket, with the system

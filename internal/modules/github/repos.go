@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/sites"
+	"github.com/dcimorra/the-middleware/internal/sites"
 )
 
 // A site can be made from a repository. The module lists the repositories

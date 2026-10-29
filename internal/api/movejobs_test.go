@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/nodes"
-	"github.com/dcimorra/middleware-public/internal/relocate"
+	"github.com/dcimorra/the-middleware/internal/nodes"
+	"github.com/dcimorra/the-middleware/internal/relocate"
 )
 
 // meshTo is f's server as a move's target over plain HTTP, through the

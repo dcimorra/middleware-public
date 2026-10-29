@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/agent"
 )
 
 // What a turn leaves behind with setsid escapes the group kill. The mark in

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/brake"
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/webauthn"
+	"github.com/dcimorra/the-middleware/internal/brake"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/webauthn"
 )
 
 // Passkeys are the operator's second way in, and the spare key that

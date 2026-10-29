@@ -9,8 +9,8 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"github.com/dcimorra/middleware-public/internal/events"
-	"github.com/dcimorra/middleware-public/internal/pages"
+	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/pages"
 )
 
 // recoverer turns a panic in any hook or in the proxy into the house's

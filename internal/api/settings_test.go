@@ -7,8 +7,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/app"
-	"github.com/dcimorra/middleware-public/internal/settings"
+	"github.com/dcimorra/the-middleware/internal/app"
+	"github.com/dcimorra/the-middleware/internal/settings"
 )
 
 // settingsFixture keeps what PUT /settings saves, as the real hook does.

@@ -3,7 +3,7 @@ package api
 import (
 	"testing"
 
-	"github.com/dcimorra/middleware-public/internal/installer"
+	"github.com/dcimorra/the-middleware/internal/installer"
 )
 
 // The panel reads the same checks the command prints, each with its mark.

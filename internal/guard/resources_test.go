@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcimorra/middleware-public/internal/fsx"
-	"github.com/dcimorra/middleware-public/internal/runtime"
+	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/runtime"
 )
 
 func TestASiteBusyForMinutesIsAnEpisodeWithAStartAndAnEnd(t *testing.T) {
