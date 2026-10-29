@@ -10,6 +10,8 @@ third-party dependencies, MIT licensed, and it runs on any VPS you already
 pay for, or on several of them linked into one network you manage from a
 single panel.
 
+**[dcimorra.github.io/the-middleware](https://dcimorra.github.io/the-middleware/)** has the tour.
+
 ![A site's conversation: the agent added a newsletter signup, ran the tests and restarted the site without dropping a request](docs/images/chat.png)
 
 ## Who it is for

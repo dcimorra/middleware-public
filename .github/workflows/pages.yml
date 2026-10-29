@@ -1,0 +1,53 @@
+name: pages
+
+# The project's page at https://dcimorra.github.io/the-middleware/. It is
+# put together here rather than kept in a branch: the screenshots live once,
+# in docs/images, for the README and the page alike, and the icon is the
+# panel's own.
+on:
+  push:
+    branches: [main]
+    paths:
+      - site/**
+      - docs/images/**
+      - internal/panel/ui/icons/icon.svg
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Two pushes close together publish the later one, never both at once.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble the page
+        run: |
+          mkdir -p _site/images
+          cp site/* _site/
+          cp docs/images/*.png _site/images/
+          cp internal/panel/ui/icons/icon.svg _site/
+          # Every image the page names must be there: a renamed screenshot
+          # would otherwise publish a broken picture without a word.
+          for img in $(grep -o 'images/[a-z0-9-]*\.png' _site/index.html | sort -u); do
+            test -f "_site/$img" || { echo "missing $img"; exit 1; }
+          done
+      - uses: actions/upload-pages-artifact@v3
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
