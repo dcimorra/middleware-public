@@ -114,7 +114,10 @@ body {
   margin: 0; min-height: 100%;
   background: var(--bg); color: var(--text);
   font: 14px/1.5 var(--font);
-  overflow-x: hidden;
+  /* clip, not hidden: hidden made body a scroll container that never
+     scrolls (the window does), so the sticky sidebar and topbar stuck to
+     body and rode up with the page, leaving the sidebar cut off halfway. */
+  overflow-x: clip;
   -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
 }
@@ -2414,3 +2417,7 @@ details.site-env[open] > summary { margin-bottom: 10px; }
   .grant-fields { grid-template-columns: minmax(0, 1fr) auto; }
   .grant-fields input { grid-column: 1 / -1; }
 }
+/* The domain takes what the row leaves; on a phone the words and the
+   button wrap under it instead of squeezing it to nothing. */
+.domain-row input { flex: 1 1 220px; min-width: 0; }
+.domain-row select { width: auto; }
