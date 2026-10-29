@@ -156,6 +156,14 @@ func TestADelegateCannotChangeWhatTheOwnerDecides(t *testing.T) {
 	if res, out := bob.call("PATCH", "/api/v1/sites/mine.example/manifest", map[string]any{"aliases": []string{"theirs.example"}}); res.StatusCode != 403 || !strings.Contains(text(out), "aliases") {
 		t.Fatalf("aliases: %d %s", res.StatusCode, text(out))
 	}
+	// Which agent answers is theirs to pick, which the chat does on their
+	// first message; what the operator pays for it is not.
+	if res, out := bob.call("PATCH", "/api/v1/sites/mine.example/manifest", map[string]any{"agent": map[string]any{"provider": "openai", "model": "gpt"}}); res.StatusCode != 200 {
+		t.Fatalf("agent provider: %d %s", res.StatusCode, text(out))
+	}
+	if res, out := bob.call("PATCH", "/api/v1/sites/mine.example/manifest", map[string]any{"agent": map[string]any{"provider": "openai", "monthly_cap_usd": 500}}); res.StatusCode != 403 || !strings.Contains(text(out), "monthly_cap_usd") {
+		t.Fatalf("agent cap: %d %s", res.StatusCode, text(out))
+	}
 	_, site := bob.call("GET", "/api/v1/sites/mine.example", nil)
 	mf, _ := json.Marshal(site["manifest"])
 	var m map[string]any
