@@ -1887,8 +1887,16 @@ button.np-attn-row:hover { background: var(--surface-2); }
 .np-attn-text span { color: var(--text-2); font-size: 13px; overflow-wrap: anywhere; }
 .np-go { flex: none; color: var(--text-3); }
 /* The nodes: one fills the width, more share it. */
-.np-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 16px; }
+.np-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 16px; align-items: stretch; }
+/* Side by side, a node with a tunnel line or a long hostname stood taller
+   than the rest and the row looked broken: every card takes the tallest
+   one's height, in its row and in the others. On a phone, one under
+   another, each keeps its own, or a short card would be mostly empty. */
+@media (min-width: 900px) { .np-grid { grid-auto-rows: 1fr; } }
 .np-node { gap: 14px; padding: 18px; }
+/* What a card gains goes above the sites line, so the sites and the
+   events sit at the same height in every card. */
+.np-node > .np-node-sites { margin-top: auto; }
 .np-node .dash-meta, .np-node .dash-tunnel { margin: -8px 0 0; font-size: 12.5px; color: var(--text-3); }
 .np-node .dash-tunnel { margin-top: -10px; }
 .np-node-down { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 10px; background: var(--bad-soft); overflow-wrap: anywhere; }
