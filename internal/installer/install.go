@@ -54,6 +54,10 @@ type Installer struct {
 	Live bool
 	// FindBrowser looks for a headless Chromium; nil is shots.FindIn.
 	FindBrowser func(root string) string
+	// JailCheck says whether this process can build a site's jail; nil is
+	// jail.Available. Tests set it: the answer is the machine's, and a CI
+	// runner may say either.
+	JailCheck func() error
 	// BrowserPlatform overrides the Chrome for Testing platform (tests).
 	BrowserPlatform string
 	// Node installs nvm under the root and the current LTS with it; nil

@@ -124,7 +124,11 @@ func (in *Installer) checkJail() Check {
 	if unit, err := os.ReadFile(in.pathFor(ServiceUnit)); err == nil && strings.Contains(string(unit), "\nProtectKernelTunables=yes") && !fsx.Exists(filepath.Join(in.Paths.SystemdDir, JailDropIn)) {
 		return Check{"site jails", false, "the service unit keeps ProtectKernelTunables on, which leaves the jails without a /proc: run `middleware install` again (or Install requirements on the panel)"}
 	}
-	if err := jail.Available(); err != nil {
+	check := in.JailCheck
+	if check == nil {
+		check = jail.Available
+	}
+	if err := check(); err != nil {
 		return Check{"site jails", false, err.Error()}
 	}
 	return Check{"site jails", true, "each site sees only its own folder"}
