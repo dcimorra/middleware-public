@@ -66,6 +66,8 @@ var permRoutes = map[string][]string{
 		"POST " + siteBase + "/security/seen/forget",
 		"POST " + siteBase + "/tasks/{name}/run",
 		"POST " + siteBase + "/tasks/{name}/stop",
+		"POST " + siteBase + "/tasks/{name}/disable",
+		"POST " + siteBase + "/tasks/{name}/enable",
 	},
 	// code decides what runs: the files, the manifest, the build, the
 	// tasks and a command where the site runs. Everything here runs as

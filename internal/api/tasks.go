@@ -67,6 +67,20 @@ func (s *Server) RegisterTasks(o TasksOptions) {
 		}
 		return tr.stop(name)
 	})
+	s.Handle("POST", p+"/{name}/disable", "Turn a task off (writes disabled: true); a run in progress ends on its own", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		name, err := taskName(r)
+		if err != nil {
+			return nil, err
+		}
+		return tr.setDisabled(r, name, "", true)
+	})
+	s.Handle("POST", p+"/{name}/enable", "Turn a task on again (clears disabled)", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		name, err := taskName(r)
+		if err != nil {
+			return nil, err
+		}
+		return tr.setDisabled(r, name, "", false)
+	})
 	s.Handle("GET", p+"/{name}/log", "The last lines of a task's output", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		name, err := taskName(r)
 		if err != nil {
@@ -140,6 +154,20 @@ func (s *Server) RegisterTasks(o TasksOptions) {
 			return nil, err
 		}
 		return tr.stop(name)
+	})
+	s.Handle("POST", sp+"/{name}/disable", "Turn one of the site's tasks off (writes disabled: true)", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		domain, name, err := tr.siteTask(r)
+		if err != nil {
+			return nil, err
+		}
+		return tr.setDisabled(r, name, domain, true)
+	})
+	s.Handle("POST", sp+"/{name}/enable", "Turn one of the site's tasks on again (clears disabled)", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		domain, name, err := tr.siteTask(r)
+		if err != nil {
+			return nil, err
+		}
+		return tr.setDisabled(r, name, domain, false)
 	})
 	s.Handle("GET", sp+"/{name}/log", "The last lines of one of the site's tasks' output", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		_, name, err := tr.siteTask(r)
@@ -284,6 +312,36 @@ func (tr taskRoutes) run(r *http.Request, name string) (any, error) {
 		}
 	}()
 	return map[string]any{"ok": true, "log": tasks.LogPath(tr.o.Root, name)}, nil
+}
+
+// setDisabled writes the decision to the task's file, as a stopped site
+// writes it to its manifest: a switch kept in memory would turn the task
+// back on at the next restart. Only the field changes, so the panel's
+// switch does not need the whole JSON round-tripped through an editor.
+func (tr taskRoutes) setDisabled(r *http.Request, name, site string, disabled bool) (any, error) {
+	if _, err := tasks.Load(tr.o.Root, name); err != nil {
+		if os.IsNotExist(err) {
+			return nil, Errorf(http.StatusNotFound, "no task %q", name)
+		}
+		return nil, Errorf(http.StatusBadRequest, "task: %v", err)
+	}
+	if err := tasks.SetDisabled(tr.o.Root, name, disabled); err != nil {
+		return nil, err
+	}
+	ev := events.Event{Type: "task.enabled", Subject: name, Actor: actorOf(r)}
+	if disabled {
+		ev.Type = "task.disabled"
+	}
+	if site != "" {
+		ev.Data = map[string]any{"site": site}
+	}
+	tr.s.opts.Bus.Emit(ev)
+	for _, st := range tr.o.Scheduler.List() {
+		if st.Name == name {
+			return st, nil
+		}
+	}
+	return OK, nil
 }
 
 func (tr taskRoutes) stop(name string) (any, error) {

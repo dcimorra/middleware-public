@@ -104,6 +104,10 @@ function statusWord(st) {
   return w === k ? st : w;
 }
 
+function hasNext(task) {
+  return Boolean(task.next) && !String(task.next).startsWith("0001-");
+}
+
 export function tasksScreen() {
   const list = tasksList();
   const newBtn = h("button", { type: "button", class: "btn primary", "data-shortcut": "new" }, icon("plus"), t("tasks.new"));
@@ -125,8 +129,9 @@ export function tasksList({ site = "" } = {}) {
   const subs = [];
 
   // A task is a line: its title (the file's name under it), when it runs
-  // in words with the expression beside it, where, and what happened last;
-  // run now is the one button, the log and delete stay quiet. The list
+  // in words with the expression beside it, where, whether it is on, and
+  // what happened last; run now is the one strong button, the switch, the
+  // log and delete stay quiet. The list
   // used to lead with the file name ("backup") and the bare cron.
   async function render() {
     const tasks = await api.get(base);
@@ -147,9 +152,13 @@ export function tasksList({ site = "" } = {}) {
       ) : h("span", null, t("tasks.neverRan"));
       const words = cronWords(task.schedule);
       const title = task.title || task.name;
-      return h("div", { class: "task-row" + (task.running ? " running" : "") },
+      // A task that does not parse has no state to show or switch: its
+      // error is what it needs, and the editor is where it is fixed.
+      const state = task.error ? null : h("span", { class: "badge " + (task.disabled ? "" : "ok"), title: t(task.disabled ? "tasks.offTitle" : "tasks.onTitle") }, t(task.disabled ? "tasks.off" : "tasks.on"));
+      return h("div", { class: "task-row" + (task.running ? " running" : "") + (task.disabled ? " off" : "") },
         h("div", { class: "task-main" },
-          h("a", { href: "#", class: "task-title", onClick: (e) => { e.preventDefault(); edit(task); } }, title),
+          h("div", { class: "task-head" },
+            h("a", { href: "#", class: "task-title", onClick: (e) => { e.preventDefault(); edit(task); } }, title), state),
           h("div", { class: "task-sub" },
             task.title ? h("code", null, task.name) : null,
             site ? null : task.site ? h("a", { href: `#/sites/${enc(task.site)}` }, task.site) : h("span", null, t("tasks.rootLong")))),
@@ -157,10 +166,13 @@ export function tasksList({ site = "" } = {}) {
           h("span", { class: "task-words" }, words || h("code", null, task.schedule || "")),
           h("span", { class: "task-cron" }, words ? h("code", { title: t("tasks.cronTitle") }, task.schedule) : null, task.timezone ? h("span", null, task.timezone) : null)),
         h("div", { class: "task-runs" },
+          // A task turned off has no next run: the server sends Go's zero
+          // time for it, which read as a date was "next 2025 years ago".
           task.running ? h("span", { class: "status task-now" }, h("span", { class: "dot warn" }), t("tasks.runningNow"))
-            : task.next ? h("span", { title: fmtTime(task.next) }, t("tasks.nextIn", { when: fmtAgo(task.next, t) })) : null,
+            : task.disabled ? h("span", null, t("tasks.offNext"))
+            : hasNext(task) ? h("span", { title: fmtTime(task.next) }, t("tasks.nextIn", { when: fmtAgo(task.next, t) })) : null,
           h("span", { class: "task-last" }, lastEl)),
-        h("div", { class: "task-actions" }, task.running ? stopBtn(task) : runBtn(task), logBtn(task), delBtn(task)),
+        h("div", { class: "task-actions" }, task.running ? stopBtn(task) : runBtn(task), task.error ? null : switchBtn(task), logBtn(task), delBtn(task)),
       );
     }));
   }
@@ -180,6 +192,22 @@ export function tasksList({ site = "" } = {}) {
       b.classList.add("busy");
       try { await api.post(`${base}/${enc(task.name)}/stop`); toast(t("tasks.stopped", { name: task.name }), "ok"); }
       catch (e) { toastError(e); } finally { b.classList.remove("busy"); }
+    });
+    return b;
+  }
+  // The switch says what pressing it does, not what the task is: the
+  // badge beside the title already says that, and a button reading
+  // "Active" left people unsure whether it was a state or an order.
+  function switchBtn(task) {
+    const off = !task.disabled;
+    const b = h("button", { type: "button", class: "btn sm" + (off ? " ghost" : "") }, icon(off ? "pause" : "power"), t(off ? "tasks.turnOff" : "tasks.turnOn"));
+    b.addEventListener("click", async () => {
+      b.classList.add("busy");
+      try {
+        await api.post(`${base}/${enc(task.name)}/${off ? "disable" : "enable"}`);
+        toast(t(off ? "tasks.turnedOff" : "tasks.turnedOn", { name: task.title || task.name }), "ok");
+        load(body, render);
+      } catch (e) { toastError(e); } finally { b.classList.remove("busy"); }
     });
     return b;
   }

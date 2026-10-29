@@ -1935,5 +1935,14 @@
   "users.agents.otherModels": "Otros modelos, separados por comas",
   "users.agents.modelsHint": "Sin ningún modelo marcado ni escrito: todos los modelos de este agente.",
   "users.agents.none": "Aquí aún no hay ningún agente. Activa uno en Módulos, o guarda sin ningún agente.",
-  "users.agents.noAgent": "ningún agente"
+  "users.agents.noAgent": "ningún agente",
+  "tasks.on": "Activa",
+  "tasks.off": "Parada",
+  "tasks.onTitle": "Se ejecuta según su horario",
+  "tasks.offTitle": "Desactivada: no se ejecuta según su horario hasta que se active de nuevo",
+  "tasks.offNext": "no se ejecuta según su horario",
+  "tasks.turnOff": "Desactivar",
+  "tasks.turnOn": "Activar",
+  "tasks.turnedOff": "{name} desactivada",
+  "tasks.turnedOn": "{name} activada"
 }

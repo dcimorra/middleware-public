@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,6 +64,40 @@ func TestTasksAreWrittenListedRunAndDeletedThroughTheAPI(t *testing.T) {
 	}
 	if _, err := os.Stat(tasks.Path(f.root, "hello")); !os.IsNotExist(err) {
 		t.Fatal("task file still there")
+	}
+}
+
+// The list's switch turns a task off and on through its file, so the
+// decision is there after a restart, and nothing else in the file moves.
+func TestATaskIsTurnedOffAndOnWithoutItsJSON(t *testing.T) {
+	f := newFixture(t).withToken()
+	os.MkdirAll(filepath.Join(f.root, "tasks"), 0o755)
+	sched := tasks.NewScheduler(tasks.Options{Root: f.root, Bus: f.bus})
+	f.srv.RegisterTasks(TasksOptions{Scheduler: sched, Root: f.root})
+
+	if resp, body := f.call("PUT", "/api/v1/tasks/nightly", `{"version": 2, "schedule": "0 3 * * *", "title": "Nightly", "timezone": "Europe/Madrid", "command": ["true"]}`); resp.StatusCode != 200 || body["disabled"] != nil {
+		t.Fatalf("put: %d %v", resp.StatusCode, body)
+	}
+	resp, body := f.call("POST", "/api/v1/tasks/nightly/disable", nil)
+	if resp.StatusCode != 200 || body["disabled"] != true || !strings.HasPrefix(fmt.Sprint(body["next"]), "0001-") {
+		t.Fatalf("disable: %d %v", resp.StatusCode, body)
+	}
+	if saved, err := tasks.Load(f.root, "nightly"); err != nil || !saved.Disabled || saved.Title != "Nightly" || saved.Timezone != "Europe/Madrid" || saved.Schedule != "0 3 * * *" {
+		t.Fatalf("the file after disable: %+v %v", saved, err)
+	}
+	resp, body = f.call("POST", "/api/v1/tasks/nightly/enable", nil)
+	if resp.StatusCode != 200 || body["disabled"] != nil || strings.HasPrefix(fmt.Sprint(body["next"]), "0001-") {
+		t.Fatalf("enable: %d %v", resp.StatusCode, body)
+	}
+	if saved, _ := tasks.Load(f.root, "nightly"); saved == nil || saved.Disabled {
+		t.Fatalf("the file after enable: %+v", saved)
+	}
+	if resp, _ := f.call("POST", "/api/v1/tasks/missing/disable", nil); resp.StatusCode != 404 {
+		t.Fatalf("disable a missing task: %d", resp.StatusCode)
+	}
+	os.WriteFile(tasks.Path(f.root, "rotten"), []byte(`{"version": 2, "schedule": "never", "command": ["true"]}`), 0o644)
+	if resp, _ := f.call("POST", "/api/v1/tasks/rotten/enable", nil); resp.StatusCode != 400 {
+		t.Fatalf("enable a task that does not parse: %d", resp.StatusCode)
 	}
 }
 

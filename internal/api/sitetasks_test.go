@@ -122,9 +122,23 @@ func TestASitesTasksAreItsOwnThroughTheSiteRoutes(t *testing.T) {
 		t.Fatalf("the operator's list lost something: %s", all)
 	}
 
+	// Turning its own task off and on is the field and nothing else.
+	if resp, body := f.call("POST", "/api/v1/sites/a.test/tasks/mine/disable", nil); resp.StatusCode != 200 || body["disabled"] != true {
+		t.Fatalf("disable its own task: %d %v", resp.StatusCode, body)
+	}
+	if ev, ok := f.taskEvent("task.disabled", "mine"); !ok || ev.Data["site"] != "a.test" {
+		t.Fatalf("task.disabled: %+v %v", ev, ok)
+	}
+	if resp, body := f.call("POST", "/api/v1/sites/a.test/tasks/mine/enable", nil); resp.StatusCode != 200 || body["disabled"] != nil {
+		t.Fatalf("enable its own task: %d %v", resp.StatusCode, body)
+	}
+	if saved, err := tasks.Load(f.root, "mine"); err != nil || saved.Disabled || saved.Site != "a.test" || saved.Schedule != "0 6 * * *" {
+		t.Fatalf("after off and on: %+v %v", saved, err)
+	}
+
 	// Another site's task and the house's are not there for this site.
 	for _, name := range []string{"theirs", "house", "missing"} {
-		for _, c := range [][2]string{{"DELETE", ""}, {"POST", "/run"}, {"POST", "/stop"}, {"GET", "/log"}} {
+		for _, c := range [][2]string{{"DELETE", ""}, {"POST", "/run"}, {"POST", "/stop"}, {"POST", "/disable"}, {"POST", "/enable"}, {"GET", "/log"}} {
 			if resp, body := f.call(c[0], "/api/v1/sites/a.test/tasks/"+name+c[1], nil); resp.StatusCode != 404 {
 				t.Errorf("%s %s%s from a.test: %d %v", c[0], name, c[1], resp.StatusCode, body)
 			}

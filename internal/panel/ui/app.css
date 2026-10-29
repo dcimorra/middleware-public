@@ -1525,10 +1525,14 @@ input.set-num, .card input.set-num { max-width: 180px; }
 .card.task-box { border-radius: 16px; }
 /* The actions' column is fixed so the heading row, which has none, lines
    up with the rows that do. */
-.task-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.3fr) minmax(0, 1fr) 250px; gap: 6px 20px; align-items: center; padding: 14px 18px; }
+.task-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.3fr) minmax(0, 1fr) 380px; gap: 6px 20px; align-items: center; padding: 14px 18px; }
 .task-row + .task-row { border-top: 1px solid var(--border); }
 .task-cols { padding-top: 10px; padding-bottom: 10px; background: var(--surface-2); font-size: 11.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-3); }
 .task-main, .task-when, .task-runs { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.task-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+/* A task turned off stays readable (it is still there to edit and run by
+   hand) but steps back from the ones that run. */
+.task-row.off .task-title, .task-row.off .task-words { color: var(--text-3); }
 .task-title { color: var(--text); font-weight: 600; font-size: 14.5px; overflow-wrap: anywhere; }
 .task-title:hover { color: var(--accent); text-decoration: none; }
 .task-sub, .task-cron { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 12.5px; color: var(--text-3); min-width: 0; }
@@ -1537,6 +1541,9 @@ input.set-num, .card input.set-num { max-width: 180px; }
 .task-words { font-weight: 500; overflow-wrap: anywhere; }
 .task-runs { font-size: 13px; color: var(--text-2); }
 .task-last { font-size: 12.5px; color: var(--text-3); }
+/* The switch made the actions' column wider, and a last run kept on one
+   line ran under "Run now". */
+.task-last .status { white-space: normal; }
 .task-now { color: var(--warn); font-weight: 500; }
 .task-actions { display: flex; align-items: center; gap: 4px; justify-content: flex-end; }
 .task-del { color: var(--text-3); }
