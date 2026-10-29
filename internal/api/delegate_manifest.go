@@ -19,8 +19,8 @@ import (
 // process (upstream could point at the panel's loopback port), whether
 // it runs in a container and what the container mounts, the files read
 // into its environment from anywhere on the machine, its place in the
-// network, the operator's VPN devices, and the agents and gateway the
-// operator pays for. Those stay as the operator wrote them; a request
+// network, the operator's VPN devices, the agents' monthly cap and the
+// gateway the operator pays for. Those stay as the operator wrote them; a request
 // that changes one is refused naming it.
 //
 // This holds against the API. For a site that runs as a process, code
@@ -37,9 +37,16 @@ func lockedKeys(m *manifest.Manifest) map[string]any {
 		"vpn":        m.VPN,
 		"claude_api": m.ClaudeAPI,
 		"claude":     m.Claude,
-		"agent":      m.Agent,
 		"chat":       m.Chat,
 		"needs":      m.Needs,
+	}
+	// The agent's provider and model are the user's to pick among those
+	// the operator turned on (the chat picker writes them here on the
+	// first message); the monthly cap is what the operator pays, and
+	// stays theirs.
+	out["agent.monthly_cap_usd"] = 0.0
+	if m.Agent != nil {
+		out["agent.monthly_cap_usd"] = m.Agent.MonthlyCapUSD
 	}
 	if m.Run != nil {
 		out["run.runtime"] = runtimeOf(m.Run.Runtime)

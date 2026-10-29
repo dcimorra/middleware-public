@@ -11,6 +11,7 @@ import { h, clear, debounce } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
 import { api, enc } from "../lib/api.js";
 import { store } from "../lib/store.js";
+import { can } from "../lib/access.js";
 import { onEvent } from "../lib/stream.js";
 import { loading, errorBox } from "../components/page.js";
 import { confirm, open } from "../components/dialog.js";
@@ -822,7 +823,9 @@ export function chatTab(domain) {
     try {
       const s = store.site(domain);
       const agentCfg = (s && s.manifest && s.manifest.agent) || {};
-      if (!house && provider.value && provider.value !== agentCfg.provider) {
+      // Remembered as the site's default where its manifest may be
+      // written; the message carries the choice either way.
+      if (!house && can(domain, "code") && provider.value && provider.value !== agentCfg.provider) {
         await api.patch(`/sites/${enc(domain)}/manifest`, { agent: { ...agentCfg, provider: provider.value, model: model.value } });
       }
       await ensure();

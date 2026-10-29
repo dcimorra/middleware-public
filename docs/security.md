@@ -173,8 +173,9 @@ honest part:
   jail (below), so what it reaches is the site's folder and its HOME. The
   manifest's keys that reach past the site (`aliases`, `upstream`,
   `run.runtime`, `run.docker`, the files read into the environment, the
-  move, the VPN, the agents and gateway, the folders a conversation may
-  read) are refused from a user's account.
+  move, the VPN, the agents' monthly cap and the gateway, the folders a
+  conversation may read) are refused from a user's account; which agent
+  and model answer is theirs.
 - `agents` is a conversation, whose turns run in the site's jail too, and
   spends the operator's subscriptions.
 
