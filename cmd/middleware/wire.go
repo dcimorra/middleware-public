@@ -193,6 +193,7 @@ func buildWire(a *app.App) app.Hook {
 	nodes := &nodeenv.Manager{Root: a.Root, Note: func(siteDir, msg string) {
 		a.Bus.Emit(events.Event{Type: "node.chosen", Subject: filepath.Base(siteDir), Actor: "engine", Message: msg})
 	}}
+	wireJails(a)
 	runtime.NodeDir = func(ctx context.Context, siteDir string, argv []string) string {
 		if !nodeenv.Needs(siteDir, argv) {
 			return ""

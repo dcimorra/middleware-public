@@ -17,8 +17,9 @@ import (
 // (git, curl, wireguard-tools, nftables), docker with the operator in its
 // group, fail2ban with the house's jail, nvm with the current LTS and, when
 // asked, a headless Chromium: the dependency steps of `middleware install`
-// and nothing else. No unit is rewritten, the binary is not replaced and
-// the house is not restarted. The full install from the panel was asked
+// and nothing else, plus what the sites' jails need (an AppArmor profile
+// for the binary, a drop-in for a unit rendered before the jail). No unit
+// is rewritten, the binary is not replaced and the house is not restarted. The full install from the panel was asked
 // for and then turned down (2026-10-24): it would give the panel the
 // installer's whole power over the machine's configuration.
 //

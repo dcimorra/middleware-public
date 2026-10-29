@@ -65,6 +65,24 @@ func StartCLI(ctx context.Context, p Parser, dir string, env []string, bin strin
 // this process: what AdoptCLI reads after a restart. stream's .err file
 // beside it holds stderr.
 func StartCLIStream(ctx context.Context, p Parser, stream, dir string, env []string, bin string, args ...string) (*CLIRun, error) {
+	return startCLI(ctx, p, stream, dir, env, nil, bin, args...)
+}
+
+// Enclose, when set, puts a site's turn in the site's jail (internal/jail)
+// before it starts: what Jail names to the CLI as a rule becomes what the
+// turn's processes can see at all. Set by the wiring when the machine can
+// build jails. It decides by the jail: the house's own conversation (its
+// folder is the root) is the operator's and is left as it is. bin is the
+// CLI itself, which cmd may start through setpriv.
+var Enclose func(cmd *exec.Cmd, j Jail, bin string) error
+
+// Start is StartCLIStream for a turn run in j: enclosed, when the house
+// encloses turns.
+func (j Jail) Start(ctx context.Context, p Parser, stream, dir string, env []string, bin string, args ...string) (*CLIRun, error) {
+	return startCLI(ctx, p, stream, dir, env, &j, bin, args...)
+}
+
+func startCLI(ctx context.Context, p Parser, stream, dir string, env []string, j *Jail, bin string, args ...string) (*CLIRun, error) {
 	path, err := exec.LookPath(bin)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", bin, err)
@@ -91,6 +109,7 @@ func StartCLIStream(ctx context.Context, p Parser, stream, dir string, env []str
 		return nil, err
 	}
 	defer errf.Close()
+	cli := path
 	path, args = withoutAmbientCaps(path, args)
 	cmd := exec.Command(path, args...)
 	cmd.Dir = dir
@@ -107,6 +126,11 @@ func StartCLIStream(ctx context.Context, p Parser, stream, dir string, env []str
 		}
 	}
 	defer release()
+	if j != nil && Enclose != nil {
+		if err := Enclose(cmd, *j, cli); err != nil {
+			return nil, err
+		}
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}

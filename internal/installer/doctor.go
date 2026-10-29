@@ -59,6 +59,7 @@ func (in *Installer) Doctor() ([]Check, bool) {
 		in.checkFail2ban(),
 		in.checkNode(),
 		in.checkWireGuard(),
+		in.checkJail(),
 		in.checkDisk(),
 	)
 	all := true

@@ -25,6 +25,7 @@ func testParams(t *testing.T) (Params, Paths) {
 		TmpfilesDir: filepath.Join(dir, "etc", "tmpfiles.d"),
 		SysctlDir:   filepath.Join(dir, "etc", "sysctl.d"),
 		Fail2banDir: filepath.Join(dir, "etc", "fail2ban"),
+		AppArmorDir: filepath.Join(dir, "etc", "apparmor.d"),
 	}
 	return p, paths
 }

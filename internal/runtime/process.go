@@ -76,6 +76,9 @@ func (Process) Start(ctx context.Context, spec *manifest.Spec, port int, logFile
 	cmd.Stderr = out
 	cmd.Stdin = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := enclose(cmd, spec, home); err != nil {
+		return nil, err
+	}
 	fmt.Fprintf(out, "\n--- %s middleware: start %s rev %s on port %d\n", time.Now().Format(time.RFC3339), spec.Domain, spec.Revision, port)
 	if err := cmd.Start(); err != nil {
 		return nil, err

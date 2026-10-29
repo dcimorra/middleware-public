@@ -17,7 +17,15 @@ jobs:
         run: test -z "$(gofmt -l .)"
       - name: vet
         run: go vet ./...
+      # The runner's Ubuntu lets user namespaces only to programs AppArmor
+      # names, and a test binary is not one: the sites' jails are tested
+      # for real only with that off, and MIDDLEWARE_JAIL_REQUIRED makes a
+      # jail test that cannot build one fail instead of skipping.
+      - name: allow user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - name: test
+        env:
+          MIDDLEWARE_JAIL_REQUIRED: "1"
         run: go test -race ./...
       - name: build
         run: go build -o middleware ./cmd/middleware

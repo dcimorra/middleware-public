@@ -1,0 +1,92 @@
+package installer
+
+import (
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+)
+
+// On a machine that wants a profile for user namespaces, the binary gets
+// one and it is loaded; a second run finds it current and does nothing.
+func TestJailStepWritesAndLoadsTheAppArmorProfile(t *testing.T) {
+	in, rec, _ := testInstaller(t)
+	rec.Set("sysctl -n kernel.apparmor_restrict_unprivileged_userns", "1\n", nil)
+	changed, _, err := in.stepJail()
+	if err != nil || !changed {
+		t.Fatalf("changed %v, err %v", changed, err)
+	}
+	p := filepath.Join(in.Paths.AppArmorDir, AppArmorProfile)
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"profile middleware " + in.Params.Binary + " ", "userns,"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("profile lacks %q:\n%s", want, b)
+		}
+	}
+	if !slices.Contains(rec.Mutations(), "sudo apparmor_parser -r "+p) {
+		t.Errorf("profile not loaded: %v", rec.Mutations())
+	}
+	before := len(rec.Mutations())
+	if changed, _, err := in.stepJail(); err != nil || changed || len(rec.Mutations()) != before {
+		t.Errorf("second run: changed %v, err %v, calls %v", changed, err, rec.Mutations()[before:])
+	}
+}
+
+// Where nothing restricts user namespaces no profile is written.
+func TestJailStepLeavesAppArmorAloneWhereUnneeded(t *testing.T) {
+	in, rec, _ := testInstaller(t)
+	rec.Set("sysctl -n kernel.apparmor_restrict_unprivileged_userns", "0\n", nil)
+	if _, _, err := in.stepJail(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(in.Paths.AppArmorDir, AppArmorProfile)); err == nil {
+		t.Error("profile written on a machine that does not ask for one")
+	}
+}
+
+// A unit rendered before the jail keeps ProtectKernelTunables; the drop-in
+// turns it off and the supervisor is told to restart. A unit rendered now
+// does not have it and gets no drop-in.
+func TestJailStepTurnsOffProtectKernelTunablesOfOldUnits(t *testing.T) {
+	in, rec, _ := testInstaller(t)
+	unit := in.pathFor(ServiceUnit)
+	if err := os.MkdirAll(filepath.Dir(unit), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unit, []byte("[Service]\nNoNewPrivileges=no\nProtectKernelTunables=yes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changed, _, err := in.stepJail()
+	if err != nil || !changed {
+		t.Fatalf("changed %v, err %v", changed, err)
+	}
+	b, err := os.ReadFile(filepath.Join(in.Paths.SystemdDir, JailDropIn))
+	if err != nil || !strings.Contains(string(b), "ProtectKernelTunables=no") {
+		t.Fatalf("drop-in: %q %v", b, err)
+	}
+	if !slices.Contains(rec.Mutations(), "sudo systemctl daemon-reload") {
+		t.Errorf("no daemon-reload: %v", rec.Mutations())
+	}
+
+	in2, _, _ := testInstaller(t)
+	files, err := Render(in2.Params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(files[ServiceUnit], "ProtectKernelTunables=yes") {
+		t.Fatal("the rendered unit still protects the kernel tunables")
+	}
+	if err := os.MkdirAll(filepath.Dir(in2.pathFor(ServiceUnit)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(in2.pathFor(ServiceUnit), []byte(files[ServiceUnit]), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _, err := in2.stepJail(); err != nil || changed {
+		t.Errorf("current unit: changed %v, err %v", changed, err)
+	}
+}

@@ -113,7 +113,7 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 		env[k] = v
 	}
 	env["MISTRAL_API_KEY"] = p.cfg.APIKey
-	return agent.StartCLIStream(ctx, &parser{}, req.Stream, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req)...)
+	return req.Jail.Start(ctx, &parser{}, req.Stream, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req)...)
 }
 
 // Adopt implements agent.Adopter.

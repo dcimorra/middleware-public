@@ -239,7 +239,7 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 	env["OPENCODE_CONFIG_CONTENT"] = orderedJSON(cfg)
 	env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
 	env["OPENCODE_DISABLE_SHARE"] = "1"
-	return agent.StartCLIStream(ctx, &parser{}, req.Stream, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req)...)
+	return req.Jail.Start(ctx, &parser{}, req.Stream, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req)...)
 }
 
 // Adopt implements agent.Adopter.

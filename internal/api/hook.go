@@ -13,6 +13,7 @@ import (
 	"github.com/dcimorra/the-middleware/internal/app"
 	"github.com/dcimorra/the-middleware/internal/auth"
 	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/jail"
 	"github.com/dcimorra/the-middleware/internal/settings"
 	"github.com/dcimorra/the-middleware/internal/sites"
 )
@@ -49,6 +50,9 @@ func NewHook(a *app.App, version string) *Hook {
 		Engine:   a.Engine,
 		Bus:      a.Bus,
 		Settings: a.CurrentSettings,
+		// The same probe the wiring decides by: a node that runs sites
+		// outside jails refuses delegates what would run in one.
+		Isolation: jail.Available,
 		SaveSettings: func(s settings.Settings) error {
 			if err := settings.Save(a.Root, s); err != nil {
 				return err

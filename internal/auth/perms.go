@@ -224,3 +224,12 @@ func PermRoutes() []string {
 	}
 	return append(out, userRoutes...)
 }
+
+// NeedsJail says whether pattern makes the site run what a delegate
+// wrote or asked for: code (files, the manifest, deploys, commands,
+// tasks) and the conversations. A node that cannot build jails
+// (internal/jail) closes these to delegates: there the code would run
+// with the run of the house.
+func NeedsJail(pattern string) bool {
+	return slices.Contains(permRoutes[PermCode], pattern) || slices.Contains(permRoutes[PermAgents], pattern)
+}
