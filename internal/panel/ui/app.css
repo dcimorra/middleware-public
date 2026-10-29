@@ -2411,6 +2411,10 @@ details.site-env[open] > summary { margin-bottom: 10px; }
 .grant-fields { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
 .grant-fields input, .grant-fields select { min-width: 0; }
 .grant-row .hint.warn { color: var(--warn); margin-top: 4px; }
+.agent-limits { display: flex; flex-direction: column; gap: 10px; margin: 8px 0; }
+.agent-limit .check strong { font-weight: 600; }
+.agent-models { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 0 26px; }
+.agent-models input[type="text"] { min-width: 0; margin-top: 4px; }
 .row-actions { display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .signed-as { padding: 4px 12px 8px; }
 @media (max-width: 560px) {

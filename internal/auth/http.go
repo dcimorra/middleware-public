@@ -42,6 +42,9 @@ type Caller struct {
 	User   string
 	UserID string
 	Grants map[string][]string
+	// Agents are the delegate's limits on agents (agents.go), nil for
+	// none; they travel with the user to the node that holds the site.
+	Agents map[string][]string
 }
 
 // Delegate reports whether the caller is a delegated user, whose every
@@ -119,7 +122,7 @@ func (s *Store) Resolve(r *http.Request) Caller {
 			if u.ID == "" {
 				return Caller{Via: ViaCookie}
 			}
-			return Caller{Via: ViaCookie, User: u.Name, UserID: u.ID, Grants: u.GrantMap()}
+			return Caller{Via: ViaCookie, User: u.Name, UserID: u.ID, Grants: u.GrantMap(), Agents: u.Agents}
 		}
 	}
 	return Caller{}

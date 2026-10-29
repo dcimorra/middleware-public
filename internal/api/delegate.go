@@ -39,10 +39,14 @@ type delegation struct {
 	User  string   `json:"user"`
 	Site  string   `json:"site"`
 	Perms []string `json:"perms"`
+	// Agents are the user's limits on agents (auth.CheckAgents), held
+	// where the site's turns run; nil for none. Never omitempty: an
+	// empty map is no agent at all and must not arrive as none.
+	Agents map[string][]string `json:"agents"`
 }
 
 func encodeDelegation(c auth.Caller, site string) string {
-	raw, _ := json.Marshal(delegation{User: c.User, Site: site, Perms: c.Grants[site]})
+	raw, _ := json.Marshal(delegation{User: c.User, Site: site, Perms: c.Grants[site], Agents: c.Agents})
 	return base64.RawURLEncoding.EncodeToString(raw)
 }
 

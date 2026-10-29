@@ -1923,5 +1923,14 @@
   "users.preset.operate": "Operar",
   "users.preset.full": "Gestión completa",
   "users.preset.custom": "A medida",
-  "users.fullWarn": "Gestión completa ejecuta su código, sus tasks y los agentes en la jaula propia del sitio: ve la carpeta de su sitio y nada más de esta máquina."
+  "users.fullWarn": "Gestión completa ejecuta su código, sus tasks y los agentes en la jaula propia del sitio: ve la carpeta de su sitio y nada más de esta máquina.",
+  "users.agents.title": "Agentes",
+  "users.agents.hint": "Qué agentes puede usar en sus conversaciones y, de cada uno, qué modelos. Puedes elegir agentes y modelos que esta máquina aún no tiene: el límite se aplica cuando lleguen.",
+  "users.agents.all": "Todos los agentes y modelos",
+  "users.agents.some": "Solo los que elija",
+  "users.agents.notHere": "no está en esta máquina",
+  "users.agents.otherModels": "Otros modelos, separados por comas",
+  "users.agents.modelsHint": "Sin ningún modelo marcado ni escrito: todos los modelos de este agente.",
+  "users.agents.none": "Aquí aún no hay ningún agente. Activa uno en Módulos, o guarda sin ningún agente.",
+  "users.agents.noAgent": "ningún agente"
 }
