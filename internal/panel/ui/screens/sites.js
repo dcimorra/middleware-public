@@ -17,6 +17,7 @@ import { toast, toastError } from "../components/toast.js";
 import { currentNode, setCurrentNode } from "../lib/node.js";
 import { delegate, can } from "../lib/access.js";
 import { menu } from "./site-menu.js";
+import { randomLabel, withLabel, commonParent, MAX_WORDS } from "../lib/words.js";
 
 export function sitesScreen({ query }) {
   const search = h("input", { type: "search", placeholder: t("sites.search"), "aria-label": t("sites.search"), autocomplete: "off" });
@@ -190,6 +191,24 @@ export function sitesScreen({ query }) {
       else if (template.value === "project") template.value = "static";
     };
     domain.addEventListener("input", syncPublish);
+    // A random name from pronounceable words, as many as chosen beside it.
+    // What the field holds is kept as the parent domain; see withLabel.
+    const words = h("select", { "aria-label": t("sites.randomLength") },
+      ...Array.from({ length: MAX_WORDS }, (_, i) => h("option", { value: i + 1 }, i ? t("sites.randomWords", { n: i + 1 }) : t("sites.randomWord"))));
+    words.value = "3";
+    const roll = h("button", { type: "button", class: "btn", title: t("sites.randomHint") }, icon("sparkles"), t("sites.random"));
+    let lastLabel = "";
+    const generate = () => {
+      const label = randomLabel(words.value);
+      domain.value = withLabel(domain.value, label, lastLabel, commonParent(store.siteList().map((s) => s.domain)));
+      lastLabel = label;
+      syncPublish();
+      domain.focus();
+    };
+    roll.addEventListener("click", generate);
+    words.addEventListener("change", () => { if (lastLabel) generate(); });
+    const domainField = field(t("sites.domain"), domain, t("sites.domainHint"));
+    domainField.insertBefore(h("div", { class: "row domain-row" }, domain, words, roll), domainField.querySelector(".hint"));
     // Where the code comes from: a template, or a GitHub repository (only
     // with the GitHub module on). From a repository, the template is what
     // its root says unless chosen.
@@ -234,7 +253,7 @@ export function sitesScreen({ query }) {
     const made = await open({
       title: t("sites.newTitle"),
       body: [
-        field(t("sites.domain"), domain, t("sites.domainHint")),
+        domainField,
         where.options.length ? field(t("sites.node"), where, t("sites.nodeHint")) : null,
         field(t("sites.source"), source),
         repoFields,

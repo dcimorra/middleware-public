@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -319,5 +320,48 @@ func TestEveryMoveStepHasItsLine(t *testing.T) {
 		if en["site.moveStep."+step] == "" {
 			t.Errorf("site.moveStep.%s is missing", step)
 		}
+	}
+}
+
+// TestRandomSiteNamesFitInOneLabel reads the word list the panel draws
+// random site names from. The longest name it can offer is MAX_WORDS of
+// the longest words with hyphens between, and that has to be one valid
+// DNS label: 63 characters at most, a to z and hyphens. A word that
+// breaks it would make a name the panel happily fills in and the site
+// that can never be reached. Node is not here, so the list is grepped.
+func TestRandomSiteNamesFitInOneLabel(t *testing.T) {
+	data, err := fs.ReadFile(FS, "lib/words.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(data)
+	m := regexp.MustCompile(`MAX_WORDS = (\d+);`).FindStringSubmatch(src)
+	if m == nil {
+		t.Fatal("no MAX_WORDS in words.js")
+	}
+	most, _ := strconv.Atoi(m[1])
+	start := strings.Index(src, "const WORDS = [")
+	end := strings.Index(src[start:], "];")
+	if start < 0 || end < 0 {
+		t.Fatal("no WORDS list in words.js")
+	}
+	words := regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(src[start:start+end], -1)
+	if len(words) < 256 {
+		t.Fatalf("only %d words: a name of a few would be easy to guess", len(words))
+	}
+	seen, longest := map[string]bool{}, 0
+	valid := regexp.MustCompile(`^[a-z]+$`)
+	for _, w := range words {
+		if !valid.MatchString(w[1]) {
+			t.Errorf("%q is not lower-case a to z", w[1])
+		}
+		if seen[w[1]] {
+			t.Errorf("%q is in the list twice", w[1])
+		}
+		seen[w[1]] = true
+		longest = max(longest, len(w[1]))
+	}
+	if n := most*longest + most - 1; n > 63 {
+		t.Errorf("%d words of %d letters make a %d-character label; DNS allows 63", most, longest, n)
 	}
 }
