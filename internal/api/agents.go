@@ -249,6 +249,24 @@ func (s *Server) registerChat(m *chat.Manager, p string, name func(*http.Request
 		}
 		return c, nil
 	})
+	// The conversation as a file, to hand to someone (or another agent)
+	// to read: every turn with its steps and its subagents' steps, which
+	// the panel shows folded and a copy and paste of the screen loses.
+	s.Handle("GET", p+"/export", "The conversation as a JSON file to download: every turn, its steps and its subagents'", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		domain, err := name(r)
+		if err != nil {
+			return nil, err
+		}
+		c, err := m.History(domain)
+		if err != nil {
+			return nil, chatError(err)
+		}
+		now := time.Now().UTC()
+		file := strings.NewReplacer("#", "-", "/", "-").Replace(domain) + "-chat-" + now.Format("20060102-150405") + ".json"
+		w.Header().Set("Content-Disposition", `attachment; filename="`+file+`"`)
+		WriteJSON(w, http.StatusOK, map[string]any{"exported": now, "version": s.opts.Version, "conversation": c})
+		return Handled, nil
+	})
 	s.Handle("POST", p, "Send a message; progress arrives on the event stream as agent.*", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		domain, err := name(r)
 		if err != nil {
