@@ -154,7 +154,7 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 	// running without its own sandbox would only be noise in the stream.
 	env["QWEN_CODE_SUPPRESS_YOLO_WARNING"] = "1"
 	env["NO_BROWSER"] = "true"
-	return agent.StartCLIStream(ctx, claude.NewParser(), req.Stream, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req)...)
+	return req.Jail.Start(ctx, claude.NewParser(), req.Stream, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req)...)
 }
 
 func firstModel(req agent.Request, models []string) string {

@@ -168,7 +168,7 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 			return nil, err
 		}
 		env["CODEX_HOME"] = p.cfg.Home
-		return agent.StartCLIStream(ctx, &parser{}, req.Stream, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req)...)
+		return req.Jail.Start(ctx, &parser{}, req.Stream, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req)...)
 	}
 	// CODEX_API_KEY is what `codex exec` reads; nothing is written to
 	// auth.json under the site's HOME.
@@ -193,7 +193,7 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 		}
 		env["CODEX_HOME"] = home
 	}
-	return agent.StartCLIStream(ctx, &parser{}, req.Stream, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req)...)
+	return req.Jail.Start(ctx, &parser{}, req.Stream, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req)...)
 }
 
 // Adopt implements agent.Adopter.

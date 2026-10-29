@@ -87,6 +87,10 @@ type Options struct {
 	// this process.
 	Restart func()
 	Started time.Time
+	// Isolation says why this node cannot put sites in jails, or nil when
+	// it can. While it cannot, a delegate's code and conversations are
+	// refused here (auth.NeedsJail). nil is a node with no such check.
+	Isolation func() error
 }
 
 // Route is one registered endpoint, for the OpenAPI document.
@@ -385,6 +389,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// the site.
 	if caller.Delegate() && caller.Via != auth.ViaNode {
 		if site := relaySite(caller, pattern, r); site != "" && !s.localSite(site) && s.relay(w, r, caller, site) {
+			return
+		}
+	}
+	// Here, on the node that holds the site: the one whose processes
+	// would run what is asked.
+	if caller.Delegate() && auth.NeedsJail(pattern) && s.opts.Isolation != nil {
+		if err := s.opts.Isolation(); err != nil {
+			s.writeError(w, r, Errorf(http.StatusServiceUnavailable, "this server cannot isolate sites yet, so code and conversations are closed to delegated accounts; the owner sees why on the panel"))
 			return
 		}
 	}

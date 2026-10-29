@@ -1914,15 +1914,14 @@
   "users.newPasswordHint": "Déjala vacía para mantener la suya. Una nueva cierra sus sesiones.",
   "users.fillIn": "Un nombre y una contraseña de al menos 8 caracteres.",
   "users.grants": "Sitios",
-  "users.grantsHint": "Cada sitio y qué puede hacer en él. Ver muestra el sitio, sus logs, ficheros y tasks; Operar además reinicia, para, pone en espera y lanza tasks; Gestión completa además cambia el código, el manifest y las tasks y habla con los agentes.",
+  "users.grantsHint": "Cada sitio y qué puede hacer en él. Operar muestra el sitio, sus logs, ficheros y tasks, y reinicia, para, pone en espera y lanza tasks; Gestión completa además cambia el código, el manifest y las tasks y habla con los agentes.",
   "users.addGrant": "Añadir un sitio",
   "users.removeGrant": "Quitar este sitio",
   "users.noSites": "sin sitios",
   "users.lastSeen": "Última entrada",
   "users.never": "nunca",
-  "users.preset.view": "Ver",
   "users.preset.operate": "Operar",
   "users.preset.full": "Gestión completa",
   "users.preset.custom": "A medida",
-  "users.fullWarn": "Gestión completa ejecuta su código, sus tasks y los agentes con el usuario de esta máquina salvo que el sitio esté en un contenedor, y las tasks siempre: dásela solo a quien le darías una shell."
+  "users.fullWarn": "Gestión completa ejecuta su código, sus tasks y los agentes en la jaula propia del sitio: ve la carpeta de su sitio y nada más de esta máquina."
 }

@@ -105,6 +105,9 @@ func Exec(ctx context.Context, spec *manifest.Spec, home string, o ExecOptions) 
 		// is why this replaces it rather than filling a blank.)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+		if err := enclose(cmd, spec, home); err != nil {
+			return 1, err
+		}
 	}
 	// A step that leaves a daemon holding its output must not hang the
 	// caller after the step itself ended.

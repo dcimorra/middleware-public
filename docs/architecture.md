@@ -121,7 +121,7 @@ group `middleware`, mode 0660). It accepts a **closed list of operations**:
 | `sysctl.reserve_ports` | reserve the site port range from the ephemeral range |
 | `update.install` | replace the binary with a newer release of this repository, sha256 checked and synced to disk, keeping the old one as `middleware.prev` and a record of the update on trial next to it; then restart itself. Refuses a release it rolled back from, and anything while an update is on trial |
 | `update.confirm` | the supervisor running the release on trial says it serves (listener open, half a minute up, a request answered through it); the trial ends. Answers the release skipped, if any. Without it in five minutes, or with the supervisor in a crash loop, the helper restarted on the new binary rolls back by itself: no operation asks for an older version |
-| `requirements.install` | install the house's requirements (packages, docker and its group, nvm with the LTS, fail2ban, optionally a headless Chromium): this binary's own `install --requirements`, for the user and root the installed `middleware.service` names, in a transient unit of its own (`systemd-run`), its output in `/run/middleware/requirements.log`, root's (in the supervisor's `data/` a link there made root write over any file); no unit, binary or restart |
+| `requirements.install` | install the house's requirements (packages, docker and its group, nvm with the LTS, fail2ban, optionally a headless Chromium): this binary's own `install --requirements`, for the user and root the installed `middleware.service` names, in a transient unit of its own (`systemd-run`), its output in `/run/middleware/requirements.log`, root's (in the supervisor's `data/` a link there made root write over any file); also what the sites' jails need (an AppArmor profile for the binary, a drop-in turning `ProtectKernelTunables` off for a unit rendered before); no unit rewritten, no binary, no restart |
 
 Each operation validates its input (addresses parse, keys are base64 of the
 right length, names match `^[a-z0-9-]+$`), logs what it did, and never takes a
@@ -208,6 +208,26 @@ per tab the node it works on and sends every call through
 door: a build, a chat turn, an agent run on the machine that owns the
 site. The dashboard is one request, `/nodes/overview`, which asks every
 node's `/node/summary` in parallel.
+
+## Jails
+
+Every process a site has runs in a jail of the site's own
+(`internal/jail`): its process, workers, tasks, a command from the
+panel, a deploy's build, its conversations' turns. The runtimes build
+the command as before and hand it to `jail.Wrap`, which re-executes this
+binary as the jail's init (`middleware __jail <plan> -- command`) in new
+user, mount, pid, ipc and uts namespaces, the supervisor's own uid inside.
+The init builds a root out of an empty tmpfs and the plan's mounts, each
+at its real path (so `HOME`, `MIDDLEWARE_SITE_DIR` and the socket keep
+their names), pivots into it, drops its capabilities and starts the
+command as pid 2, passing signals on and reaping orphans; when the
+command ends the init exits with its status and the kernel ends what is
+left in the namespace. From outside nothing changes: the recorded pid is
+the init's, its process group is the one Stop signals, and a restarted
+supervisor adopts it the same way. `jail.Available` builds one jail at
+start; where it fails the sites run as before and delegates lose `code`
+and `agents` on that node. The house's own tasks and conversation are the
+operator's and run outside.
 
 ## Delegated users
 

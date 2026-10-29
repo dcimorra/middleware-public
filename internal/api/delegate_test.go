@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -272,4 +273,36 @@ func TestADelegateWorksOnASiteOfAnotherNodeWithoutSeeingIt(t *testing.T) {
 		t.Fatalf("gamma left and the site still answers: %s", text(out))
 	}
 	leaks("the failure", text(out))
+}
+
+// On a node that cannot put sites in jails, a delegate's code and
+// conversations are refused there; what runs nothing of theirs is not.
+func TestADelegateLosesCodeWhereSitesCannotBeJailed(t *testing.T) {
+	f := newFixture(t).withToken()
+	f.makeSite("mine.example")
+	f.makeUser("bob", auth.Grant{Site: "mine.example", Perms: []string{"operate", "code", "agents"}})
+	bob := f.login("bob")
+	var isolation error = errors.New("no user namespaces")
+	f.srv.opts.Isolation = func() error { return isolation }
+
+	for _, c := range []struct{ method, path string }{
+		{"PUT", "/api/v1/sites/mine.example/file?path=index.html"},
+		{"POST", "/api/v1/sites/mine.example/exec"},
+		{"PUT", "/api/v1/sites/mine.example/manifest"},
+	} {
+		if res, out := bob.call(c.method, c.path, map[string]any{}); res.StatusCode != http.StatusServiceUnavailable {
+			t.Errorf("%s %s: %d %s, want 503", c.method, c.path, res.StatusCode, text(out))
+		}
+	}
+	if res, out := bob.call("GET", "/api/v1/sites/mine.example", nil); res.StatusCode != 200 {
+		t.Errorf("reading the site: %d %s", res.StatusCode, text(out))
+	}
+	// The operator is not a delegate: their code is theirs to run.
+	if res, _ := f.call("PUT", "/api/v1/sites/mine.example/file?path=index.html", "hi"); res.StatusCode == http.StatusServiceUnavailable {
+		t.Error("the operator was refused")
+	}
+	isolation = nil
+	if res, _ := bob.call("PUT", "/api/v1/sites/mine.example/file?path=index.html", "hi"); res.StatusCode == http.StatusServiceUnavailable {
+		t.Error("refused on a node that can jail")
+	}
 }

@@ -278,7 +278,7 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 	if p.cfg.OAuthToken != "" && p.cfg.APIKey == "" && len(p.cfg.Env) == 0 {
 		env["CLAUDE_CODE_OAUTH_TOKEN"] = p.cfg.OAuthToken
 	}
-	return agent.StartCLIStream(ctx, &parser{}, req.Stream, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req, settingsFile)...)
+	return req.Jail.Start(ctx, &parser{}, req.Stream, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req, settingsFile)...)
 }
 
 // Adopt implements agent.Adopter.

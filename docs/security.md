@@ -169,22 +169,52 @@ honest part:
 - `view` and `operate` read the site and change its state; they run
   nothing of the user's choosing.
 - `code` decides what the site runs: its files, its manifest, its build,
-  its tasks and a command where it runs. A site in the process runtime,
-  and every task (tasks run on the host even for a site in a container),
-  runs as the supervisor's user, so `code` there is a shell as that user,
-  which reads every site and the house's own files. In the docker
-  runtime the manifest is mounted read-only and the manifest's keys that
-  reach past the site (`aliases`, `upstream`, `run.runtime`,
-  `run.docker`, the files read into the environment, the move, the VPN,
-  the agents and gateway) are refused from a user's account, but the
-  tasks still run on the host.
-- `agents` is a conversation, whose turns run on the host as the
-  supervisor's user inside the jail, and spends the operator's
-  subscriptions.
+  its tasks and a command where it runs. All of it runs in the site's
+  jail (below), so what it reaches is the site's folder and its HOME. The
+  manifest's keys that reach past the site (`aliases`, `upstream`,
+  `run.runtime`, `run.docker`, the files read into the environment, the
+  move, the VPN, the agents and gateway, the folders a conversation may
+  read) are refused from a user's account.
+- `agents` is a conversation, whose turns run in the site's jail too, and
+  spends the operator's subscriptions.
 
-So `code` and `agents` are for people you would give a shell; for a third
-party you do not trust, `operate`. Running tasks and commands inside the
-site's container is what would make `code` a boundary.
+A node that cannot build jails (below) refuses `code` and `agents` to
+delegates with a 503, on the node that holds the site: there their code
+would run with the run of the house.
+
+**A jail per site.** Every process of a site runs in a jail of the site's
+own (`internal/jail`): its process, its workers, its tasks, a command run
+from the panel, a deploy's build and every turn of its conversations,
+whoever started them, the operator included. The jail is Linux
+namespaces (user, mount, pid, ipc, uts) built by the supervisor without
+root: the process's root is an empty tmpfs that holds only what the jail
+names, each at its own path. The system (`/usr`, `/etc`, the libraries,
+`/opt`, the folders of the supervisor's `PATH`) and the installation's
+`modules/` are read-only; the site's folder and its HOME
+(`data/homes/<domain>`) are writable; `/tmp` and `/dev/shm` are its own;
+`/proc` is that of its own pid namespace, so no other process of the
+machine exists for it; `/dev` holds a few devices. A conversation also
+has its CLI's state (`data/agents/config/<domain>`), its own logs
+(read-only) and `data/api.sock`, through which its `middleware` calls are
+held to its site. A site's own process is not given the socket. Nothing
+else of the installation is there: not the other sites, not their
+homes, not `data/`. The command holds no capability and cannot gain one
+(empty bounding set, `no_new_privs`). The network is the machine's: a
+site still listens on its loopback port and reaches the internet.
+
+What is shared on purpose: the CLI logins the operator chose to share
+(a `claude` config folder set by hand, the Codex subscription's home) are
+mounted writable into every site's turns, because the CLI cannot run
+without them.
+
+Building jails needs user namespaces. On Ubuntu 24.04 and later, AppArmor
+allows them only to programs a profile names, and `middleware install`
+(or Install requirements on the panel) writes one for the binary.
+systemd's `ProtectKernelTunables` keeps a jail from mounting its `/proc`,
+so units rendered now leave it off and older ones get a drop-in. The
+supervisor checks at start: `jail.on` or `jail.off` on the panel, and
+`middleware doctor` says what is missing. A process started before the
+jail existed keeps running outside until it is restarted.
 
 **Credentials encrypted at rest.** Module credentials live in
 `data/modules.json`, AES-256-GCM, key from `MIDDLEWARE_SECRET_KEY` or
@@ -334,6 +364,6 @@ cloudflared), so for them the ban is the WAF's 403.
   rights; a conversation can still delete the site's files, commit nonsense
   or spend money. The git history is the undo.
 - **No protection against the operator.** Tokens and the socket give full
-  control. Delegated users are the one role below the operator, and with
-  `code` or `agents` they run code as the supervisor's user (above,
-  "Delegated users").
+  control. Delegated users are the one role below the operator, and their
+  code and conversations run in their site's jail (above, "Delegated
+  users" and "A jail per site").

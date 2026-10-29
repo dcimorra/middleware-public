@@ -24,6 +24,8 @@ type Paths struct {
 	// Fail2banDir is fail2ban's configuration folder; empty is
 	// /etc/fail2ban.
 	Fail2banDir string
+	// AppArmorDir is AppArmor's profiles folder; empty is /etc/apparmor.d.
+	AppArmorDir string
 }
 
 // SystemPaths are where a Linux distribution expects these files.
@@ -198,8 +200,8 @@ func shortErr(err error, cost string) string {
 // nvm, the browser when Params.Browser is "yes", fail2ban, and the
 // ownership of what it made as root. No unit, no binary, no restart: what
 // the panel may start (the helper's requirements.install). It says whether the
-// operator was added to docker's group, which reaches the supervisor only
-// when it restarts.
+// supervisor must restart to see what changed: the operator added to
+// docker's group, or what the sites' jails need (stepJail).
 func (in *Installer) Requirements() (Report, bool, error) {
 	if err := in.defaults(); err != nil {
 		return Report{}, false, err
@@ -207,7 +209,7 @@ func (in *Installer) Requirements() (Report, bool, error) {
 	if os.Geteuid() == 0 && in.Params.User == "root" {
 		return Report{}, false, errors.New("refusing to install for root")
 	}
-	dockerChanged := false
+	dockerChanged, jailChanged := false, false
 	rep, err := in.runSteps([]Step{
 		{"package manager", in.stepPackageManager},
 		{"git, curl, wireguard, nftables", in.stepPackages},
@@ -219,9 +221,14 @@ func (in *Installer) Requirements() (Report, bool, error) {
 		{"node (nvm)", optional("the first site that asks for a Node installs nvm itself, and waits for it", in.stepNode)},
 		{"headless browser", optional("the panel works without the pictures", in.stepBrowser)},
 		{"fail2ban", optional("SSH has no bans", in.stepFail2ban)},
+		{"site jails", optional("sites run without a jail of their own", func() (bool, string, error) {
+			c, d, err := in.stepJail()
+			jailChanged = c
+			return c, d, err
+		})},
 		{"ownership", in.stepOwnership},
 	})
-	return rep, dockerChanged, err
+	return rep, dockerChanged || jailChanged, err
 }
 
 // Install runs every step in order and stops at the first failure, which is
@@ -258,6 +265,7 @@ func (in *Installer) Install() (Report, error) {
 			unitsChanged = c
 			return c, d, err
 		}},
+		{"site jails", optional("sites run without a jail of their own", in.stepJail)},
 		{"sysctl", in.stepSysctl},
 		{"tmpfiles", in.stepTmpfiles},
 		{"daemon-reload", func() (bool, string, error) {
@@ -378,13 +386,13 @@ func (in *Installer) unitNames() []string {
 
 // filePaths is every file the installer owns outside the root.
 func (in *Installer) filePaths() []string {
-	return []string{
+	return append([]string{
 		filepath.Join(in.Paths.SystemdDir, ServiceUnit),
 		filepath.Join(in.Paths.SystemdDir, SocketUnit),
 		filepath.Join(in.Paths.SystemdDir, HelperUnit),
 		filepath.Join(in.Paths.TmpfilesDir, TmpfilesIn),
 		filepath.Join(in.Paths.SysctlDir, SysctlIn),
-	}
+	}, in.jailFiles()...)
 }
 
 func (in *Installer) pathFor(name string) string {

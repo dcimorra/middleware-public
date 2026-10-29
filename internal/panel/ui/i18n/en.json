@@ -1914,15 +1914,14 @@
   "users.newPasswordHint": "Leave it empty to keep theirs. A new one ends their sessions.",
   "users.fillIn": "A name and a password of at least 8 characters.",
   "users.grants": "Sites",
-  "users.grantsHint": "Each site and what they may do there. Viewing shows the site, its logs, files and tasks; Operate also restarts, stops, holds and runs tasks; Full management also changes the code, the manifest and the tasks and talks to the agents.",
+  "users.grantsHint": "Each site and what they may do there. Operate shows the site, its logs, files and tasks and restarts, stops, holds and runs tasks; Full management also changes the code, the manifest and the tasks and talks to the agents.",
   "users.addGrant": "Add a site",
   "users.removeGrant": "Remove this site",
   "users.noSites": "no sites",
   "users.lastSeen": "Last sign-in",
   "users.never": "never",
-  "users.preset.view": "View",
   "users.preset.operate": "Operate",
   "users.preset.full": "Full management",
   "users.preset.custom": "Custom",
-  "users.fullWarn": "Full management runs their code, their tasks and the agents with this machine's user unless the site is in a container, and tasks always do: give it only to someone you would give a shell."
+  "users.fullWarn": "Full management runs their code, their tasks and the agents in the site's own jail: they see their site's folder and nothing else of this machine."
 }

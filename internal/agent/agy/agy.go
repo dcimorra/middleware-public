@@ -125,7 +125,7 @@ func (p *Provider) Start(ctx context.Context, req agent.Request) (agent.Run, err
 			return nil, err
 		}
 	}
-	return agent.StartCLIStream(ctx, &parser{}, req.Stream, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req)...)
+	return req.Jail.Start(ctx, &parser{}, req.Stream, req.Workdir, req.Jail.Env(env), p.cfg.Bin, p.Args(req)...)
 }
 
 // Adopt implements agent.Adopter.

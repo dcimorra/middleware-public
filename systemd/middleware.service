@@ -47,8 +47,9 @@ LimitNOFILE=65536
 # escalates; the helper is a separate unit for that.
 # ProtectSystem and ProtectHome are also off: the root may live anywhere,
 # including under the operator's home, and sites build inside it.
+# ProtectKernelTunables is off too: it over-mounts parts of /proc, and the
+# kernel then refuses the sites' jails a /proc of their own.
 NoNewPrivileges=no
-ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictRealtime=yes

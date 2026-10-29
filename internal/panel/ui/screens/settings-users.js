@@ -15,9 +15,10 @@ import { cardHead, quietEmpty } from "./settings-kit.js";
 
 // The presets the panel offers, in the order a cautious operator reads
 // them. The API takes any set of operate, code and agents; these are the
-// three that make sense to hand out.
+// two that make sense to hand out. Viewing alone was one and was dropped:
+// someone who cannot change their site has no use for seeing it (a grant
+// made with it shows as Custom).
 const PRESETS = {
-  view: [],
   operate: ["operate"],
   full: ["operate", "code", "agents"],
 };
@@ -46,7 +47,7 @@ function grantsEditor(initial, sites) {
   function addRow(g) {
     const site = h("input", { type: "text", list: dl.id, value: g ? g.site : "", placeholder: "shop.example.com", autocapitalize: "off", spellcheck: "false", class: "mono" });
     const level = h("select", null,
-      ...["view", "operate", "full"].map((k) => h("option", { value: k }, t("users.preset." + k))),
+      ...["operate", "full"].map((k) => h("option", { value: k }, t("users.preset." + k))),
       h("option", { value: "custom", hidden: true }, t("users.preset.custom")));
     level.value = g ? presetOf(g.perms) : "operate";
     const warn = h("div", { class: "hint warn", hidden: level.value !== "full" }, t("users.fullWarn"));
