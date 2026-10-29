@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dcimorra/the-middleware/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/auth"
 	"github.com/dcimorra/the-middleware/internal/chat"
 	"github.com/dcimorra/the-middleware/internal/settings"
 )
@@ -87,7 +88,24 @@ func (s *Server) RegisterAgents(o AgentsOptions) {
 		if _, err := domainOf(r); err != nil {
 			return nil, err
 		}
-		return Agents{Providers: providers()}, nil
+		all := providers()
+		c := auth.FromContext(r.Context())
+		if !c.Delegate() || c.Agents == nil {
+			return Agents{Providers: all}, nil
+		}
+		// A delegate is shown only what their limits leave them, so the
+		// picker offers nothing the send would refuse.
+		out := []AgentInfo{}
+		for _, p := range all {
+			if !auth.AgentAllowed(c.Agents, p.Provider, "") {
+				continue
+			}
+			if allowed := c.Agents[p.Provider]; len(allowed) > 0 {
+				p.Models = allowed
+			}
+			out = append(out, p)
+		}
+		return Agents{Providers: out}, nil
 	})
 	if o.Chat == nil {
 		return
@@ -247,7 +265,13 @@ func (s *Server) registerChat(m *chat.Manager, p string, name func(*http.Request
 		if c, err := m.Conversation(domain); err == nil && c.Origin == chat.OriginSite {
 			return nil, Errorf(http.StatusConflict, "this conversation belongs to the site's code; open one of your own to talk about the site")
 		}
-		id, err := m.SendWith(domain, body.Text, chat.SendOptions{Model: body.Model, Provider: body.Provider, Queue: true})
+		opts := chat.SendOptions{Model: body.Model, Provider: body.Provider, Queue: true}
+		if c := auth.FromContext(r.Context()); c.Delegate() && c.Agents != nil {
+			opts.Allow = func(provider, model string, known []string) (string, error) {
+				return auth.PickAgentModel(c.Agents, provider, model, known)
+			}
+		}
+		id, err := m.SendWith(domain, body.Text, opts)
 		if errors.Is(err, chat.ErrQueued) {
 			WriteJSON(w, http.StatusAccepted, map[string]any{"queued": true})
 			return Handled, nil
@@ -350,6 +374,8 @@ func chatError(err error) error {
 		return Errorf(http.StatusConflict, "%s", msg)
 	case errors.As(err, &capacity):
 		return Errorf(http.StatusTooManyRequests, "%s", msg)
+	case errors.Is(err, auth.ErrAgentNotAllowed):
+		return Errorf(http.StatusForbidden, "%s", msg)
 	case errors.Is(err, agent.ErrUnknownProvider):
 		return Errorf(http.StatusBadRequest, "%s", msg)
 	case strings.HasSuffix(msg, "no such site"), strings.HasSuffix(msg, "is not a domain"):

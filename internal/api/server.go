@@ -327,7 +327,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// a node of an older release that never sends the header gets
 		// nothing it did not have.
 		if d, ok := delegateOf(r); ok {
-			caller.User, caller.Grants = d.User, map[string][]string{}
+			caller.User, caller.Grants, caller.Agents = d.User, map[string][]string{}, d.Agents
 			if d.Site != "" {
 				caller.Grants[d.Site] = d.Perms
 			}

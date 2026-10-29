@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
@@ -15,8 +16,8 @@ import (
 // routes, so only the operator reaches them.
 func (s *Server) registerUsers() {
 	s.Handle("GET", Prefix+"/users", "The delegated users and what each may do, by site", s.usersList)
-	s.Handle("POST", Prefix+"/users", "Make a delegated user (body: name, password, grants: [{site, perms}]; perms of view, operate, code, agents)", s.usersCreate)
-	s.Handle("PUT", Prefix+"/users/{id}", "Change what a user may do (body: grants) or their password (body: password); a new password ends their sessions", s.usersUpdate)
+	s.Handle("POST", Prefix+"/users", "Make a delegated user (body: name, password, grants: [{site, perms}]; perms of view, operate, code, agents; agents: {provider: [models]} limits their conversations, null or absent for no limit, [] for every model of that provider)", s.usersCreate)
+	s.Handle("PUT", Prefix+"/users/{id}", "Change what a user may do (body: grants, agents: {provider: [models]} or null for no limit) or their password (body: password); a new password ends their sessions", s.usersUpdate)
 	s.Handle("DELETE", Prefix+"/users/{id}", "Remove a user and end their sessions", s.usersDelete)
 	s.Handle("PUT", Prefix+"/auth/password", "A delegated user changes their own password (body: current, password); their sessions end", s.authOwnPassword)
 }
@@ -28,6 +29,22 @@ func checkGrants(gs []auth.Grant) ([]auth.Grant, error) {
 	out, err := auth.CheckGrants(gs, manifest.ValidName)
 	if err != nil {
 		return nil, Errorf(http.StatusBadRequest, "%v", err)
+	}
+	return out, nil
+}
+
+// checkAgents reads a user's limits on agents. A provider or a model the
+// machine does not have is kept: the limit is there when it comes.
+func checkAgents(raw json.RawMessage) (map[string][]string, error) {
+	var limits map[string][]string
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &limits); err != nil {
+			return nil, Errorf(http.StatusBadRequest, "agents: %v", err)
+		}
+	}
+	out, err := auth.CheckAgents(limits)
+	if err != nil {
+		return nil, Errorf(http.StatusBadRequest, "agents: %v", err)
 	}
 	return out, nil
 }
@@ -56,9 +73,10 @@ func (s *Server) usersCreate(w http.ResponseWriter, r *http.Request) (any, error
 		return nil, err
 	}
 	var body struct {
-		Name     string       `json:"name"`
-		Password string       `json:"password"`
-		Grants   []auth.Grant `json:"grants"`
+		Name     string          `json:"name"`
+		Password string          `json:"password"`
+		Grants   []auth.Grant    `json:"grants"`
+		Agents   json.RawMessage `json:"agents"`
 	}
 	if err := ReadJSON(r, &body); err != nil {
 		return nil, err
@@ -67,7 +85,11 @@ func (s *Server) usersCreate(w http.ResponseWriter, r *http.Request) (any, error
 	if err != nil {
 		return nil, err
 	}
-	u, err := st.CreateUser(body.Name, body.Password, grants)
+	agents, err := checkAgents(body.Agents)
+	if err != nil {
+		return nil, err
+	}
+	u, err := st.CreateUser(body.Name, body.Password, grants, agents)
 	if err != nil {
 		return nil, userErr(err)
 	}
@@ -81,15 +103,24 @@ func (s *Server) usersUpdate(w http.ResponseWriter, r *http.Request) (any, error
 		return nil, err
 	}
 	var body struct {
-		Grants   *[]auth.Grant `json:"grants"`
-		Password string        `json:"password"`
+		Grants *[]auth.Grant `json:"grants"`
+		// Absent leaves the limits as they are; null lifts them.
+		Agents   json.RawMessage `json:"agents"`
+		Password string          `json:"password"`
 	}
 	if err := ReadJSON(r, &body); err != nil {
 		return nil, err
 	}
 	id := r.PathValue("id")
-	if body.Grants == nil && body.Password == "" {
-		return nil, Errorf(http.StatusBadRequest, "nothing to change: send grants, password or both")
+	if body.Grants == nil && body.Agents == nil && body.Password == "" {
+		return nil, Errorf(http.StatusBadRequest, "nothing to change: send grants, agents, password or more than one")
+	}
+	var agents map[string][]string
+	if body.Agents != nil {
+		var err error
+		if agents, err = checkAgents(body.Agents); err != nil {
+			return nil, err
+		}
 	}
 	if body.Password != "" {
 		if err := st.SetUserPassword(id, body.Password); err != nil {
@@ -105,11 +136,16 @@ func (s *Server) usersUpdate(w http.ResponseWriter, r *http.Request) (any, error
 			return nil, err
 		}
 	}
+	if body.Agents != nil {
+		if _, err := st.SetUserAgents(id, agents); err != nil {
+			return nil, err
+		}
+	}
 	u, err := st.User(id)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"id": u.ID, "name": u.Name, "grants": u.Grants, "created": u.Created}, nil
+	return map[string]any{"id": u.ID, "name": u.Name, "grants": u.Grants, "agents": u.Agents, "created": u.Created}, nil
 }
 
 func (s *Server) usersDelete(w http.ResponseWriter, r *http.Request) (any, error) {

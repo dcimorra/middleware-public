@@ -175,9 +175,19 @@ honest part:
   `run.runtime`, `run.docker`, the files read into the environment, the
   move, the VPN, the agents' monthly cap and the gateway, the folders a
   conversation may read) are refused from a user's account; which agent
-  and model answer is theirs.
+  and model answer is theirs, within the limits below.
 - `agents` is a conversation, whose turns run in the site's jail too, and
   spends the operator's subscriptions.
+
+The operator can also limit which agents a user's conversations use and,
+per agent, which models (`agents` on the user, `internal/auth/agents.go`).
+The limits name providers and models whether or not the machine has them:
+one turned on later is already limited. They travel with the user to the
+node that holds the site, which shows the user only what the limits leave
+and refuses a turn with anything else, the provider's default model
+included (another allowed one is taken). The refusal comes before anything
+is said of the provider, so a user cannot learn which agents the house has
+outside their list. No limits is every agent; an empty list is none.
 
 A node that cannot build jails (below) refuses `code` and `agents` to
 delegates with a 503, on the node that holds the site: there their code

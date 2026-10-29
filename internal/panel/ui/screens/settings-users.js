@@ -73,9 +73,82 @@ function grantsEditor(initial, sites) {
   };
 }
 
+// agentCatalog is every agent this installation can run, enabled or not,
+// with the models each knows: the agent modules, by provider. A limit
+// may name what the machine has not got yet (agentsEditor keeps it).
+async function agentCatalog() {
+  let mods = [];
+  try { mods = await api.get("/modules", { node: "" }); } catch { /* only what the limits name is offered */ }
+  const out = [];
+  for (const m of mods || []) {
+    if (!m || !String(m.key).startsWith("agent-")) continue;
+    const need = (m.needs || []).find((n) => n.key === "model");
+    out.push({ provider: m.key.slice("agent-".length), name: m.name || m.key, enabled: !!m.enabled, models: (need && need.options) || [], labels: (need && need.labels) || {} });
+  }
+  return out;
+}
+
+// agentsEditor limits the user's conversations to some agents and, for
+// each, to some models. null is no limit. A provider ticked with no model
+// may use every one of that provider's, including ones it gains later.
+function agentsEditor(initial, catalog) {
+  const limits = initial || null;
+  const known = new Map(catalog.map((c) => [c.provider, c]));
+  for (const p of Object.keys(limits || {})) if (!known.has(p)) known.set(p, { provider: p, name: p, enabled: false, models: [], labels: {} });
+  const mode = h("select", null,
+    h("option", { value: "all" }, t("users.agents.all")),
+    h("option", { value: "some" }, t("users.agents.some")));
+  mode.value = limits ? "some" : "all";
+  const rows = [];
+  const list = h("div", { class: "agent-limits", hidden: mode.value === "all" });
+  for (const c of [...known.values()].sort((a, b) => a.name.localeCompare(b.name))) {
+    const chosen = limits && Object.prototype.hasOwnProperty.call(limits, c.provider) ? limits[c.provider] : null;
+    const on = h("input", { type: "checkbox", checked: chosen !== null });
+    const head = h("label", { class: "check" }, on, h("strong", null, c.name),
+      c.enabled ? null : h("span", { class: "dim small" }, t("users.agents.notHere")));
+    const extra = (chosen || []).filter((m) => !c.models.includes(m));
+    const boxes = c.models.map((m) => {
+      const box = h("input", { type: "checkbox", value: m, checked: !!(chosen && chosen.includes(m)) });
+      const label = c.labels[m] ? `${m} · ${c.labels[m]}` : m;
+      return { box, el: h("label", { class: "check small" }, box, h("span", { class: "mono" }, label)) };
+    });
+    const others = h("input", { type: "text", value: extra.join(", "), placeholder: t("users.agents.otherModels"), autocapitalize: "off", spellcheck: "false", class: "mono" });
+    const models = h("div", { class: "agent-models", hidden: !on.checked },
+      ...boxes.map((b) => b.el), others,
+      h("div", { class: "hint" }, t("users.agents.modelsHint")));
+    on.addEventListener("change", () => { models.hidden = !on.checked; });
+    rows.push({ provider: c.provider, on, boxes, others });
+    list.append(h("div", { class: "agent-limit" }, head, models));
+  }
+  if (!rows.length) list.append(h("p", { class: "dim small" }, t("users.agents.none")));
+  mode.addEventListener("change", () => { list.hidden = mode.value === "all"; });
+  return {
+    el: h("div", null, mode, list),
+    value() {
+      if (mode.value === "all") return null;
+      const out = {};
+      for (const r of rows) {
+        if (!r.on.checked) continue;
+        const ms = r.boxes.filter((b) => b.box.checked).map((b) => b.box.value);
+        for (const m of r.others.value.split(/[\s,]+/)) if (m && !ms.includes(m)) ms.push(m);
+        out[r.provider] = ms;
+      }
+      return out;
+    },
+  };
+}
+
+function agentsSummary(limits) {
+  if (!limits) return t("users.agents.all");
+  const ps = Object.keys(limits).sort();
+  if (!ps.length) return t("users.agents.noAgent");
+  return ps.map((p) => (limits[p].length ? `${p} (${limits[p].join(", ")})` : p)).join(" · ");
+}
+
 async function editUser(user) {
-  const sites = await allSites();
+  const [sites, catalog] = await Promise.all([allSites(), agentCatalog()]);
   const editor = grantsEditor(user ? user.grants : [], sites);
+  const agents = agentsEditor(user ? user.agents : null, catalog);
   const name = h("input", { type: "text", autocomplete: "off", autocapitalize: "off", spellcheck: "false", required: true });
   const pw = h("input", { type: "password", autocomplete: "new-password", minlength: "8", required: !user });
   const body = [
@@ -84,6 +157,9 @@ async function editUser(user) {
     h("h3", { class: "small" }, t("users.grants")),
     h("p", { class: "dim small" }, t("users.grantsHint")),
     editor.el,
+    h("h3", { class: "small" }, t("users.agents.title")),
+    h("p", { class: "dim small" }, t("users.agents.hint")),
+    agents.el,
   ];
   return open({
     title: user ? t("users.editTitle", { name: user.name }) : t("users.add"),
@@ -93,12 +169,12 @@ async function editUser(user) {
     onSubmit: async (_f, showError) => {
       try {
         if (user) {
-          const patch = { grants: editor.value() };
+          const patch = { grants: editor.value(), agents: agents.value() };
           if (pw.value) patch.password = pw.value;
           return await api.put(`/users/${enc(user.id)}`, patch, { node: "" });
         }
         if (!name.value.trim() || pw.value.length < 8) { showError(t("users.fillIn")); return false; }
-        return await api.post("/users", { name: name.value.trim().toLowerCase(), password: pw.value, grants: editor.value() }, { node: "" });
+        return await api.post("/users", { name: name.value.trim().toLowerCase(), password: pw.value, grants: editor.value(), agents: agents.value() }, { node: "" });
       } catch (e) { showError(e.message); return false; }
     },
   });
@@ -123,6 +199,7 @@ export function usersCard() {
       const grants = u.grants.length
         ? h("div", { class: "small" }, ...u.grants.map((g) => h("div", null, h("code", null, g.site), " · ", t("users.preset." + presetOf(g.perms)))))
         : h("span", { class: "muted" }, t("users.noSites"));
+      grants.append(h("div", { class: "dim small" }, t("users.agents.title"), ": ", agentsSummary(u.agents)));
       return h("tr", null,
         cell(u.name, null, "primary"),
         cell(grants, t("users.grants")),

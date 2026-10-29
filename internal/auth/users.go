@@ -34,15 +34,20 @@ type User struct {
 	Hash    string    `json:"hash"`
 	Created time.Time `json:"created"`
 	Grants  []Grant   `json:"grants"`
+	// Agents limits the conversations' agents (agents.go); nil is none.
+	// Written without omitempty: an empty map (no agent at all) must not
+	// read back as nil (every agent).
+	Agents map[string][]string `json:"agents"`
 }
 
 // PublicUser is a user as listed: everything but the hash.
 type PublicUser struct {
-	ID       string    `json:"id"`
-	Name     string    `json:"name"`
-	Created  time.Time `json:"created"`
-	Grants   []Grant   `json:"grants"`
-	LastSeen time.Time `json:"last_seen,omitzero"`
+	ID       string              `json:"id"`
+	Name     string              `json:"name"`
+	Created  time.Time           `json:"created"`
+	Grants   []Grant             `json:"grants"`
+	Agents   map[string][]string `json:"agents"`
+	LastSeen time.Time           `json:"last_seen,omitzero"`
 }
 
 // Errors of the users.
@@ -75,7 +80,7 @@ func (u User) public() PublicUser {
 	if g == nil {
 		g = []Grant{}
 	}
-	return PublicUser{ID: u.ID, Name: u.Name, Created: u.Created, Grants: g}
+	return PublicUser{ID: u.ID, Name: u.Name, Created: u.Created, Grants: g, Agents: u.Agents}
 }
 
 // GrantMap is the grants by site, as a Caller carries them.
@@ -131,9 +136,9 @@ func (s *Store) User(id string) (User, error) {
 	return User{}, ErrNotFound
 }
 
-// CreateUser makes a user with a password and the grants given, which
-// must have been checked (CheckGrants).
-func (s *Store) CreateUser(name, password string, grants []Grant) (PublicUser, error) {
+// CreateUser makes a user with a password, the grants and the agents'
+// limits given, which must have been checked (CheckGrants, CheckAgents).
+func (s *Store) CreateUser(name, password string, grants []Grant, agents map[string][]string) (PublicUser, error) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	if !userNameRE.MatchString(name) {
 		return PublicUser{}, ErrBadUserName
@@ -160,11 +165,11 @@ func (s *Store) CreateUser(name, password string, grants []Grant) (PublicUser, e
 			return PublicUser{}, ErrUserExists
 		}
 	}
-	u := User{ID: hex.EncodeToString(raw[:]), Name: name, Hash: phc, Created: s.now(), Grants: grants}
+	u := User{ID: hex.EncodeToString(raw[:]), Name: name, Hash: phc, Created: s.now(), Grants: grants, Agents: agents}
 	if err := s.saveUsers(append(list, u)); err != nil {
 		return PublicUser{}, err
 	}
-	s.emit("auth.user_created", "user "+name+" created", map[string]any{"id": u.ID, "name": name, "grants": grants})
+	s.emit("auth.user_created", "user "+name+" created", map[string]any{"id": u.ID, "name": name, "grants": grants, "agents": agents})
 	return u.public(), nil
 }
 
@@ -202,6 +207,20 @@ func (s *Store) SetUserGrants(id string, grants []Grant) (PublicUser, error) {
 		return PublicUser{}, err
 	}
 	s.emit("auth.user_grants", "what user "+u.Name+" may do changed", map[string]any{"id": id, "name": u.Name, "grants": grants})
+	return u.public(), nil
+}
+
+// SetUserAgents replaces the limits on a user's agents (nil: none). Like
+// grants, they take effect on the user's next request.
+func (s *Store) SetUserAgents(id string, agents map[string][]string) (PublicUser, error) {
+	u, err := s.updateUser(id, func(u *User) error {
+		u.Agents = agents
+		return nil
+	})
+	if err != nil {
+		return PublicUser{}, err
+	}
+	s.emit("auth.user_agents", "which agents user "+u.Name+" may use changed", map[string]any{"id": id, "name": u.Name, "agents": agents})
 	return u.public(), nil
 }
 

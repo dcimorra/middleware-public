@@ -666,6 +666,11 @@ type SendOptions struct {
 	// when the turn ends, instead of refusing it: the operator who thinks
 	// of something mid-turn should not have to wait and retype it.
 	Queue bool
+	// Allow, when set, has the last word on the agent and model a turn
+	// runs with: a delegate's limits (auth.PickAgentModel). It is asked
+	// after the defaults are settled, so a default the user may not use
+	// is refused or swapped too, and with the provider's models here.
+	Allow func(provider, model string, known []string) (string, error)
 }
 
 // ErrQueued says the message was kept for when the running turn ends.
@@ -708,16 +713,6 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 		s.Provider = door
 	}
 	provider, err := m.opts.Registry.Get(s.Provider)
-	if err != nil {
-		return "", err
-	}
-	if ok, why := provider.Available(); !ok {
-		return "", fmt.Errorf("%s: %s", s.Provider, why)
-	}
-	if err := m.opts.Ledger.Allow(domain, s.Cap, time.Now()); err != nil {
-		m.emit("agent.cost_cap", name, "warn", err.Error(), map[string]any{"cap": s.Cap})
-		return "", err
-	}
 	model := o.Model
 	// The conversation's model is its last agent's (or the one it was
 	// opened with, before any agent ran it): another agent takes its own
@@ -727,6 +722,28 @@ func (m *Manager) SendWith(name, text string, o SendOptions) (string, error) {
 	}
 	if model == "" {
 		model = s.Model
+	}
+	// The limits answer before anything about the provider here does: a
+	// delegate refused an agent learns nothing of whether the house has it.
+	if o.Allow != nil {
+		var known []string
+		if err == nil {
+			known = provider.Models()
+		}
+		var aerr error
+		if model, aerr = o.Allow(s.Provider, model, known); aerr != nil {
+			return "", aerr
+		}
+	}
+	if err != nil {
+		return "", err
+	}
+	if ok, why := provider.Available(); !ok {
+		return "", fmt.Errorf("%s: %s", s.Provider, why)
+	}
+	if err := m.opts.Ledger.Allow(domain, s.Cap, time.Now()); err != nil {
+		m.emit("agent.cost_cap", name, "warn", err.Error(), map[string]any{"cap": s.Cap})
+		return "", err
 	}
 	m.mu.Lock()
 	if r, busy := m.running[name]; busy {

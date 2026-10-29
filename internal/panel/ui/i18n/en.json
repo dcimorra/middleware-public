@@ -1923,5 +1923,14 @@
   "users.preset.operate": "Operate",
   "users.preset.full": "Full management",
   "users.preset.custom": "Custom",
-  "users.fullWarn": "Full management runs their code, their tasks and the agents in the site's own jail: they see their site's folder and nothing else of this machine."
+  "users.fullWarn": "Full management runs their code, their tasks and the agents in the site's own jail: they see their site's folder and nothing else of this machine.",
+  "users.agents.title": "Agents",
+  "users.agents.hint": "Which agents their conversations may use and, for each, which models. You can pick agents and models this machine does not have yet: the limit applies when they arrive.",
+  "users.agents.all": "Every agent and model",
+  "users.agents.some": "Only the ones I choose",
+  "users.agents.notHere": "not on this machine",
+  "users.agents.otherModels": "Other models, separated by commas",
+  "users.agents.modelsHint": "No model ticked or typed: every model of this agent.",
+  "users.agents.none": "No agent is known here yet. Turn one on in Modules, or save no agent at all.",
+  "users.agents.noAgent": "no agent"
 }

@@ -10,8 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dcimorra/the-middleware/internal/agent"
 	"github.com/dcimorra/the-middleware/internal/auth"
+	"github.com/dcimorra/the-middleware/internal/chat"
 	"github.com/dcimorra/the-middleware/internal/events"
+	"github.com/dcimorra/the-middleware/internal/settings"
 	"github.com/dcimorra/the-middleware/internal/tasks"
 )
 
@@ -312,5 +315,81 @@ func TestADelegateLosesCodeWhereSitesCannotBeJailed(t *testing.T) {
 	isolation = nil
 	if res, _ := bob.call("PUT", "/api/v1/sites/mine.example/file?path=index.html", "hi"); res.StatusCode == http.StatusServiceUnavailable {
 		t.Error("refused on a node that can jail")
+	}
+}
+
+// The operator limits a delegate's agents, by provider and by model,
+// naming ones this machine does not have yet: the delegate is shown what
+// the limits leave and a turn with anything else is refused, the
+// provider's default included when it is not theirs.
+func TestADelegateUsesOnlyTheAgentsTheOperatorAllows(t *testing.T) {
+	f := newFixture(t).withToken()
+	f.makeSite("mine.example")
+	release := make(chan struct{})
+	reg := agent.NewRegistry()
+	reg.Register(holdingProvider{key: "claude", release: release})
+	reg.Register(fakeProvider{key: "codex"})
+	m := chat.New(chat.Options{Root: f.root, Bus: f.bus, Registry: reg, Limits: settings.Agents{DefaultProvider: "claude"}})
+	t.Cleanup(func() {
+		close(release)
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline) && m.Running("mine.example"); time.Sleep(20 * time.Millisecond) {
+		}
+	})
+	f.srv.RegisterAgents(AgentsOptions{Registry: reg, Chat: m})
+
+	res, out := f.call("POST", "/api/v1/users", map[string]any{
+		"name": "bob", "password": "a-good-password",
+		"grants": []auth.Grant{{Site: "mine.example", Perms: []string{"operate", "agents"}}},
+		"agents": map[string][]string{"claude": {"m2", "m2 "}, "kimi": {}},
+	})
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("create: %d %s", res.StatusCode, text(out))
+	}
+	if b := text(out); !strings.Contains(b, `"kimi": []`) || !strings.Contains(b, `"claude": [`) {
+		t.Fatalf("the limits as kept: %s", b)
+	}
+	bob := f.login("bob")
+
+	var listed Agents
+	res, out = bob.call("GET", "/api/v1/sites/mine.example/agents", nil)
+	raw, _ := json.Marshal(out)
+	_ = json.Unmarshal(raw, &listed)
+	if res.StatusCode != 200 || len(listed.Providers) != 1 || listed.Providers[0].Provider != "claude" || strings.Join(listed.Providers[0].Models, ",") != "m2" {
+		t.Fatalf("listed: %d %s", res.StatusCode, text(out))
+	}
+	for _, c := range []struct {
+		body map[string]string
+		want int
+	}{
+		{map[string]string{"text": "hi", "provider": "codex"}, http.StatusForbidden},
+		{map[string]string{"text": "hi", "provider": "claude", "model": "m1"}, http.StatusForbidden},
+		// No model: claude's default (m1) is not theirs, m2 is.
+		{map[string]string{"text": "hi"}, 200},
+	} {
+		if res, out := bob.call("POST", "/api/v1/sites/mine.example/chat", c.body); res.StatusCode != c.want {
+			t.Errorf("send %v: %d %s, want %d", c.body, res.StatusCode, text(out), c.want)
+		}
+	}
+	if _, conv := bob.call("GET", "/api/v1/sites/mine.example/chat", nil); !strings.Contains(text(conv), `"m2"`) {
+		t.Errorf("the turn did not run with the allowed model: %s", text(conv))
+	}
+	// The operator is held to nothing of it.
+	if res, out := f.call("GET", "/api/v1/sites/mine.example/agents", nil); res.StatusCode != 200 || !strings.Contains(text(out), "codex") {
+		t.Errorf("operator: %d %s", res.StatusCode, text(out))
+	}
+
+	// Null lifts the limits; leaving them out of an update keeps them.
+	var users []auth.PublicUser
+	getJSON(t, f, "/api/v1/users", &users)
+	f.call("PUT", "/api/v1/users/"+users[0].ID, map[string]any{"grants": []auth.Grant{{Site: "mine.example", Perms: []string{"operate", "agents"}}}})
+	if _, out := bob.call("GET", "/api/v1/sites/mine.example/agents", nil); strings.Contains(text(out), "codex") {
+		t.Fatalf("an update without agents lifted them: %s", text(out))
+	}
+	f.call("PUT", "/api/v1/users/"+users[0].ID, map[string]any{"agents": nil})
+	if _, out := bob.call("GET", "/api/v1/sites/mine.example/agents", nil); !strings.Contains(text(out), "codex") {
+		t.Fatalf("null did not lift them: %s", text(out))
+	}
+	if res, out := f.call("PUT", "/api/v1/users/"+users[0].ID, map[string]any{"agents": map[string][]string{"Not A Provider!": {}}}); res.StatusCode != 400 {
+		t.Fatalf("a bad provider: %d %s", res.StatusCode, text(out))
 	}
 }

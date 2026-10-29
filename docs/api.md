@@ -92,9 +92,9 @@ API never answers. Tokens and the socket need no header.
 | POST | `/auth/logout` | → `{ok}` |
 | GET | `/auth/me` | → `{authenticated, via: "cookie"|"token"|"socket", turn?, setup_pending, passkeys, password_closed, open_until?}`; `turn` is the site whose agent turn called over the socket; a delegated user gets `{authenticated, via, user: {name, sites: [{site, perms}]}}` and nothing else |
 | PUT | `/auth/password` | a delegated user's own: `{current, password}` → `{ok}`; ends their sessions, this one included; 403 for the operator |
-| GET | `/users` | → `[{id, name, created, grants: [{site, perms}], last_seen?}]` the delegated users |
-| POST | `/users` | `{name, password, grants?: [{site, perms}]}` → the user (201); `name` is 2–32 of `a-z 0-9 . _ -`; 409 for a name taken, 400 for a permission outside `view, operate, code, agents` |
-| PUT | `/users/{id}` | `{grants?, password?}` → the user; a new password ends their sessions, new grants hold from their next request |
+| GET | `/users` | → `[{id, name, created, grants: [{site, perms}], agents, last_seen?}]` the delegated users |
+| POST | `/users` | `{name, password, grants?: [{site, perms}], agents?: {provider: [models]}}` → the user (201); `name` is 2–32 of `a-z 0-9 . _ -`; 409 for a name taken, 400 for a permission outside `view, operate, code, agents`. `agents` limits their conversations: `null` (or absent) is every agent, `{}` none, a provider with `[]` every model of it; providers and models need not be on the machine |
+| PUT | `/users/{id}` | `{grants?, agents?, password?}` → the user; a new password ends their sessions, new grants and limits hold from their next request; `agents` absent keeps the limits, `null` lifts them |
 | DELETE | `/users/{id}` | → `{ok}`; their sessions end |
 | GET | `/auth/tokens` | → `[{id, name, scopes?, created, last_used}]` |
 | POST | `/auth/tokens` | `{name, scopes?: ["restart:shop.example", "read"]}` → `{id, token}` (shown once); 400 for a scope outside the list |
@@ -464,7 +464,7 @@ through the manifest; these routes are what the panel reads beside them.
 | method | path | body / result |
 | --- | --- | --- |
 | GET | `/agents` | → `{providers: [{provider, available, where, models: []}], capacity}` (`where` is the binary's path, or why it cannot run) |
-| GET | `/sites/{domain}/agents` | → `{providers}` as `/agents`, without the capacity: what a conversation of the site can use, from the node that holds it |
+| GET | `/sites/{domain}/agents` | → `{providers}` as `/agents`, without the capacity: what a conversation of the site can use, from the node that holds it; a delegated user sees only the agents and models their limits leave (a turn with another is 403) |
 | GET | `/agents/waiting` | → `{asking: [{name, domain, id?, title?, updated}], working, running: [{name, domain, id?, title?, updated}]}`: the conversations waiting for the operator's answer (the newest first), how many turns are at work, and which (the oldest first, `updated` is when the turn started). The panel's bar asks every node of the network for it |
 | GET | `/agents/capacity` | → `{used, max, reserved_for_house, providers: {claude: {used, max}}, running: [{domain, provider, started, turn_id}]}`; a provider's `max` of 0 means no cap of its own |
 | GET | `/sites/{domain}/chat` | → `{domain, provider, model, session_id, running, live, turns: [{id, role, text, cost, at, tools, questions: [{question, options, recommended}]}]}`; while a turn runs, `live: [{seq, type, data}]` is what it showed so far, the same events the stream sent (whose `data.seq` matches), so a client that opens it late draws it where it is. A turn does not depend on any client and has no time limit; it ends on its own or with `/stop` |
