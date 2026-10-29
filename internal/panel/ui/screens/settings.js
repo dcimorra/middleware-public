@@ -12,6 +12,7 @@ import { toast, toastError } from "../components/toast.js";
 import { getTheme, setTheme, setLang } from "../lib/theme.js";
 import { fmtTime, fmtAgo } from "../lib/dom.js";
 import { passkeysCard, panelAccessCard } from "./settings-access.js";
+import { usersCard } from "./settings-users.js";
 import { pushCard } from "./settings-push.js";
 import { autofixCard, automationCard } from "./settings-autofix.js";
 import { cardHead, saveBar, savedNote, fold, quietEmpty } from "./settings-kit.js";
@@ -41,7 +42,7 @@ export function settingsScreen({ query } = {}) {
     install: [general, pagesCard, cacheCard],
     notify: [pushCard()],
     agents: [agentsCard, automationCard(), autofixCard(), depsCard],
-    access: [passkeysCard(), panelAccessCard(), tokensCard],
+    access: [passkeysCard(), panelAccessCard(), usersCard(), tokensCard],
     browser: [localCard],
   };
 

@@ -141,6 +141,9 @@ type Server struct {
 	// all but a VPN from here (this node has one, with a device).
 	meshCanClose func() error
 	summaries    map[string]Summarizer
+	// loc is where the delegates' sites on other nodes were found
+	// (delegate.go).
+	loc locator
 }
 
 // Deployer is an alternative way to deploy a site, set with SetDeployer.
@@ -205,6 +208,7 @@ func New(opts Options) *Server {
 		})
 	}
 	s.registerAuth()
+	s.registerUsers()
 	s.registerSites()
 	s.registerRelocateTarget()
 	s.registerImportToken()
@@ -313,6 +317,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Set only by the mesh door, after it checked the tunnel address
 		// and the secret; nothing a browser or the panel sends makes it.
 		caller = auth.Caller{Via: auth.ViaNode, Token: m.Name}
+		// A delegate the node relays is that delegate here too, for the
+		// one site, and is held to the same lists as where they signed
+		// in: this node is the one that knows the site's manifest, and
+		// a node of an older release that never sends the header gets
+		// nothing it did not have.
+		if d, ok := delegateOf(r); ok {
+			caller.User, caller.Grants = d.User, map[string][]string{}
+			if d.Site != "" {
+				caller.Grants[d.Site] = d.Perms
+			}
+		}
 	} else if s.opts.Auth != nil {
 		caller = s.opts.Auth.Resolve(r)
 	} else if auth.IsSocket(r.Context()) {
@@ -347,6 +362,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, Errorf(http.StatusForbidden, "this token's scopes (%s) do not open %s", strings.Join(caller.Scopes, ", "), pattern))
 		return
 	}
+	if !public && caller.Delegate() && !s.gateDelegate(w, r, caller, pattern) {
+		return
+	}
 	if name, ok := s.fromNode(caller); ok && !nodeMay(pattern) {
 		s.writeError(w, r, Errorf(http.StatusForbidden, "node %s may not use %s: the network and the credentials are decided at each machine's own panel", name, pattern))
 		return
@@ -360,6 +378,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if caller.Via == auth.ViaCookie && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && r.Header.Get(CSRFHeader) != CSRFValue {
 		s.writeError(w, r, Errorf(http.StatusForbidden, "cookie requests must send %s: %s", CSRFHeader, CSRFValue))
 		return
+	}
+	// A delegate's site that is not here is answered by the node that
+	// holds it. Only where they signed in: a relayed request is not
+	// relayed again (nodeMay), and the node at the end is the one with
+	// the site.
+	if caller.Delegate() && caller.Via != auth.ViaNode {
+		if site := relaySite(caller, pattern, r); site != "" && !s.localSite(site) && s.relay(w, r, caller, site) {
+			return
+		}
 	}
 	s.mux.ServeHTTP(w, r)
 }

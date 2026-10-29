@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dcimorra/the-middleware/internal/archive"
+	"github.com/dcimorra/the-middleware/internal/auth"
 	"github.com/dcimorra/the-middleware/internal/events"
 	"github.com/dcimorra/the-middleware/internal/inbound"
 	"github.com/dcimorra/the-middleware/internal/manifest"
@@ -97,6 +98,9 @@ func (s *Server) sitesManager() (*sites.Manager, error) {
 }
 
 func (s *Server) sitesList(w http.ResponseWriter, r *http.Request) (any, error) {
+	if c := auth.FromContext(r.Context()); c.Delegate() {
+		return s.delegateSites(r.Context(), c)
+	}
 	m, err := s.sitesManager()
 	if err != nil {
 		return nil, err
@@ -213,6 +217,11 @@ func (s *Server) sitesPutManifest(w http.ResponseWriter, r *http.Request) (any, 
 	if err := ReadJSON(r, &mf); err != nil {
 		return nil, err
 	}
+	if next, err := json.Marshal(&mf); err == nil {
+		if err := s.checkDelegateManifest(r, domain, next); err != nil {
+			return nil, err
+		}
+	}
 	return m.Update(domain, &mf)
 }
 
@@ -228,6 +237,15 @@ func (s *Server) sitesPatchManifest(w http.ResponseWriter, r *http.Request) (any
 	var partial map[string]json.RawMessage
 	if err := ReadJSON(r, &partial); err != nil {
 		return nil, err
+	}
+	if auth.FromContext(r.Context()).Delegate() {
+		next, err := s.patchedManifest(domain, partial)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.checkDelegateManifest(r, domain, next); err != nil {
+			return nil, err
+		}
 	}
 	return m.Patch(domain, partial)
 }
@@ -259,6 +277,9 @@ func (s *Server) sitesDelete(w http.ResponseWriter, r *http.Request) (any, error
 	dest, err := m.Delete(context.Background(), domain, keep)
 	if err != nil {
 		return nil, err
+	}
+	if s.opts.Auth != nil {
+		_ = s.opts.Auth.ForgetSite(domain)
 	}
 	out := map[string]any{"ok": true, "archived": keep}
 	if unpublished != nil {
@@ -356,6 +377,15 @@ func (s *Server) historyRestore(w http.ResponseWriter, r *http.Request) (any, er
 	domain, err := domainOf(r)
 	if err != nil {
 		return nil, err
+	}
+	if auth.FromContext(r.Context()).Delegate() {
+		next, err := m.Version(domain, r.PathValue("id"))
+		if err != nil {
+			return nil, err
+		}
+		if err := s.checkDelegateManifest(r, domain, next); err != nil {
+			return nil, err
+		}
 	}
 	return m.RestoreVersion(domain, r.PathValue("id"))
 }
@@ -526,6 +556,11 @@ func (s *Server) sitesWriteFile(w http.ResponseWriter, r *http.Request) (any, er
 	if err != nil {
 		return nil, Errorf(http.StatusRequestEntityTooLarge, "body: %v", err)
 	}
+	if isManifestPath(p) {
+		if err := s.checkDelegateManifest(r, domain, data); err != nil {
+			return nil, err
+		}
+	}
 	if err := m.WriteFile(domain, p, data); err != nil {
 		return nil, err
 	}
@@ -618,6 +653,9 @@ func (s *Server) sitesRename(w http.ResponseWriter, r *http.Request) (any, error
 	site, err := m.Rename(ctx, from, to)
 	if err != nil {
 		return nil, err
+	}
+	if s.opts.Auth != nil {
+		_ = s.opts.Auth.RenameSite(from, to)
 	}
 	if body.Publish && !published && s.publisher != nil && !manifest.IsProject(to) {
 		published = true

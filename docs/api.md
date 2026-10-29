@@ -50,6 +50,32 @@ opens only that site's import (below, "Moving a site to another node") and
 seeing or removing that one site; it is made by `POST /relocate/import-token`
 and stops working after two hours (`expires`).
 
+**Delegated users.** The operator can let other people manage some sites
+and nothing else (`/users`, below). A user signs in with
+`POST /auth/login {user, password}` at the node they were made on and gets
+a cookie session like the operator's, held to their grants: each grant is a
+site and permissions out of `view` (the site, its logs, files, history,
+tasks and their logs: implied by every grant), `operate` (restart, stop,
+start, hold, workers, run and stop tasks, empty the cache), `code` (the
+manifest, files, deploy, exec, writing and deleting tasks) and `agents`
+(the site's conversations, `GET /sites/{domain}/agents`). Outside those a
+user reaches `GET /sites` and `GET /events` (both narrowed to their sites),
+`/events/stream` (the same), `/auth/me`, `/auth/logout` and
+`PUT /auth/password`. A site not theirs answers 404, a route their grant
+does not open 403, and any other route 404. Deleting, renaming, moving,
+publishing and containerizing a site and its LLM gateway stay the
+operator's. With `code`, a manifest that changes `aliases`, `upstream`,
+`move`, `vpn`, `claude_api`, `claude`, `agent`, `chat`, `needs`, or a
+`runtime`, `docker`, `env_files`, `env_from_file` of `run` or of a worker,
+is refused with 403 naming the key, whether it comes through
+`/manifest`, a kept version or `PUT /file?path=site.json`. A user's site
+may live on another node: the request goes to this node's own path all the
+same and is answered by the node that holds the site, through the mesh,
+which checks the grant again; nothing in the answer names that node. The
+events about moves, nodes, publishing and the house are never shown to a
+user. What the permissions mean for the machine: docs/security.md,
+"Delegated users".
+
 First run: `middleware setup` prints a one-time code; `POST /api/v1/auth/setup`
 with `{"code": "...", "password": "..."}` creates the operator.
 
@@ -62,9 +88,14 @@ API never answers. Tokens and the socket need no header.
 | method | path | body / result |
 | --- | --- | --- |
 | POST | `/auth/setup` | `{code, password}` → `{ok}` |
-| POST | `/auth/login` | `{password}` → sets cookie, `{ok}` |
+| POST | `/auth/login` | `{password}` (the operator) or `{user, password}` (a delegated user) → sets cookie, `{ok}`; a user's password is not closed by `passkey_only` |
 | POST | `/auth/logout` | → `{ok}` |
-| GET | `/auth/me` | → `{authenticated, via: "cookie"|"token"|"socket", turn?, setup_pending, passkeys, password_closed, open_until?}`; `turn` is the site whose agent turn called over the socket |
+| GET | `/auth/me` | → `{authenticated, via: "cookie"|"token"|"socket", turn?, setup_pending, passkeys, password_closed, open_until?}`; `turn` is the site whose agent turn called over the socket; a delegated user gets `{authenticated, via, user: {name, sites: [{site, perms}]}}` and nothing else |
+| PUT | `/auth/password` | a delegated user's own: `{current, password}` → `{ok}`; ends their sessions, this one included; 403 for the operator |
+| GET | `/users` | → `[{id, name, created, grants: [{site, perms}], last_seen?}]` the delegated users |
+| POST | `/users` | `{name, password, grants?: [{site, perms}]}` → the user (201); `name` is 2–32 of `a-z 0-9 . _ -`; 409 for a name taken, 400 for a permission outside `view, operate, code, agents` |
+| PUT | `/users/{id}` | `{grants?, password?}` → the user; a new password ends their sessions, new grants hold from their next request |
+| DELETE | `/users/{id}` | → `{ok}`; their sessions end |
 | GET | `/auth/tokens` | → `[{id, name, scopes?, created, last_used}]` |
 | POST | `/auth/tokens` | `{name, scopes?: ["restart:shop.example", "read"]}` → `{id, token}` (shown once); 400 for a scope outside the list |
 | DELETE | `/auth/tokens/{id}` | → `{ok}` |
@@ -433,6 +464,7 @@ through the manifest; these routes are what the panel reads beside them.
 | method | path | body / result |
 | --- | --- | --- |
 | GET | `/agents` | → `{providers: [{provider, available, where, models: []}], capacity}` (`where` is the binary's path, or why it cannot run) |
+| GET | `/sites/{domain}/agents` | → `{providers}` as `/agents`, without the capacity: what a conversation of the site can use, from the node that holds it |
 | GET | `/agents/waiting` | → `{asking: [{name, domain, id?, title?, updated}], working, running: [{name, domain, id?, title?, updated}]}`: the conversations waiting for the operator's answer (the newest first), how many turns are at work, and which (the oldest first, `updated` is when the turn started). The panel's bar asks every node of the network for it |
 | GET | `/agents/capacity` | → `{used, max, reserved_for_house, providers: {claude: {used, max}}, running: [{domain, provider, started, turn_id}]}`; a provider's `max` of 0 means no cap of its own |
 | GET | `/sites/{domain}/chat` | → `{domain, provider, model, session_id, running, live, turns: [{id, role, text, cost, at, tools, questions: [{question, options, recommended}]}]}`; while a turn runs, `live: [{seq, type, data}]` is what it showed so far, the same events the stream sent (whose `data.seq` matches), so a client that opens it late draws it where it is. A turn does not depend on any client and has no time limit; it ends on its own or with `/stop` |

@@ -329,6 +329,22 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 			t.Errorf("token scope route %s is not registered", r)
 		}
 	}
+	// Every route of a site is decided for the delegates: opened by a
+	// permission or kept for the owner. One added without being placed
+	// fails here, rather than being the operator's by accident or open
+	// to every delegate by another.
+	for r := range live {
+		method, path, _ := strings.Cut(r, " ")
+		if strings.HasPrefix(path, "/sites/{domain}") && !auth.SiteRoute(method+" "+api.Prefix+path) {
+			t.Errorf("site route %s is in no permission and not the owner's (internal/auth/perms.go)", r)
+		}
+	}
+	for _, r := range auth.PermRoutes() {
+		method, path, _ := strings.Cut(r, " ")
+		if !live[method+" "+strings.TrimPrefix(path, api.Prefix)] {
+			t.Errorf("delegate route %s is not registered", r)
+		}
+	}
 	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "api.md"))
 	if err != nil {
 		t.Fatal(err)

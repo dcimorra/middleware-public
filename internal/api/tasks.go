@@ -311,7 +311,8 @@ func (tr taskRoutes) log(w http.ResponseWriter, r *http.Request, name string) (a
 }
 
 // actorOf is who an event says acted: a site's agent turn is "agent", as
-// its refusals and its pushes are; a scoped token is the service door it
+// its refusals and its pushes are; a delegated user is named, where they
+// signed in and on the node their request was relayed to; a scoped token is the service door it
 // is, by name, since the audit trail is where an operator looks for which
 // program changed a site's tasks; a node is named too. Everyone else (the
 // panel, the socket, a token without scopes) is the operator.
@@ -320,6 +321,8 @@ func actorOf(r *http.Request) string {
 	switch {
 	case c.Turn != "":
 		return "agent"
+	case c.Delegate():
+		return "user:" + c.User
 	case c.Via == auth.ViaNode:
 		return "node:" + c.Token
 	case c.Via == auth.ViaToken && len(c.Scopes) > 0:

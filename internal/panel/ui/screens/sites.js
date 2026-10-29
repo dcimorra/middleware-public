@@ -15,6 +15,7 @@ import { modeBadge, aliveStatus, siteMode } from "../components/badge.js";
 import { open, confirm, field, checkbox } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 import { currentNode, setCurrentNode } from "../lib/node.js";
+import { delegate, can } from "../lib/access.js";
 import { menu } from "./site-menu.js";
 
 export function sitesScreen({ query }) {
@@ -27,7 +28,9 @@ export function sitesScreen({ query }) {
     { label: t("sites.archived"), icon: "history", onClick: () => showArchived() },
     { label: t("sites.importV1"), icon: "download", onClick: () => importV1() },
   ]);
-  const p = page({ title: t("nav.sites"), icon: "globe", actions: [searchBox(search), more, newBtn] });
+  // A delegated user manages the sites they were given and makes none.
+  const mine = delegate();
+  const p = page({ title: t(mine ? "sites.mine" : "nav.sites"), icon: "globe", actions: mine ? [searchBox(search)] : [searchBox(search), more, newBtn] });
   p.head.classList.add("sites-head");
   const container = h("div", { class: "card pad0 sites-card" });
   const count = h("p", { class: "small muted", role: "status" });
@@ -59,7 +62,9 @@ export function sitesScreen({ query }) {
     renderBulk();
     clear(container);
     if (all.length === 0) {
-      container.append(empty(t("sites.emptyTitle"), t("sites.emptyHint"), h("button", { type: "button", class: "btn primary", onClick: newSite }, icon("plus"), t("sites.new")), "globe"));
+      container.append(mine
+        ? empty(t("sites.emptyMine"), t("sites.emptyMineHint"), null, "globe")
+        : empty(t("sites.emptyTitle"), t("sites.emptyHint"), h("button", { type: "button", class: "btn primary", onClick: newSite }, icon("plus"), t("sites.new")), "globe"));
       count.textContent = "";
       return;
     }
@@ -128,13 +133,13 @@ export function sitesScreen({ query }) {
       cell(h("div", { class: "site-name" },
         h("a", { class: "cell-link", href }, s.domain),
         m.title && m.title !== s.domain ? h("span", { class: "site-title" }, m.title) : null), null, "site-cell"),
-      cell(aliveStatus(s), null, "site-state"),
+      cell(s.unreachable ? h("span", { class: "badge warn" }, t("sites.unreachable")) : aliveStatus(s), null, "site-state"),
       // The mode only where it adds to the state: "held, held" and
       // "stopped, stopped" read as a stutter.
       cell(["hold", "stopped"].includes(siteMode(s)) ? "" : modeBadge(s), null, "site-mode"),
       cols.where ? cell(where ? h("span", { class: "mono", title: s.revision || "" }, where) : "", null, "site-where") : null,
       cols.last ? cell(last ? h("span", { class: "site-last", title: [last.type, last.message, fmtTime(last.time)].filter(Boolean).join(" · ") }, fmtAgo(last.time, t)) : "", null, "site-last-cell right") : null,
-      cell(chatLink(s.domain, currentNode() || ""), null, "site-chat-cell"),
+      cell(can(s.domain, "agents") ? chatLink(s.domain, currentNode() || "") : "", null, "site-chat-cell"),
     );
     tr.addEventListener("click", (e) => {
       if (e.target.closest("a") || e.target.closest("input") || e.target.closest("label")) return;

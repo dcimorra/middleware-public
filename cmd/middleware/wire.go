@@ -459,7 +459,7 @@ func buildWire(a *app.App) app.Hook {
 				return false
 			}
 			c, err := r.Cookie(auth.CookieName)
-			return err == nil && store.ValidSession(c.Value)
+			return err == nil && store.OperatorSession(c.Value)
 		})
 	}
 	if theWAF != nil {

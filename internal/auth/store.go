@@ -55,6 +55,10 @@ type Store struct {
 	pkMu       sync.Mutex
 	challenges map[string]challenge
 
+	// usersMu guards users.json (users.go). It is not mu: Resolve reads
+	// the users on every request, under mu for the session first.
+	usersMu sync.Mutex
+
 	// open caches the emergency door's file for a second (panelaccess.go).
 	openMu    sync.Mutex
 	openUntil time.Time
@@ -66,6 +70,8 @@ type Session struct {
 	ID      string    `json:"id"`
 	Created time.Time `json:"created"`
 	Expires time.Time `json:"expires"`
+	// User is the delegate's id (users.go); empty is the operator.
+	User string `json:"user,omitempty"`
 }
 
 // Token is an API token as listed; the secret itself is never stored,
@@ -156,9 +162,11 @@ func (s *Store) HasOperator() bool {
 	return err == nil && v != ""
 }
 
-// SetPassword hashes and stores the operator password. Existing sessions
-// are dropped: a password change is how an operator throws out whoever
-// else had a cookie.
+// SetPassword hashes and stores the operator password. The operator's
+// existing sessions are dropped: a password change is how an operator
+// throws out whoever else had a cookie. The users' stay: they never had
+// this password, and every one of them signing in again because the
+// operator changed theirs would be a surprise with no use.
 func (s *Store) SetPassword(password string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -176,7 +184,11 @@ func (s *Store) setPassword(password string) error {
 	if err := s.load(); err != nil {
 		return err
 	}
-	s.sessions = map[string]Session{}
+	for k, ses := range s.sessions {
+		if ses.User == "" {
+			delete(s.sessions, k)
+		}
+	}
 	if err := s.saveSessions(); err != nil {
 		return err
 	}
@@ -270,7 +282,10 @@ func (s *Store) Login(password, ip string) (string, error) {
 
 // NewSession creates a session without checking anything: the caller
 // already did (Login, or a passkey module later).
-func (s *Store) NewSession() (string, error) {
+func (s *Store) NewSession() (string, error) { return s.newSession("") }
+
+// newSession is a session of user (an id, "" for the operator).
+func (s *Store) newSession(user string) (string, error) {
 	id, err := randomToken(32)
 	if err != nil {
 		return "", err
@@ -281,7 +296,7 @@ func (s *Store) NewSession() (string, error) {
 		return "", err
 	}
 	now := s.now()
-	s.sessions[id] = Session{ID: id, Created: now, Expires: now.Add(SessionTTL)}
+	s.sessions[id] = Session{ID: id, Created: now, Expires: now.Add(SessionTTL), User: user}
 	return id, s.saveSessions()
 }
 
@@ -297,6 +312,13 @@ func (s *Store) ValidSession(id string) bool {
 	}
 	ses, ok := s.sessions[id]
 	return ok && s.now().Before(ses.Expires)
+}
+
+// OperatorSession reports whether id names a live session of the
+// operator's, not a user's: what the WAF exempts from its limits.
+func (s *Store) OperatorSession(id string) bool {
+	u, ok := s.sessionUser(id)
+	return ok && u.ID == ""
 }
 
 // DeleteSession ends a session; an unknown id is not an error.

@@ -209,6 +209,21 @@ door: a build, a chat turn, an agent run on the machine that owns the
 site. The dashboard is one request, `/nodes/overview`, which asks every
 node's `/node/summary` in parallel.
 
+## Delegated users
+
+The operator is the house's one full account; below it are delegated
+users, each allowed some sites and, on each, some of `view`, `operate`,
+`code` and `agents` (`internal/auth/perms.go`). A user signs in at the
+node they were made on and the panel shows them their sites as if they
+were all there: a request for a site this node does not hold is relayed
+to the node that does (found by asking the live nodes, kept for a
+minute), with the user and their grant for that site in
+`X-Middleware-Delegate`, believed only on the mesh door. That node holds
+the request to the same lists, and keeps the manifest keys that reach
+past the site out of the user's hands, since only it has the manifest.
+`GET /sites` and the event stream for a user are this node's and the
+other nodes' put together, narrowed to their sites.
+
 ## Events, not logs
 
 Anything that changes state emits an event with a type, the subject and who
