@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,6 +67,22 @@ func TestAgentsAreListedAndTheConversationsAnswer(t *testing.T) {
 	resp, _ = f.call("POST", "/api/v1/sites/x.test/chat/stop", nil)
 	if resp.StatusCode != 409 {
 		t.Fatalf("stop with nothing running: %d", resp.StatusCode)
+	}
+	// The export is the same conversation, as a file to save.
+	req, _ := http.NewRequest("GET", f.http.URL+"/api/v1/sites/x.test/chat/export", nil)
+	req.Header.Set("Authorization", "Bearer "+f.token)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exp struct {
+		Exported     time.Time         `json:"exported"`
+		Conversation chat.Conversation `json:"conversation"`
+	}
+	_ = json.NewDecoder(res.Body).Decode(&exp)
+	res.Body.Close()
+	if cd := res.Header.Get("Content-Disposition"); res.StatusCode != 200 || !strings.Contains(cd, `attachment; filename="x.test-chat-`) || exp.Conversation.Domain != "x.test" || exp.Exported.IsZero() {
+		t.Fatalf("export: %d %q %+v", res.StatusCode, cd, exp)
 	}
 	resp, _ = f.call("DELETE", "/api/v1/chat/middleware", nil)
 	if resp.StatusCode != 200 {

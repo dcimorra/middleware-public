@@ -1290,7 +1290,14 @@ func Preamble(domain, workdir string, j agent.Jail) string {
 		}
 		b.WriteString("The exceptions are two. The house's guide, " + guide + ", which you may always read. ")
 		if logs := agent.OwnLogs(filepath.Dir(filepath.Dir(workdir)), domain); logs != "" {
-			b.WriteString("And your own logs, in " + logs + ", which the middleware writes and you may read with the Read tool, not write: site.log is the site's process, worker-<name>.log each worker's, move-<name>.log a move's commands, access.log the requests that reached it.\n")
+			// Said as it is for this turn: told only "with the Read tool",
+			// an agent chained an ls of the folder into a longer command,
+			// which was refused whole, and lost a step to it.
+			how := "Read them with your file-reading tool, never with a shell command: a shell command that names that folder is refused whole, even chained with others, so do not put it in one (no ls, cat, tail or grep of it). "
+			if agent.Enclose != nil {
+				how = "The folder is mounted read-only in your jail, so you may read it with any tool, shell commands included. "
+			}
+			b.WriteString("And your own logs, in " + logs + ", which the middleware writes and you may read, not write. " + how + "site.log is the site's process, worker-<name>.log each worker's, move-<name>.log a move's commands, access.log the requests that reached it.\n")
 		} else {
 			b.WriteString("Your own logs, once the site has run, are in data/logs/" + domain + " under the installation's root, and you may read them.\n")
 		}

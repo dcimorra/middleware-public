@@ -9,7 +9,7 @@
 import { icon } from "../lib/icons.js";
 import { h, clear, debounce } from "../lib/dom.js";
 import { t } from "../lib/i18n.js";
-import { api, enc } from "../lib/api.js";
+import { api, apiURL, enc } from "../lib/api.js";
 import { store } from "../lib/store.js";
 import { can } from "../lib/access.js";
 import { onEvent } from "../lib/stream.js";
@@ -50,6 +50,7 @@ export function chatTab(domain) {
   // from the environment mark every turn carries, and killed one by one or
   // all at once. Otherwise they live for days and nobody sees them.
   const procsBtn = h("button", { type: "button", class: "btn ghost sm" }, icon("list"), t("chat.processes"));
+  const exportBtn = h("button", { type: "button", class: "btn ghost sm", title: t("chat.exportHint") }, icon("download"), t("chat.export"));
   const status = h("span", { class: "small muted", role: "status" });
   const capacity = h("span", { class: "small muted chat-capacity", title: t("chat.capacityTitle") });
   // Attachments go with the next message; they are kept in the site's own
@@ -165,7 +166,7 @@ export function chatTab(domain) {
   // while, it was stealing the room of what is used every message.
   const more = h("details", { class: "chat-menu" },
     h("summary", { class: "chat-round ghost", "aria-label": t("chat.more"), title: t("chat.more") }, icon("more", { stroke: 3 })),
-    h("div", { class: "chat-menu-list", role: "menu" }, procsBtn, reset, purge));
+    h("div", { class: "chat-menu-list", role: "menu" }, procsBtn, exportBtn, reset, purge));
   more.addEventListener("click", (e) => { if (e.target.closest(".chat-menu-list button")) more.open = false; });
   const closeMenu = (e) => { if (more.open && !more.contains(e.target)) more.open = false; };
   document.addEventListener("click", closeMenu);
@@ -880,6 +881,15 @@ export function chatTab(domain) {
   provider.addEventListener("change", () => { fillModels(); loadUsage(); });
   stop.addEventListener("click", async () => {
     try { await api.post(`${cur.path}/stop`); status.textContent = t("chat.stopping"); } catch (err) { toastError(err); }
+  });
+  // A plain link, so the browser saves it with the session cookie: the
+  // whole conversation with every step, for someone else to read.
+  exportBtn.addEventListener("click", () => {
+    if (!cur.path) { toast(t("chat.exportEmpty")); return; }
+    const a = h("a", { href: apiURL(cur.path + "/export"), download: "" });
+    document.body.append(a);
+    a.click();
+    a.remove();
   });
   procsBtn.addEventListener("click", async () => {
     const list = h("div", { class: "stack-sm" });

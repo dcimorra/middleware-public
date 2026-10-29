@@ -184,8 +184,13 @@ func Settings(j agent.Jail) map[string]any {
 			deny = append(deny, fmt.Sprintf("%s(/%s/**)", tool, d))
 		}
 		// Bash is matched on its text and could write as easily as read;
-		// the Read tool is how a lent folder is read.
-		deny = append(deny, fmt.Sprintf("Bash(*%s*)", d))
+		// the Read tool is how a lent folder is read. In a jail the folder
+		// is mounted read-only and a command cannot write it, so the rule
+		// only refused an ls chained into a longer command (chat.Preamble
+		// says which of the two holds).
+		if agent.Enclose == nil {
+			deny = append(deny, fmt.Sprintf("Bash(*%s*)", d))
+		}
 	}
 	for _, s := range j.Secrets {
 		for _, tool := range []string{"Read", "Grep", "Glob"} {

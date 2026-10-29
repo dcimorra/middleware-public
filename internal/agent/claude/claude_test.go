@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -245,6 +246,13 @@ func TestALentFolderIsClosedToWritingAndAdded(t *testing.T) {
 	args := strings.Join(New(Config{}).Args(agent.Request{Prompt: "x", Jail: j}, ""), " ")
 	if !strings.Contains(args, "--add-dir /s/b") {
 		t.Fatalf("args: %s", args)
+	}
+	// In a jail the folder is read-only by the mount: a command may read it.
+	agent.Enclose = func(*exec.Cmd, agent.Jail, string) error { return nil }
+	defer func() { agent.Enclose = nil }()
+	rules, _ = json.Marshal(Settings(j))
+	if strings.Contains(string(rules), "Bash(*/s/b*)") || !strings.Contains(string(rules), "Write(//s/b/**)") {
+		t.Fatalf("jailed: %s", rules)
 	}
 }
 

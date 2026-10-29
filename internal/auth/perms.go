@@ -87,6 +87,7 @@ var permRoutes = map[string][]string{
 	PermAgents: {
 		"GET " + siteBase + "/agents",
 		"GET " + siteBase + "/chat",
+		"GET " + siteBase + "/chat/export",
 		"POST " + siteBase + "/chat",
 		"DELETE " + siteBase + "/chat",
 		"POST " + siteBase + "/chat/stop",
@@ -100,6 +101,7 @@ var permRoutes = map[string][]string{
 		"POST " + siteBase + "/chats",
 		"DELETE " + siteBase + "/chats",
 		"GET " + siteBase + "/chats/{id}",
+		"GET " + siteBase + "/chats/{id}/export",
 		"POST " + siteBase + "/chats/{id}",
 		"DELETE " + siteBase + "/chats/{id}",
 		"POST " + siteBase + "/chats/{id}/stop",
