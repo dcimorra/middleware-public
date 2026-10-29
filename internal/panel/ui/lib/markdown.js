@@ -14,8 +14,10 @@ function inline(text) {
   while ((m = re.exec(text))) {
     if (m.index > last) out.push(text.slice(last, m.index));
     if (m[1] !== undefined) out.push(h("code", null, m[1]));
-    else if (m[2] !== undefined) out.push(h("strong", null, m[2]));
-    else if (m[5] !== undefined) out.push(h("em", null, m[5]));
+    // Bold and italic hold their own inline code and links: agents write
+    // **`src/app.ts`** all the time, and it showed its backticks.
+    else if (m[2] !== undefined) out.push(h("strong", null, ...inline(m[2])));
+    else if (m[5] !== undefined) out.push(h("em", null, ...inline(m[5])));
     else {
       const href = m[4];
       // Another document of this set opens here; anything else must be
