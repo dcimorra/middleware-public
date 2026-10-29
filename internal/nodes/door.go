@@ -19,6 +19,13 @@ import (
 // APIPrefix is where every node's API lives.
 const APIPrefix = "/api/v1"
 
+// DelegateHeader carries, from the node a delegated user signed in at to
+// the node that holds their site, who the user is and what they may do
+// there (api/delegate.go). It is believed only on the mesh door, from a
+// node that proved it is one; the proxy below drops whatever a browser
+// put in it.
+const DelegateHeader = "X-Middleware-Delegate"
+
 type memberKey struct{}
 
 // MemberFrom is the node a request came from, when it came through the
@@ -288,6 +295,31 @@ func (m *Mesh) Stream(ctx context.Context, x Member, method, path, contentType s
 	return json.Unmarshal(raw, out)
 }
 
+// Open starts a GET on a member's API whose body keeps coming (the event
+// stream), with header added; the caller closes the body. A status other
+// than 200 is a RemoteError.
+func (m *Mesh) Open(ctx context.Context, x Member, path string, header http.Header) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, m.base(x.IP)+APIPrefix+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	for k, vs := range header {
+		req.Header[k] = vs
+	}
+	if secret := m.secret(); secret != "" {
+		req.Header.Set("Authorization", "Bearer "+secret)
+	}
+	res, err := (&http.Client{Transport: m.transport()}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if res.StatusCode != http.StatusOK {
+		res.Body.Close()
+		return nil, &RemoteError{Status: res.StatusCode}
+	}
+	return res, nil
+}
+
 // RemoteError is a node's own refusal, with its status.
 type RemoteError struct {
 	Status  int
@@ -306,7 +338,7 @@ func (e *RemoteError) Error() string {
 // other side this node is the network's secret from its mesh address. The
 // answer streams back as it comes, which keeps the event stream and a
 // chat's turn live through the hop.
-func (m *Mesh) Proxy(x Member, rest string) http.Handler {
+func (m *Mesh) Proxy(x Member, rest string) *httputil.ReverseProxy {
 	secret := m.secret()
 	return &httputil.ReverseProxy{
 		Transport:     m.transport(),
@@ -317,7 +349,7 @@ func (m *Mesh) Proxy(x Member, rest string) http.Handler {
 			out.URL.Path, out.URL.RawPath = APIPrefix+"/"+strings.TrimPrefix(rest, "/"), ""
 			out.URL.RawQuery = pr.In.URL.RawQuery
 			out.Host = out.URL.Host
-			for _, h := range []string{"Cookie", "Authorization", "X-Requested-With", "Origin", "Referer", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Real-Ip", "Forwarded", "Cf-Connecting-Ip", "Cf-Ipcountry", "True-Client-Ip"} {
+			for _, h := range []string{"Cookie", "Authorization", "X-Requested-With", "Origin", "Referer", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Real-Ip", "Forwarded", "Cf-Connecting-Ip", "Cf-Ipcountry", "True-Client-Ip", DelegateHeader} {
 				out.Header.Del(h)
 			}
 			out.Header.Set("Authorization", "Bearer "+secret)

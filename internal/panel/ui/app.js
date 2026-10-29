@@ -34,6 +34,8 @@ import { dashboardScreen } from "./screens/dashboard.js";
 import { movesPill } from "./components/moves.js";
 import { liveChats } from "./components/live-chats.js";
 import { currentNode, setCurrentNode, onNodeChange } from "./lib/node.js";
+import { delegate } from "./lib/access.js";
+import { passwordDialog } from "./screens/account.js";
 
 const app = document.getElementById("app");
 const main = document.getElementById("main");
@@ -84,12 +86,21 @@ function buildSidebar() {
   const close = h("button", { type: "button", class: "icon-btn", "aria-label": t("common.close") }, icon("x"));
   close.addEventListener("click", () => closeMenu(true));
   sidebar.append(h("div", { class: "sheet-head" }, h("span", { class: "brand" }, brandMark(), h("span", null, t("app.title"))), close));
-  for (const [key, href, k, ico] of NAV) {
-    if (NAV_GROUPS[key]) sidebar.append(h("div", { class: "group" }, t(NAV_GROUPS[key])));
+  // A delegated user has their sites and nothing else of the house.
+  const nav = delegate() ? NAV.filter(([key]) => key === "sites") : NAV;
+  for (const [key, href, k, ico] of nav) {
+    if (NAV_GROUPS[key] && !delegate()) sidebar.append(h("div", { class: "group" }, t(NAV_GROUPS[key])));
     sidebar.append(h("a", { href: "#" + href, "data-path": href },
       icon(ico), h("span", { class: "label" }, t("nav." + key)), h("span", { class: "k", "aria-hidden": "true" }, k)));
   }
   sidebar.append(h("div", { class: "group" }, t("nav.session")));
+  if (delegate()) {
+    const me = store.get("me");
+    sidebar.append(h("div", { class: "small muted signed-as" }, t("account.signedAs", { name: me.user.name })));
+    const pw = h("a", { href: "#/password" }, icon("key"), h("span", { class: "label" }, t("account.changePassword")));
+    pw.addEventListener("click", (e) => { e.preventDefault(); closeMenu(); passwordDialog(() => showAuth("login")); });
+    sidebar.append(pw);
+  }
   const logout = h("a", { href: "#/logout" }, icon("logout"), h("span", { class: "label" }, t("auth.signOut")));
   logout.addEventListener("click", async (e) => {
     e.preventDefault();
@@ -197,6 +208,7 @@ route("/dashboard", dashboardScreen);
 // The selector shows only once another node is linked; until then there
 // is one machine and nothing to choose.
 async function readNodes() {
+  if (delegate()) { store.set("nodes", null); return; }
   try { store.set("nodes", await api.get("/nodes", { node: "" })); } catch { /* an older node, or none: one machine */ }
 }
 function paintNodes() {
@@ -272,15 +284,19 @@ async function boot() {
   readWaiting();
   // A move in course comes back after a reload: its pill, and from it its
   // dialog. Read from the node being looked at, which is the one moving.
-  if (!pills) {
+  // Moves are the operator's: a delegated user never learns a site has a
+  // node to move from.
+  if (!pills && !delegate()) {
     pills = movesPill();
     document.body.append(pills.el);
     onNodeChange(() => pills.load());
   }
-  pills.load();
+  if (pills) pills.load();
   if (!mounted) {
     mounted = true;
-    mount(main, (path) => (path === "/" || path === "/logout" ? "/sites" : path));
+    // A delegated user's screens are the sites; any other path (a
+    // shortcut, an old link) lands on their list.
+    mount(main, (path) => (path === "/" || path === "/logout" ? "/sites" : delegate() && !/^\/sites(\/|\?|$)/.test(path) ? "/sites" : path));
   } else {
     rerender();
   }
@@ -314,7 +330,9 @@ function paintTitle() {
 }
 let live = null;
 const readWaiting = debounce(async () => {
-  if (!authed) return;
+  // Whose turn it is is asked of every node and names every site's
+  // conversations: the operator's bar.
+  if (!authed || delegate()) return;
   if (!live) {
     live = liveChats({ onCount: (asking, talking) => { titleMarks = { asking, talking }; paintTitle(); } });
     document.getElementById("live-slot").replaceWith(live.el);

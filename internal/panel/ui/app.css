@@ -2401,3 +2401,16 @@ details.site-env[open] > summary { margin-bottom: 10px; }
 .site-tasks-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .site-tasks-head h2 { margin: 0 0 2px; }
 .site-tasks-head p { margin: 0; max-width: 60ch; }
+
+/* Delegated users: the grants of a user, a row a site, and who is signed
+   in at the foot of a delegate's sidebar. */
+.grants { display: flex; flex-direction: column; gap: 10px; margin: 8px 0; }
+.grant-fields { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
+.grant-fields input, .grant-fields select { min-width: 0; }
+.grant-row .hint.warn { color: var(--warn); margin-top: 4px; }
+.row-actions { display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.signed-as { padding: 4px 12px 8px; }
+@media (max-width: 560px) {
+  .grant-fields { grid-template-columns: minmax(0, 1fr) auto; }
+  .grant-fields input { grid-column: 1 / -1; }
+}

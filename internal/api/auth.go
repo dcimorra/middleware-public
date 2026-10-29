@@ -52,10 +52,23 @@ func (s *Server) authLogin(w http.ResponseWriter, r *http.Request) (any, error) 
 		return nil, err
 	}
 	var body struct {
+		// User is a delegate's name; empty is the operator.
+		User     string `json:"user"`
 		Password string `json:"password"`
 	}
 	if err := ReadJSON(r, &body); err != nil {
 		return nil, err
+	}
+	// A delegate's password is the only way they have in: closing the
+	// operator's password for passkeys does not close theirs, which opens
+	// their sites and nothing else.
+	if body.User != "" {
+		id, err := st.LoginUser(body.User, body.Password, auth.ClientIP(r))
+		if err != nil {
+			return nil, err
+		}
+		auth.SetCookie(w, r, id)
+		return OK, nil
 	}
 	// Closed means not even compared: no key derivation for a door that
 	// is not there.
@@ -92,6 +105,12 @@ func (s *Server) authMe(w http.ResponseWriter, r *http.Request) (any, error) {
 	}
 	if c.Turn != "" {
 		out["turn"] = c.Turn
+	}
+	if c.Delegate() {
+		// A delegate is told who they are and their sites, and nothing of
+		// the house: no setup, no passkeys, no emergency door.
+		out["user"] = meOfUser(c)
+		return out, nil
 	}
 	if s.opts.Auth != nil {
 		// Tells a fresh panel whether to show the setup screen or the

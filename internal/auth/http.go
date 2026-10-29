@@ -35,7 +35,18 @@ type Caller struct {
 	// Turn is the site whose agent turn made this socket request; its
 	// Scopes are then TurnScopes(Turn).
 	Turn string
+	// User is a delegate's name (users.go), UserID their id where they
+	// signed in, and Grants what they may do by site (perms.go). On the
+	// node a delegate's request was relayed to, User and Grants come from
+	// the node that relayed it, for the one site, and UserID is empty.
+	User   string
+	UserID string
+	Grants map[string][]string
 }
+
+// Delegate reports whether the caller is a delegated user, whose every
+// route is decided by UserAllows.
+func (c Caller) Delegate() bool { return c.User != "" }
 
 // Authenticated reports whether the caller may use the API.
 func (c Caller) Authenticated() bool { return c.Via != ViaNone }
@@ -103,8 +114,13 @@ func (s *Store) Resolve(r *http.Request) Caller {
 		}
 		return Caller{}
 	}
-	if c, err := r.Cookie(CookieName); err == nil && s.ValidSession(c.Value) {
-		return Caller{Via: ViaCookie}
+	if c, err := r.Cookie(CookieName); err == nil {
+		if u, ok := s.sessionUser(c.Value); ok {
+			if u.ID == "" {
+				return Caller{Via: ViaCookie}
+			}
+			return Caller{Via: ViaCookie, User: u.Name, UserID: u.ID, Grants: u.GrantMap()}
+		}
 	}
 	return Caller{}
 }

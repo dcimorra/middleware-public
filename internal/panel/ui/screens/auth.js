@@ -36,11 +36,23 @@ function revealable(input, form) {
   paint();
 }
 
+// A delegated user signs in with a name; the operator has none. The
+// form asks for a name only when asked to, or when this browser signed a
+// user in before: the operator's form stays the one field it always was.
+const USER_KEY = "mw.user";
+function lastUser() {
+  try { return localStorage.getItem(USER_KEY) || ""; } catch { return ""; }
+}
+function rememberUser(name) {
+  try { if (name) localStorage.setItem(USER_KEY, name); else localStorage.removeItem(USER_KEY); } catch { /* a convenience */ }
+}
+
 export function authScreen({ mode, onDone }) {
   const el = h("div", { class: "auth" });
   const card = h("div", { class: "card" });
   el.append(card);
   let current = mode;
+  let asUser = mode !== "setup" && lastUser() !== "";
 
   function render() {
     while (card.firstChild) card.removeChild(card.firstChild);
@@ -56,8 +68,9 @@ export function authScreen({ mode, onDone }) {
     // A passkey, when one exists for this name and the browser can use it.
     // With the password closed, it is the only way in.
     const me = store.get("me") || {};
-    const closed = current !== "setup" && me.password_closed;
+    const closed = current !== "setup" && me.password_closed && !asUser;
     let code = null;
+    const user = h("input", { type: "text", autocomplete: "username", autocapitalize: "off", spellcheck: "false", value: lastUser() });
     if (current === "setup") {
       code = h("input", { type: "text", autocomplete: "one-time-code", required: true, class: "mono", autocapitalize: "off", spellcheck: "false" });
       form.append(
@@ -67,12 +80,13 @@ export function authScreen({ mode, onDone }) {
         field(t("auth.password"), password, t("auth.passwordHint")),
       );
     } else {
-      form.append(h("h1", null, t("auth.loginTitle")), h("p", { class: "lead" }, t("auth.loginLead")));
+      form.append(h("h1", null, t("auth.loginTitle")), h("p", { class: "lead" }, t(asUser ? "auth.loginLeadUser" : "auth.loginLead")));
+      if (asUser) form.append(field(t("auth.user"), user));
       if (!closed) form.append(field(t("auth.password"), password));
     }
     revealable(password, form);
     let pkBtn = null;
-    if (current !== "setup" && me.passkeys && passkeys.supported()) {
+    if (current !== "setup" && !asUser && me.passkeys && passkeys.supported()) {
       pkBtn = h("button", { type: "button", class: "btn " + (closed ? "primary" : "") }, t("auth.withPasskey"));
       pkBtn.addEventListener("click", async () => {
         err.hidden = true;
@@ -86,6 +100,10 @@ export function authScreen({ mode, onDone }) {
     form.append(err, h("div", { class: "form-actions" }, closed ? null : submit, pkBtn));
     // The way to the setup screen is offered only while there is no
     // operator: on a running installation it led to a code nobody had.
+    if (current !== "setup") {
+      form.append(h("p", { class: "small muted" },
+        h("a", { href: "#", onClick: (e) => { e.preventDefault(); asUser = !asUser; render(); } }, t(asUser ? "auth.asOwner" : "auth.asUser"))));
+    }
     if (current === "setup" || me.setup_pending) {
       form.append(h("p", { class: "small muted" },
         current === "setup"
@@ -96,7 +114,7 @@ export function authScreen({ mode, onDone }) {
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       err.hidden = true;
-      if (!password.value || (code && !code.value)) {
+      if (!password.value || (code && !code.value) || (asUser && !user.value.trim())) {
         err.textContent = t("auth.fillIn");
         err.hidden = false;
         return;
@@ -106,8 +124,13 @@ export function authScreen({ mode, onDone }) {
         if (current === "setup") {
           await api.post("/auth/setup", { code: code.value.trim(), password: password.value }, { allow401: true });
           await api.post("/auth/login", { password: password.value }, { allow401: true });
+        } else if (asUser) {
+          const name = user.value.trim().toLowerCase();
+          await api.post("/auth/login", { user: name, password: password.value }, { allow401: true });
+          rememberUser(name);
         } else {
           await api.post("/auth/login", { password: password.value }, { allow401: true });
+          rememberUser("");
         }
         onDone();
       } catch (ex) {
@@ -120,7 +143,7 @@ export function authScreen({ mode, onDone }) {
       }
     });
     card.append(form);
-    (code || password).focus();
+    (code || (asUser && !user.value ? user : password)).focus();
   }
   render();
   return { el, destroy() {} };

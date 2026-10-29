@@ -6,6 +6,7 @@ import { h, clear, append, shortRev, fmtTime, fmtAgo, fmtBytes, busy } from "../
 import { t } from "../lib/i18n.js";
 import { api, apiURL, enc } from "../lib/api.js";
 import { currentNode } from "../lib/node.js";
+import { delegate, can } from "../lib/access.js";
 import { onEvent } from "../lib/stream.js";
 import { store } from "../lib/store.js";
 import { navigate } from "../lib/router.js";
@@ -38,8 +39,14 @@ let shotsOff = false;
 const TABS = ["overview", "activity", "manifest", "logs", "files", "chat", "tasks", "specs", "access", "security", "cache", "moves"];
 const TAB_ICON = { overview: "gauge", activity: "activity", manifest: "code", logs: "list", files: "folder", chat: "chat", tasks: "clock", specs: "file", access: "lock", security: "shield", cache: "box", moves: "upload" };
 
+// The tabs a delegated user sees, by what opens them: the WAF, the edge
+// cache, the house's guard and the moves are the operator's, and the
+// access tab writes the manifest.
+const DELEGATE_TABS = { overview: "view", manifest: "view", logs: "view", files: "view", tasks: "view", specs: "view", chat: "agents", access: "code" };
+
 export function siteScreen({ domain, tab, query }) {
-  const active = TABS.includes(tab) ? tab : "overview";
+  const shownTabs = delegate() ? TABS.filter((k) => DELEGATE_TABS[k] && can(domain, DELEGATE_TABS[k])) : TABS;
+  const active = shownTabs.includes(tab) ? tab : "overview";
   // ?worker=name opens the logs or the activity on that worker (the
   // workers card links there).
   const pickWorker = (query && query.get("worker")) || "";
@@ -56,7 +63,7 @@ export function siteScreen({ domain, tab, query }) {
   // domain: "Shop" says which one this is faster than the domain does.
   const sub = h("p", { class: "sub site-head-title", hidden: true });
   p.head.append(sub);
-  const nav = tabs(TABS.map((k) => ({ key: k, href: `${base}/${k}`, label: t("site.tab." + k), icon: TAB_ICON[k] })), active);
+  const nav = tabs(shownTabs.map((k) => ({ key: k, href: `${base}/${k}`, label: t("site.tab." + k), icon: TAB_ICON[k] })), active);
   nav.classList.add("site-tabs");
   p.body.append(nav);
   const body = h("div", { class: "site-body" });
@@ -164,7 +171,9 @@ function overviewTab(domain) {
     h("p", { class: "small muted" }, t("site.envHint")), envBox);
   // Built once: the overview re-renders on every store change, and the
   // door's form must not lose what is being typed into it.
-  const door = doorCard(domain);
+  // The gateway spends the operator's money: theirs alone.
+  const owner = !delegate();
+  const door = owner ? doorCard(domain) : null;
   // The names the house published for this site, from GET /publish:
   // [name, record] pairs, refreshed on publish.* events.
   let published = [];
@@ -173,6 +182,7 @@ function overviewTab(domain) {
   // moved. Empty without a network, and the button is not shown.
   let otherNodes = [];
   (async () => {
+    if (!owner) return;
     try {
       const info = await api.get("/nodes");
       // /nodes is always this panel's own, so "self" is the panel's node,
@@ -187,6 +197,7 @@ function overviewTab(domain) {
     } catch { /* no network: nothing to move to */ }
   })();
   async function loadPublished() {
+    if (!owner) return;
     try {
       const recs = await api.get("/publish");
       published = Object.entries(recs || {}).filter(([, r]) => r.site === domain).sort(([a], [b]) => a.localeCompare(b));
@@ -307,6 +318,7 @@ function overviewTab(domain) {
     subs.push(() => { if (containOff) containOff(); });
   }
   (async () => {
+    if (!owner) return;
     try {
       const job = await api.get(`/sites/${enc(domain)}/containerize`);
       if (job && !job.done) followContain(job.step === "trying" ? "trying" : "planning", job.how || "");
@@ -455,7 +467,9 @@ function overviewTab(domain) {
     const restartIt = () => act("restart", `/sites/${enc(domain)}/restart`, t("site.restarted"));
     const shown = [];
     const folded = [];
-    if (unmanaged) {
+    if (!owner) {
+      delegateActions(m, { mode, held, project, stopIt, startIt, restartIt }, shown, folded);
+    } else if (unmanaged) {
       shown.push(btn(t("site.adopt"), "plus", adopt, "primary"));
     } else {
       // Publish is the primary only once the names are known to be none:
@@ -489,7 +503,7 @@ function overviewTab(domain) {
       if (m.run && m.run.runtime === "docker") folded.push({ label: t("site.uncontain"), icon: "box", onClick: () => setRuntime(m, "process") });
       else if (mode === "run") folded.push({ label: t(m.run && m.run.docker ? "site.contain" : "site.containize"), icon: "box", onClick: containSite });
     }
-    folded.push({ separator: true }, { label: t("site.delete"), icon: "trash", onClick: del, danger: true });
+    if (owner) folded.push({ separator: true }, { label: t("site.delete"), icon: "trash", onClick: del, danger: true });
     const actions = h("div", { class: "site-actions" }, ...shown, menu(t("sitepage.more"), folded, { class: "site-actions-more" }));
 
     // What there is to know about it, as short facts: a label over its
@@ -505,9 +519,10 @@ function overviewTab(domain) {
       [t("site.handing"), s.handing ? t("common.yes") : null],
     ].filter(([, v]) => v);
 
-    // Names the house published for it, each with how that went.
+    // Names the house published for it, each with how that went: the
+    // operator's DNS, not shown to a delegated user.
     let names = null;
-    if (serves) {
+    if (serves && owner) {
       names = h("div", { class: "site-names" }, h("div", { class: "site-label" }, t("site.published")),
         !publishedLoaded ? h("span", { class: "muted small" }, t("common.loading"))
           : published.length ? h("div", { class: "site-name-list" }, ...published.map(([name, r]) => h("div", { class: "site-name-row" },
@@ -537,9 +552,9 @@ function overviewTab(domain) {
       hero,
       unmanaged ? notice("warn", t("site.unmanagedNotice")) : null,
       workersCard(s),
-      serves ? domainsCard(m) : null,
-      serves ? redirectsCard(m) : null,
-      unmanaged ? null : door,
+      serves && owner ? domainsCard(m) : null,
+      serves && can(domain, "code") ? redirectsCard(m) : null,
+      unmanaged || !door ? null : door,
       unmanaged ? null : envCard,
     ]);
   }
@@ -589,6 +604,7 @@ function overviewTab(domain) {
       h("a", { class: "btn sm ghost", href: `${tabs}/logs?worker=${enc(name)}` }, icon("list"), t("site.workerLogs")),
       h("a", { class: "btn sm ghost", href: `${tabs}/activity?worker=${enc(name)}` }, icon("gauge"), t("site.workerUsage")));
     const path = `/sites/${enc(domain)}/workers/${enc(name)}`;
+    if (!can(domain, "operate")) return box;
     if (def.disabled) {
       box.append(btn(t("site.workerStart"), "play", () => act("start", path + "/start", t("site.workerStarted", { name })), "sm"));
       return box;
@@ -600,6 +616,25 @@ function overviewTab(domain) {
       }
     }, "sm"));
     return box;
+  }
+
+  // What a delegated user's grant lets them do from here: the state
+  // with operate, the deploy and a command with code, the download with
+  // any. Publishing, renaming, moving, containers and deleting are the
+  // operator's.
+  function delegateActions(m, st, shown, folded) {
+    const { mode, held, project, stopIt, startIt, restartIt } = st;
+    if (can(domain, "operate")) {
+      if (m.disabled) shown.push(btn(t("site.start"), "play", startIt, "primary"));
+      else if (held) shown.push(btn(t("site.release"), "unlock", () => hold(false), "primary"));
+      if (!m.disabled && !held && (mode === "run" || mode === "upstream")) shown.push(btn(t("site.restart"), "refresh", restartIt));
+      if (!m.disabled && !project) shown.push(btn(t("site.stop"), "stop", stopIt));
+      if (!held) folded.push({ label: t("site.hold"), icon: "pause", onClick: () => hold(true) });
+    }
+    if (can(domain, "code") && m.deploy && m.deploy.github) shown.push(btn(t("site.deploy"), "upload", () => act("deploy", `/sites/${enc(domain)}/deploy`, t("site.deployStarted"))));
+    folded.push({ separator: true });
+    folded.push({ label: t("site.download"), icon: "download", href: apiURL(`/sites/${enc(domain)}/download.zip`), download: `${domain}.zip`, title: t("site.downloadHint") });
+    if (can(domain, "code")) folded.push({ label: t("site.exec"), icon: "terminal", onClick: runCommand });
   }
 
   // One command where the site runs, answered in the same dialog. Not a

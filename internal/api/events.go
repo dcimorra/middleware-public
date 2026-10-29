@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dcimorra/the-middleware/internal/auth"
 	"github.com/dcimorra/the-middleware/internal/events"
 )
 
@@ -25,6 +26,9 @@ type eventFilter struct {
 	typ     string
 	subject string
 	limit   int
+	// allow, when set, is what the caller may see at all: a delegate's
+	// sites (delegateSees).
+	allow func(events.Event) bool
 }
 
 func parseFilter(r *http.Request) (eventFilter, error) {
@@ -56,10 +60,22 @@ func (f eventFilter) match(e events.Event) bool {
 	if f.typ != "" && !strings.HasPrefix(e.Type, f.typ) {
 		return false
 	}
-	if f.subject != "" && e.Subject != f.subject {
+	// A site's conversations beyond the first are "domain#id": they are
+	// the site's events too.
+	if f.subject != "" && e.Subject != f.subject && !strings.HasPrefix(e.Subject, f.subject+"#") {
 		return false
 	}
-	return true
+	return f.allow == nil || f.allow(e)
+}
+
+// narrow holds a delegate's filter to their sites.
+func narrow(r *http.Request, f *eventFilter) (auth.Caller, bool) {
+	c := auth.FromContext(r.Context())
+	if !c.Delegate() {
+		return c, false
+	}
+	f.allow = func(e events.Event) bool { return delegateSees(c, e) }
+	return c, true
 }
 
 // eventsList answers from the journal on disk when there is one (it
@@ -70,9 +86,13 @@ func (s *Server) eventsList(w http.ResponseWriter, r *http.Request) (any, error)
 	if err != nil {
 		return nil, err
 	}
+	c, delegate := narrow(r, &f)
 	all := s.journalEvents(f)
 	if all == nil {
 		all = s.opts.Bus.Recent()
+	}
+	if delegate && f.subject == "" {
+		all = append(all, s.remoteEvents(r.Context(), c, f)...)
 	}
 	out := make([]events.Event, 0, len(all))
 	for _, e := range all {
@@ -162,6 +182,11 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) (any, erro
 	if !ok {
 		return nil, Errorf(http.StatusInternalServerError, "streaming unsupported")
 	}
+	c, delegate := narrow(r, &f)
+	var remote <-chan events.Event
+	if delegate && f.subject == "" {
+		remote = s.remoteStream(r.Context(), c)
+	}
 	lastID := r.Header.Get("Last-Event-ID")
 	if lastID == "" {
 		lastID = r.URL.Query().Get("last_event_id")
@@ -217,6 +242,17 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) (any, erro
 			if !send(e) {
 				return Handled, nil
 			}
+		case e := <-remote:
+			// Another node's event has no id of this bus: sent without
+			// one, so a reconnect resumes from the last of this node's.
+			data, err := json.Marshal(e)
+			if err != nil || !f.match(e) {
+				continue
+			}
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+				return Handled, nil
+			}
+			flusher.Flush()
 		case <-ticker.C:
 			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
 				return Handled, nil

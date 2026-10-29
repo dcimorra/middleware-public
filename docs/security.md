@@ -148,6 +148,44 @@ over its tasks and no more: the routes check the task is that site's, and
 `token:<name>` in the audit trail. A `tasks` scope with no site opens every
 site's tasks, never the root's.
 
+**Delegated users.** The operator can make users who manage some sites and
+nothing else (`internal/auth/users.go`, `perms.go`): each signs in with a
+name and a password at the node they were made on, through the same brakes
+as the operator's password, and every request of theirs is decided by a
+closed list of routes per permission (`view`, `operate`, `code`,
+`agents`), for the sites granted. Every route under `/sites/{domain}` is
+in one permission's list or kept for the operator, and the wired process's
+test fails for one that is in neither. A site not theirs is a 404, so a
+user cannot learn which other sites exist. Grants and the user are read
+on every request: a grant taken away or a user deleted is gone on the
+next click. A user's site on another node is answered by that node: this
+one relays the request through the mesh with who the user is and what
+they may do there, and that node holds them to the same lists before
+answering; refusals and failures come back without the node's name or
+address, and the events about moves, nodes and the house are left out of
+what a user is shown. What a permission means for the machine is the
+honest part:
+
+- `view` and `operate` read the site and change its state; they run
+  nothing of the user's choosing.
+- `code` decides what the site runs: its files, its manifest, its build,
+  its tasks and a command where it runs. A site in the process runtime,
+  and every task (tasks run on the host even for a site in a container),
+  runs as the supervisor's user, so `code` there is a shell as that user,
+  which reads every site and the house's own files. In the docker
+  runtime the manifest is mounted read-only and the manifest's keys that
+  reach past the site (`aliases`, `upstream`, `run.runtime`,
+  `run.docker`, the files read into the environment, the move, the VPN,
+  the agents and gateway) are refused from a user's account, but the
+  tasks still run on the host.
+- `agents` is a conversation, whose turns run on the host as the
+  supervisor's user inside the jail, and spends the operator's
+  subscriptions.
+
+So `code` and `agents` are for people you would give a shell; for a third
+party you do not trust, `operate`. Running tasks and commands inside the
+site's container is what would make `code` a boundary.
+
 **Credentials encrypted at rest.** Module credentials live in
 `data/modules.json`, AES-256-GCM, key from `MIDDLEWARE_SECRET_KEY` or
 `data/modules-key` (mode `0600`). Backups of the root are safe to store
@@ -296,4 +334,6 @@ cloudflared), so for them the ban is the WAF's 403.
   rights; a conversation can still delete the site's files, commit nonsense
   or spend money. The git history is the undo.
 - **No protection against the operator.** Tokens and the socket give full
-  control; there are no roles.
+  control. Delegated users are the one role below the operator, and with
+  `code` or `agents` they run code as the supervisor's user (above,
+  "Delegated users").

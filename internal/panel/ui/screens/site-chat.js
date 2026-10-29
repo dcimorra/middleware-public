@@ -17,6 +17,7 @@ import { confirm, open } from "../components/dialog.js";
 import { toast, toastError } from "../components/toast.js";
 import { render as renderMd } from "../lib/markdown.js";
 import { usageLine } from "../components/usage.js";
+import { delegate } from "../lib/access.js";
 
 // chatTab is a site's chat. For the house's own conversation, domain is
 // "middleware": no other conversations, no site manifest to write the
@@ -187,6 +188,9 @@ export function chatTab(domain) {
     capacity.classList.toggle("full", cap.max > 0 && cap.used >= cap.max);
   }
   const syncCapacity = debounce(async () => {
+    // The house's capacity names every conversation at work: the
+    // operator's to read.
+    if (delegate()) return;
     try {
       const c = await api.get("/agents/capacity");
       cap.used = c.used; cap.max = c.max;
@@ -219,7 +223,7 @@ export function chatTab(domain) {
   }
   async function loadUsage() {
     const p = provider.value;
-    if (!p) { showUsage(null); return; }
+    if (!p || delegate()) { showUsage(null); return; }
     try {
       const list = await api.get(`/agents/usage?provider=${enc(p)}`);
       if (provider.value === p) showUsage((list || []).find((x) => x.provider === p) || null);
@@ -555,7 +559,9 @@ export function chatTab(domain) {
 
   async function loadAgents() {
     try {
-      const a = await api.get("/agents");
+      // A delegated user's site may run its turns on another node: the
+      // site's own list comes from wherever it is.
+      const a = await api.get(delegate() ? `/sites/${enc(domain)}/agents` : "/agents");
       agents = a.providers || [];
       if (a.capacity) { cap.used = a.capacity.used; cap.max = a.capacity.max; showCapacity(); }
     } catch { agents = []; }

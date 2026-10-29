@@ -49,8 +49,8 @@ func (s *Server) RegisterAgents(o AgentsOptions) {
 	if o.Chat != nil {
 		s.AddSummary("chats", func() any { return o.Chat.Waiting() })
 	}
-	s.Handle("GET", Prefix+"/agents", "The agent providers, whether each can run and its models, with the live capacity", func(w http.ResponseWriter, r *http.Request) (any, error) {
-		out := Agents{Providers: []AgentInfo{}}
+	providers := func() []AgentInfo {
+		out := []AgentInfo{}
 		if o.Registry != nil {
 			for _, key := range o.Registry.Keys() {
 				p, err := o.Registry.Get(key)
@@ -66,14 +66,28 @@ func (s *Server) RegisterAgents(o AgentsOptions) {
 				if l, isL := p.(agent.Labeler); isL {
 					info.Labels = l.ModelLabels()
 				}
-				out.Providers = append(out.Providers, info)
+				out = append(out, info)
 			}
 		}
+		return out
+	}
+	s.Handle("GET", Prefix+"/agents", "The agent providers, whether each can run and its models, with the live capacity", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		out := Agents{Providers: providers()}
 		if o.Chat != nil {
 			c := o.Chat.Capacity()
 			out.Capacity = &c
 		}
 		return out, nil
+	})
+	// The providers a site's conversation can use, from the node that
+	// holds the site: what a delegate's panel asks, since /agents is the
+	// house's (its capacity names every conversation at work) and this
+	// node's, which may not be the one the site's turns run on.
+	s.Handle("GET", Prefix+"/sites/{domain}/agents", "The agent providers a conversation of this site can use, with their models, without the house's capacity", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		if _, err := domainOf(r); err != nil {
+			return nil, err
+		}
+		return Agents{Providers: providers()}, nil
 	})
 	if o.Chat == nil {
 		return
