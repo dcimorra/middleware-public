@@ -7,7 +7,8 @@ built, run and published. Each site has its own AI coding agent that works
 inside its folder. When the site is ready, one button gives it a public name,
 a certificate and a deploy that drops no request. It is one binary with no
 third-party dependencies, MIT licensed, and it runs on any VPS you already
-pay for.
+pay for, or on several of them linked into one network you manage from a
+single panel.
 
 ![A site's conversation: the agent added a newsletter signup, ran the tests and restarted the site without dropping a request](docs/images/chat.png)
 
@@ -17,9 +18,10 @@ pay for.
   OpenCode for features. middleware gives each project an agent that lives
   next to it on the server, can run it, test it and restart it, and cannot
   touch anything else.
-- **Freelancers and small agencies.** Dozens of client sites on one or two
-  machines, each in its own folder, with its own domain, logs, tasks and
-  conversation. You stay on hardware you control, with no per-site bill.
+- **Freelancers and small agencies.** Dozens of client sites spread over a
+  few machines at different providers, each site in its own folder, with its
+  own domain, logs, tasks and conversation, all in one panel. You stay on
+  hardware you control, with no per-site bill.
 - **Solo founders and small teams.** You get the "push and it is live"
   workflow of a hosting platform without renting one: deploy from GitHub or
   from a conversation, roll back by writing a file, watch everything from
@@ -123,15 +125,46 @@ specs. New sites start with OpenSpec set up.
   Credentials are encrypted at rest, and updates roll themselves back if the
   new version does not come up.
 
-### Grow past one machine
+### A network of your own machines
 
-Outgrown one server? Link another in under two minutes: make a code in the
-panel and paste it on the other machine. They form an encrypted WireGuard
-network, and one panel sees and manages them all. A site moves from one
-machine to another with its databases, a stop of seconds, and its DNS
-following on its own.
+One server is where most people start; middleware does not make it where
+you stay. Machines link into a **federated network**: a VPS at one
+provider, another at a second provider, a server at home behind your
+router. Each one is a full middleware that keeps serving on its own, and
+together they are managed as one.
 
-![The dashboard: what needs your attention first, then each machine's processor, memory and disk](docs/images/dashboard.png)
+- **Link a machine in under two minutes.** Make an invitation in the panel,
+  paste it on the new machine (`middleware setup --join <code>`), and it is
+  in. Joining one node is joining all of them.
+- **No master, nothing to babysit.** The nodes form an encrypted WireGuard
+  mesh where every node is a peer of every other. If one goes down, the rest
+  carry on, and a node behind NAT works by calling out. Only traffic between
+  nodes goes through the tunnel; each machine's own traffic is untouched.
+- **One panel for all of them.** Pick a node in the top bar and every screen,
+  conversation, build and agent works on that machine. The dashboard shows
+  every node at once, with what needs your attention first. The sites list
+  shows each machine's sites, and the bar tells you which conversation is
+  waiting for you on any of them.
+- **Move a site to another machine** with one button. middleware asks the
+  target whether it can take the site, copies it while it keeps serving, and
+  installs its dependencies for that machine (even from x86 to ARM). It then
+  stops the site for seconds for the last copy, brings its databases along,
+  starts it there and points its names at the new place. The copy that stays
+  behind is archived. If anything fails on the way, the site starts again
+  where it was, and a move cut by a restart is put right when the machine
+  comes back.
+- **One VPN for the whole network.** A device on any node's VPN reaches
+  every node. One switch closes every panel of the network to the internet
+  at once.
+- **Membership you can trust.** An expelled node stays out: it cannot vote
+  itself back in, take another node's address, or rewrite the others'
+  entries.
+
+![The dashboard of a network of three machines: what needs your attention first, then each node's processor, memory, disk and sites](docs/images/dashboard.png)
+
+![The sites list with every machine's sites, this node's first](docs/images/network-sites.png)
+
+![A site moving to another machine: each step with its state and how long it took](docs/images/move.png)
 
 ### Everywhere you are
 
