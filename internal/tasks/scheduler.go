@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dcimorra/the-middleware/internal/cron"
@@ -27,7 +28,17 @@ type Options struct {
 	Tick time.Duration
 	// Now is the clock; tests move it.
 	Now func() time.Time
+	// SiteEnv is what the house adds to the environment of a task that
+	// runs in a site's folder, read at every launch from the manifest as
+	// it is then: the site door's token for a site with claude_api. It
+	// is given here and never written to tasks/, which is in the house's
+	// git history, so a token copied into a task's env would be one
+	// commit away from leaking and would outlive the block it came from.
+	SiteEnv SiteEnvFunc
 }
+
+// SiteEnvFunc returns the variables the house gives a site's processes.
+type SiteEnvFunc func(site string, m *manifest.Manifest) map[string]string
 
 // Scheduler re-reads tasks/ every tick and runs what is due.
 type Scheduler struct {
@@ -40,6 +51,7 @@ type Scheduler struct {
 	lastCheck time.Time
 	states    map[string]*state
 	wg        sync.WaitGroup
+	siteEnv   atomic.Pointer[SiteEnvFunc]
 }
 
 type state struct {
@@ -85,6 +97,11 @@ func NewScheduler(opts Options) *Scheduler {
 	}
 	return &Scheduler{opts: opts, states: map[string]*state{}, lastCheck: opts.Now()}
 }
+
+// SetSiteEnv installs Options.SiteEnv after the scheduler was built: the
+// site door is wired after the tasks hook, and a run already going keeps
+// the environment it started with.
+func (s *Scheduler) SetSiteEnv(f SiteEnvFunc) { s.siteEnv.Store(&f) }
 
 // Run ticks until ctx ends. Runs in progress are left to finish: a backup
 // halfway through must not die because the supervisor restarted, and the
@@ -297,12 +314,14 @@ func (s *Scheduler) spec(name string, t *Task) (*manifest.Spec, string, error) {
 	root := s.opts.Root
 	spec := &manifest.Spec{Domain: t.Site, SiteDir: root, Cwd: root, Env: map[string]string{}, Revision: "task:" + name}
 	home := filepath.Join(root, "data", "homes", "tasks")
+	var m *manifest.Manifest
 	if t.Site != "" {
 		dir := filepath.Join(root, "sites", t.Site)
 		if st, err := os.Stat(dir); err != nil || !st.IsDir() {
 			return nil, "", fmt.Errorf("site %s: no such folder", t.Site)
 		}
-		m, err := manifest.Load(dir)
+		var err error
+		m, err = manifest.Load(dir)
 		if err != nil {
 			return nil, "", fmt.Errorf("site %s: %w", t.Site, err)
 		}
@@ -321,6 +340,20 @@ func (s *Scheduler) spec(name string, t *Task) (*manifest.Spec, string, error) {
 	vars := map[string]string{"DOMAIN": t.Site, "SITE_DIR": spec.SiteDir}
 	for k, v := range t.Env {
 		spec.Env[k] = manifest.Expand(v, vars)
+	}
+	// The house's variables go after the task's own, as the engine puts
+	// them after the site's: what the door is told a process is comes
+	// from the house, not from a file in tasks/.
+	if m != nil {
+		f := s.opts.SiteEnv
+		if p := s.siteEnv.Load(); p != nil {
+			f = *p
+		}
+		if f != nil {
+			for k, v := range f(t.Site, m) {
+				spec.Env[k] = v
+			}
+		}
 	}
 	spec.Command = make([]string, len(t.Command))
 	for i, a := range t.Command {

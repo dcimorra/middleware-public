@@ -568,7 +568,12 @@ program and say whether the export will be tried. What an export without
 ```
 
 `site` makes the command run inside that site's folder with that site's
-environment. Without it, the task runs from the root directory. `overlap` is
+environment. A site with `claude_api` gives its tasks the same
+`MIDDLEWARE_API` and `MIDDLEWARE_TOKEN` as its process: the same token,
+so the same models, permissions and `daily_usd`, spent from the same day.
+They are added at each launch from the manifest as it is then and never
+written here: a task's `env` cannot set them, and a site whose block is
+gone gives the next run nothing. Without `site`, the task runs from the root directory. `overlap` is
 `skip` (default) or `queue`. `timezone` reads `schedule` in that zone, so a
 daylight-saving change moves nothing; without it the schedule is in the
 machine's clock. `title` and `note` are for people. A site's tasks go with
