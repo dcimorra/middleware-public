@@ -141,11 +141,32 @@ func (p *Plan) put(m Mount) {
 }
 
 // Sees says whether path is inside something the plan shows.
-func (p *Plan) Sees(path string) bool {
-	path = filepath.Clean(path)
+func (p *Plan) Sees(path string) bool { return p.sees(filepath.Clean(path), 0) }
+
+// sees follows the plan's own links: /bin/sh is seen through /bin → usr/bin
+// and /usr. Before, it was not, so a command named /bin/sh was lent as a
+// mount of its own at /bin/sh, which sorts before /usr: its folder was
+// made through the link before the /usr it points to was there, and every
+// such command failed with "mkdir …/bin: file exists". The depth bounds a
+// loop of links, which the system's directories never make.
+func (p *Plan) sees(path string, depth int) bool {
 	for _, m := range p.Mounts {
 		if m.Link == "" && (path == m.Dst || strings.HasPrefix(path, m.Dst+"/")) {
 			return true
+		}
+	}
+	if depth > 8 {
+		return false
+	}
+	for _, m := range p.Mounts {
+		if m.Link != "" && strings.HasPrefix(path, m.Dst+"/") {
+			target := m.Link
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(filepath.Dir(m.Dst), target)
+			}
+			if p.sees(filepath.Join(target, strings.TrimPrefix(path, m.Dst)), depth+1) {
+				return true
+			}
 		}
 	}
 	return false

@@ -77,6 +77,22 @@ func TestJailedExec(t *testing.T) {
 	checkSeen(t, out.String())
 }
 
+// A command named by its path through merged /usr (/bin/sh, as a task's
+// file usually says) runs: it used to be lent as a mount of its own under
+// the /bin link and the jail failed before the command started.
+func TestJailedCommandThroughTheBinLink(t *testing.T) {
+	_, site, home := jailedHouse(t)
+	if st, err := os.Lstat("/bin"); err != nil || st.Mode()&os.ModeSymlink == 0 {
+		t.Skip("/bin is not a link to usr/bin here")
+	}
+	spec := &manifest.Spec{Domain: "a.test", SiteDir: site, Cwd: site}
+	var out bytes.Buffer
+	code, err := runtime.Exec(context.Background(), spec, home, runtime.ExecOptions{Args: []string{"/bin/sh", "-c", "echo inside"}, Stdout: &out, Stderr: &out})
+	if err != nil || code != 0 || strings.TrimSpace(out.String()) != "inside" {
+		t.Fatalf("exit %d, err %v: %s", code, err, out.String())
+	}
+}
+
 // A site's process (and so its workers and tasks, which start the same
 // way) runs in the site's jail, and stops when told to.
 func TestJailedProcess(t *testing.T) {
