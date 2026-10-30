@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dcimorra/the-middleware/internal/fsx"
+	"github.com/dcimorra/the-middleware/internal/manifest"
 )
 
 // ToolLevel is what the agent may do in a conversation a site's code
@@ -220,8 +221,16 @@ type Summary struct {
 // summaryOf is a conversation as a list shows it. One written before
 // titles were given is titled by its first message here.
 func (m *Manager) summaryOf(name string, c Conversation) Summary {
+	sm := summarize(name, c)
+	sm.Running = m.Running(name)
+	return sm
+}
+
+// summarize is summaryOf without asking whether a turn is at work, which
+// takes the manager's lock: scan reads files under its own.
+func summarize(name string, c Conversation) Summary {
 	_, id := split(name)
-	sm := Summary{Name: name, ID: id, Origin: c.Origin, Title: c.Title, Tools: c.Tools, Created: c.Created, Updated: c.Created, Turns: len(c.Turns), Hidden: c.Hidden, Running: m.Running(name)}
+	sm := Summary{Name: name, ID: id, Origin: c.Origin, Title: c.Title, Tools: c.Tools, Created: c.Created, Updated: c.Created, Turns: len(c.Turns), Hidden: c.Hidden}
 	if sm.Origin == "" {
 		sm.Origin = OriginPanel
 	}
@@ -525,20 +534,27 @@ type askState struct {
 	mod    time.Time
 	asking bool
 	title  string
+	// What the bar's recent list needs, read with the rest: the origin
+	// (a site's own are not the operator's to come back to), how many
+	// turns and the last one's time, which is when it was last used.
+	origin  string
+	turns   int
+	updated time.Time
 }
 
-// Waiting reads every conversation's file, again only when it changed: it
-// is asked for every half minute to put a number in the tab's title, which
-// is all that shows with the tab in the background. A site's own
-// conversations are not counted: on their other side is a program.
-func (m *Manager) Waiting() Waiting {
+// scan reads every conversation's file, again only when it changed, and
+// answers each by its name. Waiting is asked for every half minute to put
+// a number in the tab's title, which is all that shows with the tab in
+// the background, and Recent as often for the bar: reading every file
+// each time would read them all twice a minute per open panel.
+func (m *Manager) scan() map[string]askState {
 	root := filepath.Join(m.opts.Root, "data", "chat")
 	var files []string
 	top, _ := filepath.Glob(filepath.Join(root, "*.json"))
 	nested, _ := filepath.Glob(filepath.Join(root, "*", "*.json"))
 	files = append(append(files, top...), nested...)
-	out := Waiting{Asking: []WaitingChat{}}
 	m.askMu.Lock()
+	defer m.askMu.Unlock()
 	if m.asks == nil {
 		m.asks = map[string]askState{}
 	}
@@ -549,49 +565,170 @@ func (m *Manager) Waiting() Waiting {
 			continue
 		}
 		seen[f] = true
-		a, ok := m.asks[f]
-		if !ok || !a.mod.Equal(st.ModTime()) {
-			var c Conversation
-			if fsx.ReadJSON(f, &c) == nil && c.Origin != OriginSite {
-				a = askState{mod: st.ModTime(), asking: len(c.Turns) > 0 && len(c.Turns[len(c.Turns)-1].Questions) > 0, title: c.Title}
-			} else {
-				a = askState{mod: st.ModTime(), title: c.Title}
-			}
-			m.asks[f] = a
-		}
-		if !a.asking {
+		if a, ok := m.asks[f]; ok && a.mod.Equal(st.ModTime()) {
 			continue
 		}
-		rel, _ := filepath.Rel(root, f)
-		rel = strings.TrimSuffix(rel, ".json")
-		domain, id, _ := strings.Cut(rel, string(filepath.Separator))
-		name := Name(domain, id)
-		if m.Running(name) {
-			continue
+		var c Conversation
+		a := askState{mod: st.ModTime(), origin: OriginSite}
+		if fsx.ReadJSON(f, &c) == nil {
+			sm := summarize("", c)
+			a.title, a.origin, a.turns, a.updated = sm.Title, sm.Origin, sm.Turns, sm.Updated
+			a.asking = c.Origin != OriginSite && len(c.Turns) > 0 && len(c.Turns[len(c.Turns)-1].Questions) > 0
 		}
-		out.Asking = append(out.Asking, WaitingChat{Name: name, Domain: domain, ID: id, Title: a.title, Updated: a.mod})
+		m.asks[f] = a
 	}
-	for f := range m.asks {
+	out := map[string]askState{}
+	for f, a := range m.asks {
 		if !seen[f] {
 			delete(m.asks, f)
+			continue
 		}
-	}
-	titles := map[string]askState{}
-	for f, a := range m.asks {
 		rel, _ := filepath.Rel(root, f)
 		domain, id, _ := strings.Cut(strings.TrimSuffix(rel, ".json"), string(filepath.Separator))
-		titles[Name(domain, id)] = a
+		out[Name(domain, id)] = a
 	}
-	m.askMu.Unlock()
+	return out
+}
+
+// Waiting is every conversation's state as the last scan read it. A
+// site's own conversations are not counted: on their other side is a
+// program.
+func (m *Manager) Waiting() Waiting {
+	all := m.scan()
+	out := Waiting{Asking: []WaitingChat{}}
 	m.mu.Lock()
+	for name, a := range all {
+		if _, busy := m.running[name]; !a.asking || busy {
+			continue
+		}
+		domain, id := split(name)
+		out.Asking = append(out.Asking, WaitingChat{Name: name, Domain: domain, ID: id, Title: a.title, Updated: a.mod})
+	}
 	out.Working = len(m.running)
 	out.Running = []WaitingChat{}
 	for name, r := range m.running {
 		domain, id := split(name)
-		out.Running = append(out.Running, WaitingChat{Name: name, Domain: domain, ID: id, Title: titles[name].title, Updated: r.started})
+		out.Running = append(out.Running, WaitingChat{Name: name, Domain: domain, ID: id, Title: all[name].title, Updated: r.started})
 	}
 	m.mu.Unlock()
 	sort.Slice(out.Running, func(i, j int) bool { return out.Running[i].Updated.Before(out.Running[j].Updated) })
 	sort.Slice(out.Asking, func(i, j int) bool { return out.Asking[i].Updated.After(out.Asking[j].Updated) })
 	return out
+}
+
+// RecentChat is one conversation in the bar's list: whose turn it is,
+// and when it was last used.
+type RecentChat struct {
+	WaitingChat
+	Turns   int  `json:"turns"`
+	Running bool `json:"running,omitempty"`
+	Asking  bool `json:"asking,omitempty"`
+}
+
+// Recent is the conversations last used, the last first: limit of them,
+// and beyond limit every one at work or waiting for an answer, which the
+// bar counts on its button and must be able to open. Without it, coming
+// back to a conversation was the node, the site, its chat and then the
+// list of that site's conversations. A site's own conversations are left
+// out while idle (a program is on their other side), and so is one with
+// no message yet, as List leaves it out.
+func (m *Manager) Recent(limit int) []RecentChat {
+	all := m.scan()
+	out := []RecentChat{}
+	m.mu.Lock()
+	for name, a := range all {
+		r, busy := m.running[name]
+		// One at work is listed whoever opened it, as the bar always did:
+		// a turn of the site's code costs and holds a slot like any other.
+		if !busy && (a.origin == OriginSite || a.turns == 0) {
+			continue
+		}
+		domain, id := split(name)
+		c := RecentChat{WaitingChat: WaitingChat{Name: name, Domain: domain, ID: id, Title: a.title, Updated: a.updated}, Turns: a.turns, Running: busy, Asking: a.asking && !busy}
+		if busy && r.started.After(c.Updated) {
+			c.Updated = r.started
+		}
+		out = append(out, c)
+	}
+	m.mu.Unlock()
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].Updated.Equal(out[j].Updated) {
+			return out[i].Updated.After(out[j].Updated)
+		}
+		return out[i].Name < out[j].Name
+	})
+	if limit <= 0 {
+		return out
+	}
+	kept := out[:0]
+	for i, c := range out {
+		if i < limit || c.Running || c.Asking {
+			kept = append(kept, c)
+		}
+	}
+	return kept
+}
+
+// PurgeAll forgets every conversation the panel holds on this node, of
+// every site and of the house, with their attachments: Purge for all of
+// them at once. A conversation at work is left as it is and counted, not
+// a reason to stop: with every site in it, one turn somewhere would make
+// the button never work. The ones a site's code opened through its door
+// stay, as in Purge: a program holds their names. What the turns cost
+// stays in the ledger.
+func (m *Manager) PurgeAll() (purged, busy int, err error) {
+	root := filepath.Join(m.opts.Root, "data", "chat")
+	var names []string
+	ents, _ := os.ReadDir(root)
+	for _, e := range ents {
+		if domain, ok := strings.CutSuffix(e.Name(), ".json"); ok && !e.IsDir() {
+			if domain == Middleware || manifest.ValidName(domain) {
+				names = append(names, domain)
+			}
+			continue
+		}
+		domain := e.Name()
+		if !e.IsDir() || (domain != Middleware && !manifest.ValidName(domain)) {
+			continue
+		}
+		files, _ := os.ReadDir(filepath.Join(root, domain))
+		for _, f := range files {
+			id, ok := strings.CutSuffix(f.Name(), ".json")
+			if !ok || id == "" || !validID(id) {
+				continue
+			}
+			var c Conversation
+			if fsx.ReadJSON(filepath.Join(root, domain, f.Name()), &c) == nil && c.Origin == OriginSite {
+				continue
+			}
+			names = append(names, Name(domain, id))
+		}
+	}
+	per := map[string]int{}
+	for _, name := range names {
+		// Under the lock, one by one: a turn cannot start between the
+		// check and the removal (Send takes the same lock to claim its
+		// slot), and the others are not held back by it.
+		m.mu.Lock()
+		if _, at := m.running[name]; at {
+			m.mu.Unlock()
+			busy++
+			continue
+		}
+		rerr := os.Remove(m.file(name))
+		if rerr == nil {
+			purged++
+			domain, _ := split(name)
+			per[domain]++
+		} else if !os.IsNotExist(rerr) && err == nil {
+			err = rerr
+		}
+		m.removeUploads(name)
+		m.mu.Unlock()
+	}
+	// Each site's screen hears of its own, as after its own purge.
+	for domain, n := range per {
+		m.emit("chat.purged", domain, "", fmt.Sprintf("%d conversations forgotten", n), map[string]any{"count": n, "all": true})
+	}
+	return purged, busy, err
 }

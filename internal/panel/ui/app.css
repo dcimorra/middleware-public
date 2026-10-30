@@ -188,24 +188,42 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
 .live-drop { position: absolute; right: 0; top: calc(100% + 8px); z-index: 70; width: min(380px, calc(100vw - 16px)); max-height: 70vh; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); padding: 6px; animation: pop var(--dur) ease-out; }
 .live-item { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 8px 12px; border: 0; border-radius: 10px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; min-width: 0; }
 .live-item:hover, .live-item:focus-visible { background: var(--surface-2); outline: none; box-shadow: none; }
-.live-mark { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.live-mark { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--border); }
 .live-mark.talking { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
 .live-mark.asking { background: var(--warn); }
 .live-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.live-main b { font-weight: 600; }
+.live-main b { font-weight: 600; min-width: 0; }
+.live-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.live-node { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 6px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); font-size: 11px; line-height: 17px; }
 .live-main b, .live-main small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .live-main small { color: var(--text-3); font-size: 12.5px; }
 .live-side { flex: none; font-size: 12px; color: var(--text-3); }
 .live-item.asking .live-side { color: var(--warn); font-weight: 600; }
+/* Always there (the last used, not only the ones alive): quiet while
+   nothing is, an icon where the dot goes. */
+.live-lead { display: inline-flex; align-items: center; }
+.live-lead svg { width: 15px; height: 15px; }
+.live-chats[data-state="idle"] .live-btn { color: var(--text-2); }
+.live-head { padding: 8px 12px 4px; font-size: 12px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; }
+.live-empty { margin: 0; padding: 10px 12px 12px; color: var(--text-3); font-size: 13px; }
+.live-sep { height: 1px; margin: 6px 4px; background: var(--border); }
+.live-item.live-purge { min-height: 40px; gap: 10px; color: var(--bad); }
+.live-item.live-purge svg { width: 16px; height: 16px; flex: none; }
 @keyframes pop { from { opacity: 0; transform: translateY(-4px) scale(.98); } }
 @media (max-width: 860px) {
   /* The bar clips what overflows it on a phone: the list hangs from the
      screen instead. */
   .live-drop { position: fixed; top: calc(var(--topbar) + 6px); right: 8px; left: 8px; width: auto; }
+  /* The bar's backdrop-filter makes it the box a fixed child is placed
+     in, and the phone's bar clips (overflow: hidden): the list opened
+     inside the bar and was cut to nothing. While it is open the bar does
+     without the blur, and the list hangs from the screen again. */
+  .topbar:has(.live-drop:not([hidden])) { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--surface); }
 }
 @media (max-width: 640px) {
   .live-count .long { display: none; }
   .live-count .short { display: inline; }
+  .live-count .short:empty { display: none; }
   .live-btn { padding: 0 11px 0 9px; height: 34px; font-weight: 600; }
 }
 .topbar .menu-btn { display: none; } /* the phone rule below turns it on; same specificity, later wins */

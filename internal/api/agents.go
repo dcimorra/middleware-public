@@ -116,6 +116,23 @@ func (s *Server) RegisterAgents(o AgentsOptions) {
 	s.Handle("GET", Prefix+"/agents/waiting", "Whose turn it is to speak: the conversations waiting for the operator's answer, and how many turns are at work", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		return o.Chat.Waiting(), nil
 	})
+	// The bar's list of conversations, open on every screen: the operator's
+	// way back to one without going node, site, chat and list. Not a
+	// delegate's route (auth.userRoutes): theirs names every site.
+	s.Handle("GET", Prefix+"/agents/recent", "The conversations last used on this node, the last first, of every site and of the house (?limit=15); beyond the limit, every one at work or waiting for an answer", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		limit := 15
+		if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 && v <= 200 {
+			limit = v
+		}
+		return o.Chat.Recent(limit), nil
+	})
+	s.Handle("DELETE", Prefix+"/agents/chats", "Forget every conversation the panel holds on this node, of every site and of the house, with their attachments; the ones at work stay and are counted (busy), and so do the ones a site's code opened", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		n, busy, err := o.Chat.PurgeAll()
+		if err != nil {
+			return nil, chatError(err)
+		}
+		return map[string]int{"purged": n, "busy": busy}, nil
+	})
 	s.Handle("GET", Prefix+"/agents/usage", "Each subscription's usage windows (Claude, Codex, Antigravity…): how much is spent and when it resets (?provider=agy for one, ?refresh=1 asks the vendors now)", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		if o.Usage == nil {
 			return []any{}, nil
