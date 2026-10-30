@@ -305,3 +305,86 @@ func TestClaudesAliasesSayWhatTheyRunAndAVendorsDoNot(t *testing.T) {
 		t.Fatalf("a vendor got Claude's labels: %v", l)
 	}
 }
+
+// A monitor's turn as print mode writes it: the agent arms it and stops
+// talking (a result), the CLI waits, the monitor fires and the agent gets
+// another turn (another result), and only then does the CLI exit.
+const monitorTurn = `{"type":"system","subtype":"init","session_id":"s1"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tM","name":"Monitor","input":{"command":"sleep 20; echo DONE"}}]},"session_id":"s1"}
+{"type":"system","subtype":"task_started","task_id":"b1","tool_use_id":"tM","task_type":"local_bash","session_id":"s1"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tM","content":"Monitor started"}]},"session_id":"s1"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"I'll tell you when it ends."}]},"session_id":"s1"}
+{"type":"result","subtype":"success","result":"I'll tell you when it ends.","session_id":"s1","total_cost_usd":0.1}
+`
+
+const monitorFired = `{"type":"system","subtype":"task_notification","task_id":"b1","tool_use_id":"tM","status":"completed","session_id":"s1"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"It finished: DONE."}]},"session_id":"s1"}
+{"type":"result","subtype":"success","result":"It finished: DONE.","session_id":"s1","total_cost_usd":0.2}
+`
+
+// monitorBin prints first, waits longer than the grace a finished run
+// gets before its group is killed, then prints then (if any) and exits.
+func monitorBin(t *testing.T, first, then string) string {
+	t.Helper()
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "first"), []byte(first), 0o644)
+	os.WriteFile(filepath.Join(dir, "then"), []byte(then), 0o644)
+	bin := filepath.Join(dir, "claude")
+	os.WriteFile(bin, []byte("#!/bin/sh\ncat "+filepath.Join(dir, "first")+"\nsleep 4\ncat "+filepath.Join(dir, "then")+"\n"), 0o755)
+	return bin
+}
+
+func runMonitorBin(t *testing.T, bin string) []agent.Event {
+	t.Helper()
+	site := t.TempDir()
+	run, err := New(Config{Bin: bin}).Start(context.Background(), agent.Request{Workdir: site, Prompt: "watch it", Jail: agent.Jail{SiteDir: site, Home: t.TempDir()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return agent.Collect(context.Background(), run)
+}
+
+func TestARunWaitsForItsMonitorAndReadsTheTurnItGives(t *testing.T) {
+	evs := runMonitorBin(t, monitorBin(t, monitorTurn, monitorFired))
+	var texts []string
+	ends := 0
+	for _, e := range evs {
+		switch e.Kind {
+		case agent.KindText:
+			texts = append(texts, e.Text)
+		case agent.KindResult, agent.KindError:
+			ends++
+		}
+	}
+	if !slices.Contains(texts, "It finished: DONE.") {
+		t.Fatalf("the turn the monitor gave was lost: %+v", evs)
+	}
+	last := evs[len(evs)-1]
+	if ends != 1 || last.Kind != agent.KindResult || last.Text != "It finished: DONE." || last.Cost != 0.2 {
+		t.Fatalf("want one result, the last one: %+v", evs)
+	}
+}
+
+func TestAResultHeldForAMonitorIsGivenWhenTheCLIExitsWithoutAnother(t *testing.T) {
+	evs := runMonitorBin(t, monitorBin(t, monitorTurn, ""))
+	last := evs[len(evs)-1]
+	if last.Kind != agent.KindResult || last.Text != "I'll tell you when it ends." {
+		t.Fatalf("the held result was not given: %+v", evs)
+	}
+}
+
+func TestABackgroundShellDoesNotHoldTheRun(t *testing.T) {
+	p := &parser{}
+	p.Line(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tB","name":"Bash","input":{"command":"npm run dev","run_in_background":true}}]}}`)
+	p.Line(`{"type":"system","subtype":"task_started","task_id":"b2","tool_use_id":"tB","task_type":"local_bash"}`)
+	if _, done := p.Line(`{"type":"result","subtype":"success","result":"Started."}`); !done {
+		t.Fatal("a dev server left running would hold the turn for ever")
+	}
+	// A background subagent does.
+	p = &parser{}
+	p.Line(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tA","name":"Agent","input":{"run_in_background":true}}]}}`)
+	p.Line(`{"type":"system","subtype":"task_started","task_id":"a1","tool_use_id":"tA","task_type":"local_agent"}`)
+	if evs, done := p.Line(`{"type":"result","subtype":"success","result":"Launched."}`); done || len(evs) != 1 || evs[0].Kind != agent.KindCost {
+		t.Fatalf("a result under a running subagent ended the run: %v %+v", done, evs)
+	}
+}
