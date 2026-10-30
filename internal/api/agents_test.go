@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dcimorra/the-middleware/internal/agent"
+	"github.com/dcimorra/the-middleware/internal/auth"
 	"github.com/dcimorra/the-middleware/internal/chat"
 	"github.com/dcimorra/the-middleware/internal/settings"
 )
@@ -195,5 +196,58 @@ func TestAFullHouseAnswers429AndANewCapFromSettingsAppliesAtOnce(t *testing.T) {
 	resp, body = f.call("PUT", "/api/v1/settings", map[string]any{"listen": settings.Defaults().Listen})
 	if resp.StatusCode != 200 || saved.Agents.MaxConcurrent != 8 {
 		t.Fatalf("settings without agents: %d %s saved=%+v", resp.StatusCode, text(body), saved.Agents)
+	}
+}
+
+// The bar's list and the whole purge cross the API as the panel uses
+// them, and are the operator's: a delegate's panel would see every site's
+// conversations in the one and lose them all to the other.
+func TestTheRecentConversationsAndTheWholePurgeAreTheOperators(t *testing.T) {
+	f := newFixture(t).withToken()
+	f.makeSite("mine.example")
+	reg := agent.NewRegistry()
+	reg.Register(fakeProvider{key: "claude"})
+	m := chat.New(chat.Options{Root: f.root, Bus: f.bus, Registry: reg})
+	f.srv.RegisterAgents(AgentsOptions{Registry: reg, Chat: m})
+	at := time.Now().UTC()
+	for i, c := range []chat.Conversation{
+		{Domain: "mine.example", Origin: chat.OriginPanel},
+		{Domain: "mine.example", ID: "a1", Origin: chat.OriginPanel},
+		{Domain: chat.Middleware, Origin: chat.OriginPanel},
+	} {
+		c.Turns = []chat.Turn{{ID: "u", Role: "user", Text: "hola", At: at.Add(time.Duration(i) * time.Minute)}}
+		dir := filepath.Join(f.root, "data", "chat")
+		file := filepath.Join(dir, c.Domain+".json")
+		if c.ID != "" {
+			dir = filepath.Join(dir, c.Domain)
+			file = filepath.Join(dir, c.ID+".json")
+		}
+		os.MkdirAll(dir, 0o700)
+		b, _ := json.Marshal(c)
+		if err := os.WriteFile(file, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.makeUser("bob", auth.Grant{Site: "mine.example", Perms: []string{"operate", "agents"}})
+	bob := f.login("bob")
+	for _, c := range []struct{ method, path string }{{"GET", "/api/v1/agents/recent"}, {"DELETE", "/api/v1/agents/chats"}} {
+		if res, out := bob.call(c.method, c.path, nil); res.StatusCode != 404 {
+			t.Fatalf("a delegate's %s %s: %d %s", c.method, c.path, res.StatusCode, text(out))
+		}
+	}
+
+	var recent []chat.RecentChat
+	getJSON(t, f, "/api/v1/agents/recent?limit=2", &recent)
+	if len(recent) != 2 || recent[0].Name != chat.Middleware || recent[1].Name != "mine.example#a1" {
+		t.Fatalf("recent: %+v", recent)
+	}
+	res, out := f.call("DELETE", "/api/v1/agents/chats", nil)
+	if res.StatusCode != 200 || out["purged"] != float64(3) || out["busy"] != float64(0) {
+		t.Fatalf("purge: %d %s", res.StatusCode, text(out))
+	}
+	recent = nil
+	getJSON(t, f, "/api/v1/agents/recent", &recent)
+	if len(recent) != 0 {
+		t.Fatalf("after the purge: %+v", recent)
 	}
 }

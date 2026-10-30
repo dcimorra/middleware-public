@@ -321,7 +321,7 @@ document.addEventListener("route", () => {
 //
 // Two marks, as in V1: "(2)" is the conversations waiting for an answer,
 // "(3…)" the ones talking on their own; waiting wins, it is what someone
-// has to do. Counted over every node by the bar's button (liveChats).
+// has to do. Counted by the bar's button (liveChats).
 let baseTitle = t("app.title");
 let titleMarks = { asking: 0, talking: 0 };
 function paintTitle() {
@@ -330,9 +330,11 @@ function paintTitle() {
 }
 let live = null;
 const readWaiting = debounce(async () => {
-  // Whose turn it is is asked of every node and names every site's
-  // conversations: the operator's bar.
-  if (!authed || delegate()) return;
+  // The operator's asks every node and names every site's conversations;
+  // a delegate's names their sites' only, and none without a chat to go
+  // back to.
+  if (!authed) return;
+  if (delegate() && !((store.get("me")?.user?.sites) || []).some((s) => (s.perms || []).includes("agents"))) return;
   if (!live) {
     live = liveChats({ onCount: (asking, talking) => { titleMarks = { asking, talking }; paintTitle(); } });
     document.getElementById("live-slot").replaceWith(live.el);
