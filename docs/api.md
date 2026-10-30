@@ -736,7 +736,9 @@ Claude by default, any enabled agent otherwise), same engine, same jail,
 same bill, visible in the panel. Open it from the site's page in the
 panel (or with `claude_api` in the manifest); the site's process then gets
 `MIDDLEWARE_TOKEN` (its token: it names the site and opens only this door)
-and `MIDDLEWARE_API`, the house's bare address (`http://127.0.0.1:46100`). A
+and `MIDDLEWARE_API`, the house's bare address (`http://127.0.0.1:46100`),
+and so do its tasks, each run, with the same token and the same day's
+spend ([manifest.md](manifest.md#tasks-tasksnamejson)). A
 docker site gets `MIDDLEWARE_API_SOCKET` too, a unix socket mounted at its
 own path: inside a container 127.0.0.1 is the container's. Through that
 socket only the site door answers. Opening or closing the door restarts the

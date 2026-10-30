@@ -20,6 +20,7 @@ import (
 	"github.com/dcimorra/the-middleware/internal/auth"
 	"github.com/dcimorra/the-middleware/internal/manifest"
 	"github.com/dcimorra/the-middleware/internal/settings"
+	"github.com/dcimorra/the-middleware/internal/tasks"
 )
 
 // TestServeAnswersEverySectionOfTheAPI builds the process the way `serve`
@@ -66,6 +67,15 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 	os.MkdirAll(cached, 0o755)
 	os.WriteFile(filepath.Join(cached, "index.html"), []byte("<p>members only</p>"), 0o644)
 	os.WriteFile(filepath.Join(cached, "site.json"), []byte(`{"version":2,"access":{"password":"`+hash+`"},"cache":{"rules":[{"path":"/","mode":"force","ttl":60}]}}`), 0o644)
+	// A site with the AI gateway open and a task of its own that writes
+	// down what it was given: the task must reach the door as the site,
+	// whatever its file in tasks/ says.
+	ai := filepath.Join(root, "sites", "ai.example")
+	os.MkdirAll(ai, 0o755)
+	os.WriteFile(filepath.Join(ai, "index.html"), []byte("<p>ai</p>"), 0o644)
+	os.WriteFile(filepath.Join(ai, "site.json"), []byte(`{"version":2,"claude_api":{"tools":"read","daily_usd":2}}`), 0o644)
+	os.MkdirAll(filepath.Join(root, "tasks"), 0o755)
+	os.WriteFile(filepath.Join(root, "tasks", "ai-writer.json"), []byte(`{"version":2,"schedule":"0 0 1 1 *","site":"ai.example","command":["/bin/sh","-c","echo \"$MIDDLEWARE_API $MIDDLEWARE_TOKEN\" > door.txt"],"env":{"MIDDLEWARE_TOKEN":"forged"}}`), 0o644)
 	a, err := app.New(root)
 	if err != nil {
 		t.Fatal(err)
@@ -175,6 +185,50 @@ func TestServeAnswersEverySectionOfTheAPI(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode == 0 || resp.StatusCode >= 500 {
 		t.Fatalf("unknown host through the chain: %d", resp.StatusCode)
+	}
+
+	// The site's task gets the site's token at launch, the door answers
+	// it as the site, and nothing of it is written to tasks/. Without the
+	// block the next run gets nothing.
+	runTask := func() []string {
+		t.Helper()
+		if err := taskScheduler.RunNow("ai-writer"); err != nil {
+			log, _ := os.ReadFile(tasks.LogPath(root, "ai-writer"))
+			t.Fatalf("task: %v\n%s", err, log)
+		}
+		data, err := os.ReadFile(filepath.Join(ai, "door.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Fields(string(data))
+	}
+	door := runTask()
+	if len(door) != 2 || !strings.HasPrefix(door[0], "http://127.0.0.1:") || !strings.HasPrefix(door[1], "ai.example.") {
+		t.Fatalf("the task was given %q, not the site's door", door)
+	}
+	req, _ := http.NewRequest("GET", "http://"+s.Listen+"/api/site", nil)
+	req.Header.Set("Authorization", "Bearer "+door[1])
+	who, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var site struct {
+		Domain string `json:"domain"`
+		Claude struct {
+			Limits manifest.ClaudeAPI `json:"limits"`
+		} `json:"claude"`
+	}
+	json.NewDecoder(who.Body).Decode(&site)
+	who.Body.Close()
+	if who.StatusCode != 200 || site.Domain != "ai.example" || site.Claude.Limits.DailyUSD != 2 {
+		t.Fatalf("the door answered the task's token with %d %+v", who.StatusCode, site)
+	}
+	if saved, _ := os.ReadFile(filepath.Join(root, "tasks", "ai-writer.json")); strings.Contains(string(saved), door[1]) {
+		t.Fatal("the token was written to tasks/")
+	}
+	os.WriteFile(filepath.Join(ai, "site.json"), []byte(`{"version":2}`), 0o644)
+	if door := runTask(); len(door) != 1 || door[0] != "forged" {
+		t.Fatalf("with the block gone the task was still given %q", door)
 	}
 
 	// The security door, through the whole chain.

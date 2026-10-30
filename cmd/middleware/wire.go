@@ -868,17 +868,14 @@ func wireSiteDoor(a *app.App, srv *api.Server, set *moduleSet) {
 	a.Engine.SetSiteEnv(func(domain string, m *manifest.Manifest) (map[string]string, []string) {
 		env := map[string]string{}
 		var mounts []string
-		if m.ClaudeAPI != nil {
-			if tok, err := tokens.Token(domain); err == nil {
-				env["MIDDLEWARE_TOKEN"] = tok
-				// The bare address, as in V1: the code calls
-				// $MIDDLEWARE_API/api/site/… (or /api/v1/site/…).
-				env["MIDDLEWARE_API"] = "http://" + listen
-				if m.Run != nil && m.Run.Runtime == "docker" {
-					env["MIDDLEWARE_API"] = "http://localhost"
-					env["MIDDLEWARE_API_SOCKET"] = sock
-					mounts = append(mounts, runDir)
-				}
+		if door := doorEnv(tokens, listen, domain, m); door != nil {
+			for k, v := range door {
+				env[k] = v
+			}
+			if m.Run != nil && m.Run.Runtime == "docker" {
+				env["MIDDLEWARE_API"] = "http://localhost"
+				env["MIDDLEWARE_API_SOCKET"] = sock
+				mounts = append(mounts, runDir)
 			}
 		}
 		if m.Claude && set != nil {
@@ -890,6 +887,17 @@ func wireSiteDoor(a *app.App, srv *api.Server, set *moduleSet) {
 		}
 		return env, mounts
 	})
+	// A site's tasks get the same door as its process, with the same
+	// token: the door reads the scope, the models and daily_usd from the
+	// manifest at every call and counts the spend by domain, so a task
+	// spends from the site's day and loses the door with the block. A
+	// task is always a plain process on this machine, never in the
+	// site's container, so the loopback listener is the address.
+	if taskScheduler != nil {
+		taskScheduler.SetSiteEnv(func(site string, m *manifest.Manifest) map[string]string {
+			return doorEnv(tokens, listen, site, m)
+		})
+	}
 	srv.RegisterSiteDoor(api.SiteDoorOptions{
 		Chat:   chatManager,
 		Tokens: tokens,
@@ -948,6 +956,21 @@ func wireSiteDoor(a *app.App, srv *api.Server, set *moduleSet) {
 		h.ServeHTTP(w, r)
 	})
 	go func() { _ = (&http.Server{Handler: door, ReadHeaderTimeout: 15 * time.Second}).Serve(ln) }()
+}
+
+// doorEnv is what a process of a site with claude_api needs to call the
+// site door: its token and the bare address, as in V1, since the code
+// calls $MIDDLEWARE_API/api/site/… (or /api/v1/site/…). Nil for a site
+// without the block.
+func doorEnv(tokens *sitetoken.Keys, listen, domain string, m *manifest.Manifest) map[string]string {
+	if m == nil || m.ClaudeAPI == nil {
+		return nil
+	}
+	tok, err := tokens.Token(domain)
+	if err != nil {
+		return nil
+	}
+	return map[string]string{"MIDDLEWARE_TOKEN": tok, "MIDDLEWARE_API": "http://" + listen}
 }
 
 // wireGitProxy lets a site's conversation push to the repository its
