@@ -292,14 +292,38 @@ func (p *Provider) Adopt(ctx context.Context, pid int, stream string) agent.Run 
 }
 
 // parser reads stream-json: one JSON object per line with a "type" of
-// system (init, carries session_id; task_notification, a subagent's
-// state), assistant (a message whose content blocks are text or
-// tool_use), user (tool results, matched to their call by id) and result
-// (the end, with total_cost_usd). Anything that is not JSON is passed on
-// as text so a CLI that prints a warning before the stream is still read.
+// system (init, carries session_id; task_started and task_notification,
+// a background task's start and end), assistant (a message whose content
+// blocks are text or tool_use), user (tool results, matched to their call
+// by id) and result (the end of a turn, with total_cost_usd). Anything
+// that is not JSON is passed on as text so a CLI that prints a warning
+// before the stream is still read.
+//
+// A result is not always the end of the run. In print mode the CLI
+// writes one when the agent stops talking, then waits for what it left
+// running in the background (CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0) and,
+// when a monitor fires or a subagent finishes, gives the agent another
+// turn and writes another result. Taking the first one as the end killed
+// the CLI three seconds later with its monitor: the agent said "I'll tell
+// you when it finishes" and nobody was left to. So a result while a
+// monitor or a subagent is still out is held, and the run goes on.
 type parser struct {
 	sessionID string
+	// tools names each tool call by its id, to know what a task_started
+	// belongs to.
+	tools map[string]string
+	// waiting are the background tasks the run waits for, by task id.
+	waiting map[string]bool
+	// held is a result written while something was waiting: what Flush
+	// gives if the CLI exits without writing another.
+	held []agent.Event
 }
+
+// waitedFor are the tools whose background tasks keep a run open: a
+// monitor, whose events are the reason it was started, and subagents.
+// Not a background Bash call: a dev server started with it never ends,
+// and would hold the turn for ever.
+var waitedFor = map[string]bool{"Monitor": true, "Task": true, "Agent": true, "Workflow": true}
 
 type line struct {
 	Type      string  `json:"type"`
@@ -316,7 +340,9 @@ type line struct {
 	// ParentToolUseID marks a subagent's messages: the Task call that
 	// started it.
 	ParentToolUseID string `json:"parent_tool_use_id"`
-	// A task_notification's call and state.
+	// A task_started's or task_notification's task, call and state.
+	TaskID    string `json:"task_id"`
+	TaskType  string `json:"task_type"`
 	ToolUseID string `json:"tool_use_id"`
 	Status    string `json:"status"`
 	Message   struct {
@@ -391,6 +417,12 @@ func (p *parser) Line(raw string) ([]agent.Event, bool) {
 					evs = append(evs, agent.Event{Kind: agent.KindText, Text: b.Text, SessionID: p.sessionID, Thread: l.ParentToolUseID})
 				}
 			case "tool_use":
+				if b.ID != "" {
+					if p.tools == nil {
+						p.tools = map[string]string{}
+					}
+					p.tools[b.ID] = b.Name
+				}
 				evs = append(evs, agent.Event{Kind: agent.KindTool, Tool: b.Name, ToolID: b.ID, Input: b.Input, SessionID: p.sessionID, Thread: l.ParentToolUseID})
 			}
 		}
@@ -409,6 +441,19 @@ func (p *parser) Line(raw string) ([]agent.Event, bool) {
 		}
 		return evs, false
 	case "system":
+		if l.Subtype == "task_started" && l.TaskID != "" {
+			if waitedFor[p.tools[l.ToolUseID]] || l.TaskType == "local_agent" || l.TaskType == "local_workflow" || l.TaskType == "remote_agent" {
+				if p.waiting == nil {
+					p.waiting = map[string]bool{}
+				}
+				p.waiting[l.TaskID] = true
+			}
+			return nil, false
+		}
+		if l.Subtype == "task_notification" {
+			// The CLI writes it once per task, when the task is over.
+			delete(p.waiting, l.TaskID)
+		}
 		// A subagent that ends (or fails, or is stopped) says so here,
 		// with the id of the call that launched it. Background shells send
 		// it too; the chat keeps only the ones that name a subagent.
@@ -435,12 +480,26 @@ func (p *parser) Line(raw string) ([]agent.Event, bool) {
 		} else {
 			evs = append(evs, agent.Event{Kind: agent.KindResult, Text: l.Result, Cost: l.Cost, SessionID: p.sessionID})
 		}
+		if len(p.waiting) > 0 {
+			// The cost so far goes out (it is the run's total, so the
+			// last one counts); the end waits for the next result.
+			p.held = evs[1:]
+			return evs[:1], false
+		}
+		p.held = nil
 		return evs, true
 	}
 	return nil, false
 }
 
-func (p *parser) Flush() []agent.Event { return nil }
+// Flush gives the result held for a task that never said it ended: the
+// CLI exiting is the end too, and the run must not read as one that died
+// without a result.
+func (p *parser) Flush() []agent.Event {
+	evs := p.held
+	p.held = nil
+	return evs
+}
 
 // claudeWindows are Claude Code's rateLimitType names for the house's.
 var claudeWindows = map[string]string{"five_hour": "5h", "seven_day": "7d", "seven_day_opus": "7d_opus", "seven_day_sonnet": "7d_sonnet", "seven_day_overage_included": "7d_extra"}
