@@ -133,10 +133,14 @@ func (c *Cache) siteLocked(domain string) *store {
 	return s
 }
 
-// Purge empties a site.
+// Purge empties a site, and each of its services' ("<domain>#<name>").
 func (c *Cache) Purge(domain string) {
 	c.mu.Lock()
-	delete(c.sites, domain)
+	for d := range c.sites {
+		if d == domain || strings.HasPrefix(d, domain+"#") {
+			delete(c.sites, d)
+		}
+	}
 	c.mu.Unlock()
 }
 
@@ -144,11 +148,18 @@ func (c *Cache) Purge(domain string) {
 func (c *Cache) Stats(domain string) Stats {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	s := c.sites[domain]
-	if s == nil {
-		return Stats{}
+	var out Stats
+	for d, s := range c.sites {
+		if d != domain && !strings.HasPrefix(d, domain+"#") {
+			continue
+		}
+		out.Entries += s.count()
+		out.Bytes += s.bytes
+		out.Hits += s.hits
+		out.Misses += s.misses
+		out.Limit = max(out.Limit, s.limit)
 	}
-	return Stats{Entries: s.count(), Bytes: s.bytes, Hits: s.hits, Misses: s.misses, Limit: s.limit}
+	return out
 }
 
 // Total is the house's numbers and budget.

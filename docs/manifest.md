@@ -517,6 +517,23 @@ mounts it: `"drupal:/var/lib/app"` is `mw-<domain>-drupal` (dots as
 dashes), the same name it had as a worker's or a site's, so nothing is
 renamed or migrated.
 
+**Rules per service.** `disabled`, `hold`, `access`, `security`, `waf`,
+`attack`, `headers` and `cache` may be written in a service, and apply to
+the requests its names (and prefixes) answer. `waf`, `attack`, `headers`
+and `cache` replace the site's for that service (a service with a `waf`
+of its own has a rate bucket of its own; its cache is kept apart from the
+other services'), so an upload endpoint can take a larger body or an API
+be left out of the challenge. `access` and `security` only ever add: the
+site's are judged first and the service's after them, never instead, so a
+service's allow list, deny list, password, zones or closed countries close
+more and can never open what the site closed. An allow list or a password
+at both levels, or the same zone at both, is refused, since it could only
+be read as one level replacing the other. A disabled or held service shows
+its page on its names while the others serve; the site's `disabled` and
+`hold` still stop and hold every service. `site stop|start|hold|unhold
+<domain> --service <name>` write the service's section. In the access
+log, a request a service answered ends in `service=<name>`.
+
 **Moving a site from `run` to `services`.** Check the new manifest first
 (`middleware site validate <domain> --file site.new.json`), then replace
 `run` and `aliases` with `services`. The run the site had keeps answering

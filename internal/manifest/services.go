@@ -413,3 +413,37 @@ func (m *Manifest) checkServicesName(name string) error {
 	}
 	return fmt.Errorf("services: no service answers %s, the site's own name; add it to one service's domains", name)
 }
+
+// ForService is the manifest a request for one service is judged and
+// answered under: the site's, with what the service says in place of
+// waf, attack, headers, cache and hold. Access and security are not
+// replaced here: they narrow, so both levels are evaluated, the site's
+// from this manifest and the service's from Services[name] (a delegate
+// may write a service's access, and a service's allow list that replaced
+// the site's was a way past it).
+//
+// The copy is shallow and made per call; the hooks key what they compile
+// on the pointers inside it, which are the loaded manifest's.
+func (m *Manifest) ForService(name string) *Manifest {
+	sv := m.Services[name]
+	if sv == nil {
+		return m
+	}
+	out := *m
+	if sv.WAF != nil {
+		out.WAF = sv.WAF
+	}
+	if sv.Attack != nil {
+		out.Attack = sv.Attack
+	}
+	if sv.Cache != nil {
+		out.Cache = sv.Cache
+	}
+	if sv.Headers != nil {
+		out.Headers = sv.Headers
+	}
+	if sv.Hold != nil && sv.Hold.Enabled && (m.Hold == nil || !m.Hold.Enabled) {
+		out.Hold = sv.Hold
+	}
+	return &out
+}

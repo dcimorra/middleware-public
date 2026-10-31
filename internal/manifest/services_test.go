@@ -164,3 +164,29 @@ func TestTheFolderNameMustBeOneOfTheServicesNames(t *testing.T) {
 		t.Error("a project answers no name, a service's included")
 	}
 }
+
+func TestAServicesRulesReplaceTheSitesExceptTheOnesThatNarrow(t *testing.T) {
+	m, err := Parse([]byte(`{"version":2,"headers":{"X-Site":"1"},"waf":{"max_body":"1m"},
+		"access":{"deny":["198.51.100.0/24"]},"services":{
+		"web":{"run":{"command":["x"]},"domains":["shop.test"]},
+		"api":{"run":{"command":["y"]},"domains":["api.shop.test"],"headers":{"X-Api":"1"},"waf":{"max_body":"50m"},
+			"access":{"allow":["10.0.0.0/8"]},"hold":{"enabled":true}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	web, api := m.ForService("web"), m.ForService("api")
+	if web.Headers["X-Site"] != "1" || web.WAF.MaxBody != "1m" || web.Hold != nil {
+		t.Errorf("web without rules of its own has the site's: %+v", web)
+	}
+	if api.Headers["X-Api"] != "1" || api.Headers["X-Site"] != "" || api.WAF.MaxBody != "50m" || api.Hold == nil {
+		t.Errorf("api's replace the site's: %+v", api)
+	}
+	// Access is never replaced: the site's stays in place and the
+	// service's is judged after it.
+	if api.Access != m.Access || len(api.Access.Allow) != 0 {
+		t.Errorf("api's access replaced the site's: %+v", api.Access)
+	}
+	if m.Headers["X-Api"] != "" || m.Hold != nil {
+		t.Error("the loaded manifest was changed")
+	}
+}

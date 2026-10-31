@@ -95,16 +95,9 @@ func buildWAF(a *app.App) app.Hook {
 		DataDir: dataDir(a),
 		Bus:     a.Bus,
 		Country: edgeCountry,
-		Lookup: func(host string) (waf.Site, bool) {
-			sn, ok := a.Engine.Lookup(host)
-			if !ok {
-				return waf.Site{}, false
-			}
-			s := waf.Site{Domain: sn.Domain, Dir: sn.Dir}
-			if sn.Manifest != nil {
-				s.WAF = sn.Manifest.WAF
-			}
-			return s, true
+		Lookup:  func(host string) (waf.Site, bool) { return wafSite(a.Engine.Lookup(host)) },
+		LookupRequest: func(r *http.Request) (waf.Site, bool) {
+			return wafSite(a.Engine.LookupPath(proxy.Host(r), r.URL.Path))
 		},
 	})
 	var pe *waf.PolicyError
@@ -121,48 +114,93 @@ func buildWAF(a *app.App) app.Hook {
 	return hook{wrap: w.Wrap, run: w.Run}
 }
 
+// wafSite is the policy a request for a site is judged under: for a
+// site with services, the waf of the service that answers it, with a
+// rate bucket of its own when it has one.
+func wafSite(sn engine.Snapshot, ok bool) (waf.Site, bool) {
+	if !ok {
+		return waf.Site{}, false
+	}
+	s := waf.Site{Domain: sn.Domain, Dir: sn.Dir}
+	if sn.Manifest != nil {
+		s.WAF = sn.Manifest.WAF
+		if sv := sn.Manifest.Services[sn.Service]; sv != nil && sv.WAF != nil {
+			s.Bucket = sn.Domain + "#" + sn.Service
+		}
+	}
+	return s, true
+}
+
+// serviceOf is the service of a site with services a snapshot is for, or
+// nil.
+func serviceOf(sn engine.Snapshot) *manifest.Service {
+	if sn.Manifest == nil || sn.Service == "" {
+		return nil
+	}
+	return sn.Manifest.Services[sn.Service]
+}
+
 func buildSecurity(a *app.App) app.Hook {
 	d := security.New(security.Options{
 		Host:     proxy.Host,
 		ClientIP: edge.ClientIP,
 		Country:  edgeCountry,
-		Lookup: func(host string) (security.Site, bool) {
-			sn, ok := a.Engine.Lookup(host)
-			if !ok || sn.Manifest == nil {
-				return security.Site{}, false
-			}
-			site := security.Site{Domain: sn.Domain, Rules: sn.Manifest.Security, Title: sn.Manifest.Title}
-			if sn.Manifest.Notice != nil {
-				site.Theme = sn.Manifest.Notice.Theme
-			}
-			return site, true
+		Lookup:   func(host string) (security.Site, bool) { return securitySite(a.Engine.Lookup(host)) },
+		LookupRequest: func(r *http.Request) (security.Site, bool) {
+			return securitySite(a.Engine.LookupPath(proxy.Host(r), r.URL.Path))
 		},
 	})
 	theSecurity = d
 	return hook{wrap: d.Wrap}
 }
 
+// securitySite is the site's rules, and for a site with services the
+// rules of the service that answers the request, judged after them.
+func securitySite(sn engine.Snapshot, ok bool) (security.Site, bool) {
+	if !ok || sn.Manifest == nil {
+		return security.Site{}, false
+	}
+	site := security.Site{Domain: sn.Domain, Rules: sn.Manifest.Security, Title: sn.Manifest.Title}
+	if sv := serviceOf(sn); sv != nil && sv.Security != nil {
+		site.More, site.Service = sv.Security, sn.Service
+	}
+	if sn.Manifest.Notice != nil {
+		site.Theme = sn.Manifest.Notice.Theme
+	}
+	return site, true
+}
+
+// accessSite is the site's access, and for a site with services the
+// access of the service that answers the request, judged after it.
+func accessSite(sn engine.Snapshot, ok bool) (access.Site, bool) {
+	if !ok || sn.Manifest == nil {
+		return access.Site{}, false
+	}
+	site := access.Site{Domain: sn.Domain, Access: sn.Manifest.Access, Title: sn.Manifest.Title}
+	if sv := serviceOf(sn); sv != nil {
+		site.More = sv.Access
+	}
+	if sn.Manifest.Notice != nil {
+		site.Theme = sn.Manifest.Notice.Theme
+	}
+	return site, true
+}
+
 func buildAccess(a *app.App) app.Hook {
-	lookup := func(host string) (access.Site, bool) {
-		sn, ok := a.Engine.Lookup(host)
-		if !ok || sn.Manifest == nil {
-			return access.Site{}, false
-		}
-		site := access.Site{Domain: sn.Domain, Access: sn.Manifest.Access, Title: sn.Manifest.Title}
-		if sn.Manifest.Notice != nil {
-			site.Theme = sn.Manifest.Notice.Theme
-		}
-		return site, true
+	lookup := func(host string) (access.Site, bool) { return accessSite(a.Engine.Lookup(host)) }
+	byRequest := func(r *http.Request, urlPath string) (access.Site, bool) {
+		return accessSite(a.Engine.LookupPath(proxy.Host(r), urlPath))
 	}
 	ac, err := access.New(access.Options{
-		DataDir:  dataDir(a),
-		ClientIP: edge.ClientIP,
-		Country:  edgeCountry,
-		Lookup:   lookup,
+		DataDir:       dataDir(a),
+		ClientIP:      edge.ClientIP,
+		Country:       edgeCountry,
+		Lookup:        lookup,
+		LookupRequest: byRequest,
 	})
 	if err != nil {
 		a.Bus.Emit(events.Event{Type: "access.error", Actor: "engine", Level: "error", Message: "session key not available, protected sites are closed: " + err.Error()})
-		return hook{wrap: access.Closed(lookup)}
+		return hook{wrap: access.ClosedRequest(byRequest)}
 	}
 	theAccess = ac
 	return hook{wrap: ac.Wrap}
@@ -177,6 +215,10 @@ func buildTraffic(a *app.App) app.Hook {
 		// log, so a client making up names makes no folders.
 		Site: func(r *http.Request) (string, bool) {
 			return siteOf(a, proxy.Host(r))
+		},
+		Service: func(r *http.Request) string {
+			sn, _ := a.Engine.LookupPath(proxy.Host(r), r.URL.Path)
+			return sn.Service
 		},
 	})
 	theTraffic = r

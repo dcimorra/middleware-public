@@ -578,6 +578,7 @@ func (e *Engine) serviceView(s *Site, sn Snapshot, host, urlPath string) (Snapsh
 	sv := s.Manifest.Services[name]
 	svc := s.Services[name]
 	sn.Service = name
+	sn.Manifest = s.Manifest.ForService(name)
 	sn.Mode = manifest.ModeRun
 	sn.Port, sn.Alive, sn.Revision, sn.Handing, sn.Error, sn.Failures, sn.Health = 0, false, "", false, "", 0, HealthUnknown
 	sn.Checks = nil

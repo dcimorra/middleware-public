@@ -82,3 +82,43 @@ func TestEachNameReachesItsServiceWithTheHeadersAnAppNeeds(t *testing.T) {
 		t.Errorf("a name no service answers got %d, want the house's 404", resp.StatusCode)
 	}
 }
+
+// A service's headers replace the site's on its names, and a service on
+// hold shows its own page while the others serve.
+func TestAServicesHeadersAndHoldAreItsOwn(t *testing.T) {
+	m, err := manifest.Parse([]byte(`{"version":2,"headers":{"X-Site":"1"},"services":{
+		"web":{"run":{"command":["x"]},"domains":["shop.test"]},
+		"api":{"run":{"command":["y"]},"domains":["shop.test/api"],"headers":{"X-Api":"1"}},
+		"cms":{"run":{"command":["z"]},"domains":["cms.shop.test"],"hold":{"enabled":true,"title":"CMS upgrade"}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }))
+	t.Cleanup(s.Close)
+	port, _ := strconv.Atoi(strings.TrimPrefix(s.URL, "http://127.0.0.1:"))
+	h := New(func(string) (engine.Snapshot, bool) { return engine.Snapshot{}, false })
+	h.ByPath = func(host, path string) (engine.Snapshot, bool) {
+		svc, ok := m.ServiceFor(host, path)
+		if !ok {
+			return engine.Snapshot{}, false
+		}
+		sn := engine.Snapshot{Domain: "shop.test", Mode: manifest.ModeRun, Manifest: m.ForService(svc), Service: svc, Alive: true, Port: port}
+		if svc == "cms" {
+			sn.Mode, sn.Alive, sn.Port = manifest.ModeHold, false, 0
+		}
+		return sn, true
+	}
+	web := do(t, h, "shop.test", "/")
+	api := do(t, h, "shop.test", "/api/x")
+	if web.Header.Get("X-Site") != "1" || web.Header.Get("X-Api") != "" {
+		t.Errorf("web headers %v", web.Header)
+	}
+	if api.Header.Get("X-Api") != "1" || api.Header.Get("X-Site") != "" {
+		t.Errorf("api headers %v", api.Header)
+	}
+	cms := do(t, h, "cms.shop.test", "/")
+	b, _ := io.ReadAll(cms.Body)
+	if cms.StatusCode != http.StatusServiceUnavailable || !strings.Contains(string(b), "CMS upgrade") {
+		t.Errorf("cms on hold: %d %q", cms.StatusCode, b)
+	}
+}

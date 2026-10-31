@@ -150,6 +150,9 @@ A site object:
 | POST | `/sites/{domain}/stop` | → `site` (sets `disabled: true`) |
 | POST | `/sites/{domain}/start` | → `site` (clears `disabled`) |
 | POST | `/sites/{domain}/hold` | `{enabled, title?, message?}` → `site` |
+| POST | `/sites/{domain}/services/{name}/stop` | → `site`; writes `services.<name>.disabled: true`; its names answer the stopped page, the other services are not touched |
+| POST | `/sites/{domain}/services/{name}/start` | → `site`; clears `services.<name>.disabled` |
+| POST | `/sites/{domain}/services/{name}/hold` | `{enabled, title?, message?}` → `site`; `services.<name>.hold`, the holding page on that service's names |
 | GET | `/sites/{domain}/logs` | `?lines=200&worker=name` (or `&service=name`, with `&build=1` for its image build) → `text/plain`; `?follow=1` streams |
 | GET | `/sites/{domain}/files` | `?path=/` → `[{name, dir, size, mtime}]` (inside the folder only) |
 | GET | `/sites/{domain}/file` | `?path=…` → raw content |

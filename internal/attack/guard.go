@@ -48,6 +48,9 @@ type Options struct {
 	// DataDir is data/; the key lives at data/attack/key.
 	DataDir string
 	Lookup  func(host string) (Site, bool)
+	// LookupRequest, when set, resolves the request instead of its host:
+	// a host and a path name one of a site's services.
+	LookupRequest func(r *http.Request) (Site, bool)
 	// Host is the site name a request is for (proxy.Host).
 	Host func(r *http.Request) string
 	// Global is the installation-wide rules, which apply to every site
@@ -180,7 +183,13 @@ func (g *Guard) scope(r *http.Request) (rules *Rules, name, title, theme string,
 		}
 		return nil, "", "", "", false
 	}
-	site, found := g.opts.Lookup(host)
+	var site Site
+	var found bool
+	if g.opts.LookupRequest != nil {
+		site, found = g.opts.LookupRequest(r)
+	} else {
+		site, found = g.opts.Lookup(host)
+	}
 	if !found {
 		return nil, "", "", "", false
 	}

@@ -37,6 +37,9 @@ func (s *Server) registerSites() {
 	s.Handle("POST", p+"/{domain}/manifest/history/{id}/restore", "Write a kept manifest back", s.historyRestore)
 	s.Handle("POST", p+"/{domain}/workers/{name}/restart", "Restart one worker now", s.workerRestart)
 	s.Handle("POST", p+"/{domain}/services/{name}/restart", "A new generation of one service now (a rebuild for a built image); the others are not touched", s.serviceRestart)
+	s.Handle("POST", p+"/{domain}/services/{name}/stop", "Stop one service (writes services.<name>.disabled); its names answer the stopped page", s.serviceStop)
+	s.Handle("POST", p+"/{domain}/services/{name}/start", "Start one service (clears services.<name>.disabled)", s.serviceStart)
+	s.Handle("POST", p+"/{domain}/services/{name}/hold", "Put one service's names behind the holding page, or take them out (services.<name>.hold)", s.serviceHold)
 	s.Handle("GET", p+"/{domain}/routes", "Every name of the site: host and prefix → service → port → state", s.sitesRoutes)
 	s.Handle("POST", p+"/{domain}/workers/{name}/stop", "Stop one worker (writes workers.<name>.disabled)", s.workerStop)
 	s.Handle("POST", p+"/{domain}/workers/{name}/start", "Start one worker (clears workers.<name>.disabled)", s.workerStart)
@@ -474,6 +477,42 @@ func (s *Server) setWorkerDisabled(r *http.Request, disabled bool) (any, error) 
 		return nil, err
 	}
 	return m.SetWorkerDisabled(domain, r.PathValue("name"), disabled)
+}
+
+func (s *Server) serviceStop(w http.ResponseWriter, r *http.Request) (any, error) {
+	return s.setServiceDisabled(r, true)
+}
+
+func (s *Server) serviceStart(w http.ResponseWriter, r *http.Request) (any, error) {
+	return s.setServiceDisabled(r, false)
+}
+
+func (s *Server) setServiceDisabled(r *http.Request, disabled bool) (any, error) {
+	m, err := s.sitesManager()
+	if err != nil {
+		return nil, err
+	}
+	domain, err := domainOf(r)
+	if err != nil {
+		return nil, err
+	}
+	return m.SetServiceDisabled(domain, r.PathValue("name"), disabled)
+}
+
+func (s *Server) serviceHold(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := s.sitesManager()
+	if err != nil {
+		return nil, err
+	}
+	domain, err := domainOf(r)
+	if err != nil {
+		return nil, err
+	}
+	var hold manifest.Hold
+	if err := ReadJSON(r, &hold); err != nil {
+		return nil, err
+	}
+	return m.SetServiceHold(domain, r.PathValue("name"), hold)
 }
 
 func (s *Server) sitesStop(w http.ResponseWriter, r *http.Request) (any, error) {

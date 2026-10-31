@@ -530,20 +530,32 @@ func (e *Env) site(args []string) error {
 		if err := need(); err != nil {
 			return err
 		}
+		if *service != "" {
+			return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/services/"+url.PathEscape(*service)+"/stop", nil, "Stopped "+*service+" of "+domain+" (services."+*service+".disabled in site.json)")
+		}
 		return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/stop", nil, "Stopped "+domain+" (disabled in site.json)")
 	case "start":
 		if err := need(); err != nil {
 			return err
+		}
+		if *service != "" {
+			return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/services/"+url.PathEscape(*service)+"/start", nil, "Started "+*service+" of "+domain)
 		}
 		return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/start", nil, "Started "+domain)
 	case "hold":
 		if err := need(); err != nil {
 			return err
 		}
+		if *service != "" {
+			return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/services/"+url.PathEscape(*service)+"/hold", map[string]any{"enabled": true, "title": *title, "message": *message}, "The names of "+*service+" are behind the holding page")
+		}
 		return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/hold", map[string]any{"enabled": true, "title": *title, "message": *message}, domain+" is behind the holding page")
 	case "unhold":
 		if err := need(); err != nil {
 			return err
+		}
+		if *service != "" {
+			return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/services/"+url.PathEscape(*service)+"/hold", map[string]any{"enabled": false}, *service+" is back")
 		}
 		return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/hold", map[string]any{"enabled": false}, domain+" is back")
 	case "validate", "check":

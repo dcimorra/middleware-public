@@ -57,6 +57,55 @@ func (m *Manager) SetWorkerDisabled(domain, name string, disabled bool) (Site, e
 	return m.describe(domain), nil
 }
 
+// SetServiceDisabled stops or starts one of a site's services by writing
+// the decision to the manifest (`services.<name>.disabled`), where it
+// survives a restart. Its names answer the stopped page meanwhile; the
+// other services are not touched.
+func (m *Manager) SetServiceDisabled(domain, name string, disabled bool) (Site, error) {
+	return m.changeService(domain, name, func(sv *manifest.Service) (string, string) {
+		sv.Disabled = disabled
+		if disabled {
+			return "service.disabled", name + " switched off by the operator"
+		}
+		return "service.enabled", name + " switched on by the operator"
+	})
+}
+
+// SetServiceHold puts one service's names behind the holding page, or
+// takes them out (`services.<name>.hold`).
+func (m *Manager) SetServiceHold(domain, name string, hold manifest.Hold) (Site, error) {
+	return m.changeService(domain, name, func(sv *manifest.Service) (string, string) {
+		if hold.Enabled {
+			sv.Hold = &hold
+		} else {
+			sv.Hold = nil
+		}
+		return "service.hold", fmt.Sprintf("%s: hold %v", name, hold.Enabled)
+	})
+}
+
+func (m *Manager) changeService(domain, name string, change func(*manifest.Service) (typ, msg string)) (Site, error) {
+	dir, err := m.managedDir(domain)
+	if err != nil {
+		return Site{}, err
+	}
+	mf, err := manifest.Load(dir)
+	if err != nil {
+		return Site{}, fmt.Errorf("manifest: %w", err)
+	}
+	sv, ok := mf.Services[name]
+	if !ok || sv == nil {
+		return Site{}, fmt.Errorf("%w: %s has no service %q", ErrNotFound, domain, name)
+	}
+	typ, msg := change(sv)
+	if err := manifest.Save(dir, mf); err != nil {
+		return Site{}, err
+	}
+	// The subject is the service's, as the engine's events about it.
+	m.emit(typ, domain+"#"+name, "", msg, map[string]any{"service": name})
+	return m.describe(domain), nil
+}
+
 // History is the site's kept manifests, newest first (the engine keeps
 // them, see engine/history.go).
 func (m *Manager) History(domain string) ([]engine.Version, error) {

@@ -14,7 +14,12 @@ type Site struct {
 	Domain string
 	// Rules are the manifest's; the door compiles them once per pointer,
 	// and a reloaded manifest is a new pointer.
-	Rules        *Rules
+	Rules *Rules
+	// More are the rules of the service that answers the request, for a
+	// site with services: judged after the site's, never instead of them.
+	// Service names it, which is what they are compiled under.
+	More         *Rules
+	Service      string
 	Title, Theme string
 }
 
@@ -24,6 +29,9 @@ type Lookup func(host string) (Site, bool)
 // Options configure a Door.
 type Options struct {
 	Lookup Lookup
+	// LookupRequest, when set, resolves the request instead of its host:
+	// a host and a path name one of a site's services.
+	LookupRequest func(r *http.Request) (Site, bool)
 	// Host is the site name a request is for (proxy.Host); nil is the
 	// Host header without its port.
 	Host func(r *http.Request) string
@@ -79,67 +87,91 @@ func New(opts Options) *Door {
 // not reach here (the manifest is refused), but if they did, the house's
 // paths would still be cut and the rest would let everyone in, which is
 // what this door being the softest one means.
-func (d *Door) filter(s Site) *Filter {
+func (d *Door) filter(s Site) *Filter { return d.compile(s.Domain, s.Rules) }
+
+func (d *Door) compile(key string, rules *Rules) *Filter {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if c, ok := d.compiled[s.Domain]; ok && c.rules == s.Rules {
+	if c, ok := d.compiled[key]; ok && c.rules == rules {
 		return c.filter
 	}
-	f, err := Compile(s.Rules)
+	f, err := Compile(rules)
 	if err != nil {
 		f, _ = Compile(nil)
 	}
-	d.compiled[s.Domain] = compiled{rules: s.Rules, filter: f}
+	d.compiled[key] = compiled{rules: rules, filter: f}
 	return f
 }
 
 // Wrap implements the hook.
 func (d *Door) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		site, ok := d.opts.Lookup(d.opts.Host(r))
+		var site Site
+		var ok bool
+		if d.opts.LookupRequest != nil {
+			site, ok = d.opts.LookupRequest(r)
+		} else {
+			site, ok = d.opts.Lookup(d.opts.Host(r))
+		}
 		if !ok {
 			next.ServeHTTP(w, r)
 			return
 		}
-		f := d.filter(site)
-		if v := f.DecidePath(r.URL.Path); !v.Pass {
-			d.record(site.Domain, r, v, "")
-			// HTML, not plain text: a URL called id_rsa with a text body
-			// is saved as a file by some browsers, and whoever probed it
-			// believes they took something.
-			pages.Render(w, r, pages.ForSite("notfound", site.Title, site.Domain, site.Theme))
+		if site.More != nil {
+			// The service's rules first, on their own: whoever they turn
+			// away is turned away whatever the site's say, and whoever
+			// they let in still meets the site's below.
+			f := d.compile(site.Domain+"#"+site.Service, site.More)
+			if d.refused(w, r, site, f) {
+				return
+			}
+		}
+		if d.refused(w, r, site, d.filter(site)) {
 			return
 		}
-		if !f.Active() {
-			next.ServeHTTP(w, r)
-			return
-		}
-		var ip net.IP
-		if d.opts.ClientIP != nil {
-			ip = d.opts.ClientIP(r)
-		}
-		country := ""
-		if d.opts.Country != nil {
-			country = d.opts.Country(r, ip)
-		}
-		v := f.Decide(country, r.Header.Get("User-Agent"), d.opts.Now())
-		if v.Pass {
-			next.ServeHTTP(w, r)
-			return
-		}
-		d.record(site.Domain, r, v, country)
-		n := pages.ForSite("refused-"+v.Reason, site.Title, site.Domain, site.Theme)
-		switch {
-		case f.message != "":
-			n.Line = f.message
-		case v.Reason == ByBot && f.window != nil:
-			// The one rule a visitor is told: a crawler has no other
-			// way of knowing that coming back later works, and that is
-			// what the window is for.
-			n.Line += " " + pages.RobotWindow(f.window.fromText, f.window.toText, f.window.loc.String())
-		}
-		pages.Render(w, r, n)
+		next.ServeHTTP(w, r)
 	})
+}
+
+// refused judges a request under one level's filter and answers it when
+// it does not pass.
+func (d *Door) refused(w http.ResponseWriter, r *http.Request, site Site, f *Filter) bool {
+	if v := f.DecidePath(r.URL.Path); !v.Pass {
+		d.record(site.Domain, r, v, "")
+		// HTML, not plain text: a URL called id_rsa with a text body
+		// is saved as a file by some browsers, and whoever probed it
+		// believes they took something.
+		pages.Render(w, r, pages.ForSite("notfound", site.Title, site.Domain, site.Theme))
+		return true
+	}
+	if !f.Active() {
+		return false
+	}
+	var ip net.IP
+	if d.opts.ClientIP != nil {
+		ip = d.opts.ClientIP(r)
+	}
+	country := ""
+	if d.opts.Country != nil {
+		country = d.opts.Country(r, ip)
+	}
+	v := f.Decide(country, r.Header.Get("User-Agent"), d.opts.Now())
+	if v.Pass {
+		return false
+	}
+	d.record(site.Domain, r, v, country)
+	n := pages.ForSite("refused-"+v.Reason, site.Title, site.Domain, site.Theme)
+	switch {
+	case f.message != "":
+		n.Line = f.message
+	case v.Reason == ByBot && f.window != nil:
+		// The one rule a visitor is told: a crawler has no other
+		// way of knowing that coming back later works, and that is
+		// what the window is for.
+		n.Line += " " + pages.RobotWindow(f.window.fromText, f.window.toText, f.window.loc.String())
+	}
+	pages.Render(w, r, n)
+	return true
 }
 
 func (d *Door) record(domain string, r *http.Request, v Verdict, country string) {

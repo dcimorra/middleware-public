@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/dcimorra/the-middleware/internal/app"
 	"github.com/dcimorra/the-middleware/internal/attack"
 	"github.com/dcimorra/the-middleware/internal/edge"
+	"github.com/dcimorra/the-middleware/internal/engine"
 	"github.com/dcimorra/the-middleware/internal/events"
 	"github.com/dcimorra/the-middleware/internal/proxy"
 	"github.com/dcimorra/the-middleware/internal/waf"
@@ -39,18 +41,10 @@ func buildAttack(a *app.App) app.Hook {
 		// Only the panel's own name: a request to localhost comes from
 		// this machine, and that is the way back in when everything else
 		// is behind the challenge.
-		Panel: func(host string) bool { return host != "" && host == a.Proxy.PanelDomain() },
-		Lookup: func(host string) (attack.Site, bool) {
-			sn, ok := a.Engine.Lookup(host)
-			if !ok || sn.Manifest == nil {
-				return attack.Site{}, false
-			}
-			m := sn.Manifest
-			site := attack.Site{Domain: sn.Domain, Title: m.Title, Rules: waf.Effective(m.Attack, m.WAF != nil && m.WAF.UnderAttack)}
-			if m.Notice != nil {
-				site.Theme = m.Notice.Theme
-			}
-			return site, true
+		Panel:  func(host string) bool { return host != "" && host == a.Proxy.PanelDomain() },
+		Lookup: func(host string) (attack.Site, bool) { return attackSite(a.Engine.Lookup(host)) },
+		LookupRequest: func(r *http.Request) (attack.Site, bool) {
+			return attackSite(a.Engine.LookupPath(proxy.Host(r), r.URL.Path))
 		},
 	})
 	if err != nil {
@@ -62,6 +56,22 @@ func buildAttack(a *app.App) app.Hook {
 	}
 	theAttack = g
 	return hook{wrap: g.Wrap, run: func(ctx context.Context) { go sweepExpiredAttacks(ctx, a) }}
+}
+
+// attackSite is what the guard judges a request for a site under: for a
+// site with services, the attack rules of the service that answers it.
+func attackSite(sn engine.Snapshot, ok bool) (attack.Site, bool) {
+	{
+		if !ok || sn.Manifest == nil {
+			return attack.Site{}, false
+		}
+		m := sn.Manifest
+		site := attack.Site{Domain: sn.Domain, Title: m.Title, Rules: waf.Effective(m.Attack, m.WAF != nil && m.WAF.UnderAttack)}
+		if m.Notice != nil {
+			site.Theme = m.Notice.Theme
+		}
+		return site, true
+	}
 }
 
 // sweepExpiredAttacks writes a passed deadline down as off. The clock
