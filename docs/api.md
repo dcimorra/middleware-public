@@ -136,6 +136,7 @@ A site object:
 | PUT | `/sites/{domain}/manifest` | full manifest → `site` (validated, written atomically) |
 | PATCH | `/sites/{domain}/manifest` | partial, top-level keys merged → `site` |
 | DELETE | `/sites/{domain}` | `?archive=true` moves to `data/archive/` instead of deleting |
+| POST | `/sites/{domain}/validate` | body: a manifest, or nothing for the one on disk → `{ok, error?, problems?, warnings?, routes: [{host, prefix?, service?, conflict?}]}`. Writes nothing. `error` is what the house would refuse it with; `problems`, what would fail once written (a Dockerfile that is not there, a name another site serves: a delegate, a scoped token or a site's own turn are told it is taken, not by whom); `warnings` stop nothing. In the `read` scope and the `view` grant |
 | POST | `/sites/{domain}/restart` | → `{ok}` (forces a handover) |
 | POST | `/sites/{domain}/exec` | `{command, timeout?: "60s"}` → `{exit_code, output, truncated?, seconds, timed_out?}`; `sh -c command` where the site runs (its folder, environment and HOME, inside its container if it has one), stdin empty, output capped at 1 MB, a minute by default and 10m at most. Every run is a `site.exec` event with the command |
 | GET | `/sites/{domain}/manifest/history` | → `[{id, at, bytes}]`, newest first; the first is the manifest in force. The engine keeps every valid version it sees, whoever wrote it (50 per site, in `data/history/<domain>/`) |

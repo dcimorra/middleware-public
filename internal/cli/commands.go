@@ -270,6 +270,9 @@ const siteUsage = `usage: middleware site <command> [flags]
   unhold <domain>
   logs <domain> [-f] [--lines 200] [--worker name]
   deploy <domain>             run deploy.github.build and write the pointer
+  validate <domain> [--file site.json]
+                              check a manifest (the file, or the one on disk) without
+                              writing or deploying it: schema, paths, names, Dockerfiles
   tasks <domain> [list | save <name> <file|-> | rm <name> | run <name> | stop <name> | log <name>]
                               the site's own scheduled tasks
 `
@@ -295,6 +298,7 @@ func (e *Env) site(args []string) error {
 		worker   = fs.String("worker", "", "a worker's log instead of the site's")
 		publish  = fs.String("publish", "", "add: true or false (default: true when a DNS module is on)")
 		door     = fs.String("door", "", "add, publish: tunnel or ports (default: the door for new sites)")
+		file     = fs.String("file", "", "validate: the manifest to check (- for stdin; default: the one on disk)")
 	)
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -520,6 +524,11 @@ func (e *Env) site(args []string) error {
 			return err
 		}
 		return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/hold", map[string]any{"enabled": false}, domain+" is back")
+	case "validate", "check":
+		if err := need(); err != nil {
+			return err
+		}
+		return e.validateSite(c, cl, domain, *file)
 	case "deploy":
 		if err := need(); err != nil {
 			return err

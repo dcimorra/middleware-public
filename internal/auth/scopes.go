@@ -23,6 +23,7 @@ var scopeRoutes = map[string][]string{
 		"GET /api/v1/sites",
 		"GET /api/v1/sites/{domain}",
 		"GET /api/v1/sites/{domain}/logs",
+		"POST /api/v1/sites/{domain}/validate",
 		"GET /api/v1/events",
 	},
 	"restart": {

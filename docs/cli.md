@@ -53,6 +53,7 @@ in the API ([api.md](api.md)) and the panel.
 | `site hold <domain> [--title t] [--message m]` / `site unhold <domain>` | the holding page instead of the process |
 | `site logs <domain> [-f] [--lines 200] [--worker name]` | the instance's output |
 | `site deploy <domain>` | run `deploy.github.build` and write the pointer, [deploy.md](deploy.md); through the github module's runner when it is enabled |
+| `site validate <domain> [--file site.json\|-]` | check a manifest without writing or deploying it: what the house would refuse, the names it would answer and whether another site has them, Dockerfiles, build contexts and folders that are not there. Exits 1 when it would not work. A site's own conversation may run it for its site |
 | `site rm <domain> [--archive]` | remove, or move to `data/archive/` |
 | `site tasks <domain>` (or `… list`) | the site's own tasks (the ones whose `site` is that domain) with their schedule, next and last run; `--json` prints the API's rows |
 | `site tasks <domain> save <name> <file.json\|->` | write a task from a file or stdin; with no `site` it is this one's. Refused when the name is another site's or the root's |

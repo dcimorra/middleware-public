@@ -36,6 +36,7 @@ var permRoutes = map[string][]string{
 	PermView: {
 		"GET " + siteBase,
 		"GET " + siteBase + "/logs",
+		"POST " + siteBase + "/validate",
 		"GET " + siteBase + "/manifest/history",
 		"GET " + siteBase + "/manifest/history/{id}",
 		"GET " + siteBase + "/files",

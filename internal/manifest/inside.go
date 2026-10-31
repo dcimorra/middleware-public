@@ -26,6 +26,9 @@ func (m *Manifest) CheckInside(siteDir string) error {
 	if err := m.checkProject(filepath.Base(siteDir)); err != nil {
 		return err
 	}
+	if err := m.checkServicesName(filepath.Base(siteDir)); err != nil {
+		return err
+	}
 	base := filepath.Clean(siteDir)
 	real := base
 	if r, err := filepath.EvalSymlinks(base); err == nil {
@@ -71,6 +74,35 @@ func (m *Manifest) CheckInside(siteDir string) error {
 		}
 		if err := insideDocker("run.docker", r.Docker, inside); err != nil {
 			return err
+		}
+	}
+	for name, sv := range m.Services {
+		if sv == nil || sv.Run == nil {
+			continue
+		}
+		r, field := sv.Run, "services."+name+".run"
+		if err := inside(field+".cwd", Expand(r.Cwd, vars)); err != nil {
+			return err
+		}
+		for _, f := range r.EnvFiles {
+			if err := inside(field+".env_files", Expand(f, vars)); err != nil {
+				return err
+			}
+		}
+		for k, f := range r.EnvFromFile {
+			if err := inside(field+".env_from_file."+k, Expand(f, vars)); err != nil {
+				return err
+			}
+		}
+		if err := insideDocker(field+".docker", r.Docker, inside); err != nil {
+			return err
+		}
+		if r.Docker != nil {
+			for _, w := range r.Docker.Watch {
+				if err := inside(field+".docker.watch", w); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	for name, w := range m.Workers {
@@ -180,6 +212,11 @@ func (m *Manifest) checkProject(name string) error {
 	}
 	if m.Run != nil || m.Upstream != "" || m.Static != nil || len(m.Aliases) > 0 {
 		return fmt.Errorf("%s is a project and answers no hostname: run, upstream, static and aliases need a folder named after a domain", name)
+	}
+	for _, n := range m.ServiceNames() {
+		if len(m.Services[n].Domains) > 0 {
+			return fmt.Errorf("%s is a project and answers no hostname: services.%s.domains need a folder named after a domain", name, n)
+		}
 	}
 	return nil
 }

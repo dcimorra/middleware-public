@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -27,6 +28,7 @@ func (s *Server) registerSites() {
 	s.Handle("GET", p+"/{domain}", "One site", s.sitesGet)
 	s.Handle("PUT", p+"/{domain}/manifest", "Replace the manifest", s.sitesPutManifest)
 	s.Handle("PATCH", p+"/{domain}/manifest", "Merge top-level keys into the manifest; null removes a key", s.sitesPatchManifest)
+	s.Handle("POST", p+"/{domain}/validate", "Check a manifest (the body, or the one on disk) without writing or deploying it: schema, paths, names, Dockerfiles", s.sitesValidate)
 	s.Handle("DELETE", p+"/{domain}", "Delete the folder, or move it to data/archive/ with ?archive=true", s.sitesDelete)
 	s.Handle("POST", p+"/{domain}/restart", "Force a handover", s.sitesRestart)
 	s.Handle("POST", p+"/{domain}/exec", "Run a command where the site runs and wait for it", s.sitesExec)
@@ -118,6 +120,26 @@ func (s *Server) sitesGet(w http.ResponseWriter, r *http.Request) (any, error) {
 		return nil, err
 	}
 	return m.Get(domain)
+}
+
+func (s *Server) sitesValidate(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := s.sitesManager()
+	if err != nil {
+		return nil, err
+	}
+	domain, err := domainOf(r)
+	if err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		return nil, Errorf(http.StatusRequestEntityTooLarge, "a manifest is at most 1 MB")
+	}
+	// Whoever sees one site and not the house is told a name is taken,
+	// not by whom: the rest of the house stays invisible to them.
+	c := auth.FromContext(r.Context())
+	hide := c.Delegate() || c.Turn != "" || len(c.Scopes) > 0
+	return m.Validate(domain, bytes.TrimSpace(data), hide)
 }
 
 func (s *Server) sitesCreate(w http.ResponseWriter, r *http.Request) (any, error) {

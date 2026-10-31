@@ -56,6 +56,22 @@ func lockedKeys(m *manifest.Manifest) map[string]any {
 	} else {
 		out["run.runtime"] = runtimeOf("")
 	}
+	// A service's names are what aliases are, and its run section is
+	// locked where a site's is.
+	for name, sv := range m.Services {
+		if sv == nil {
+			continue
+		}
+		out["services."+name+".domains"] = sv.Domains
+		if sv.Run == nil {
+			out["services."+name+".run.runtime"] = runtimeOf("")
+			continue
+		}
+		out["services."+name+".run.runtime"] = runtimeOf(sv.Run.Runtime)
+		out["services."+name+".run.docker"] = sv.Run.Docker
+		out["services."+name+".run.env_files"] = sv.Run.EnvFiles
+		out["services."+name+".run.env_from_file"] = sv.Run.EnvFromFile
+	}
 	for name, w := range m.Workers {
 		if w == nil {
 			continue
@@ -89,7 +105,7 @@ func lockedChange(current, next *manifest.Manifest) string {
 	}
 	for k := range keys {
 		x, y := a[k], b[k]
-		if strings.HasPrefix(k, "workers.") {
+		if strings.HasPrefix(k, "workers.") || strings.HasPrefix(k, "services.") {
 			// A worker new or gone counts as one that ran as a process
 			// with nothing locked.
 			if x == nil {

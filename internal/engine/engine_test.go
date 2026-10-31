@@ -551,3 +551,18 @@ func TestARestartOutlivesTheRequestThatAskedForIt(t *testing.T) {
 		t.Fatalf("the restart failed: %s", sn.Error)
 	}
 }
+
+// Until the engine runs services, a site that writes them keeps the
+// manifest it had in force, rather than being served as files.
+func TestAManifestWithServicesKeepsThePreviousOneInForce(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "sites", "svc.test")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "site.json"), []byte(`{"version":2,"services":{"web":{"run":{"command":["x"]},"domains":["svc.test"]}}}`), 0o644)
+	e := New(Options{SitesDir: filepath.Join(root, "sites"), DataDir: filepath.Join(root, "data")})
+	e.tick(context.Background())
+	sn, ok := e.Lookup("svc.test")
+	if !ok || sn.Error == "" || sn.Mode == manifest.ModeStatic && sn.Manifest != nil {
+		t.Fatalf("snapshot %+v: want the services manifest refused with a reason", sn)
+	}
+}

@@ -6,6 +6,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,6 +22,10 @@ import (
 	"github.com/dcimorra/the-middleware/internal/ports"
 	"github.com/dcimorra/the-middleware/internal/runtime"
 )
+
+// errServicesNotRun refuses a manifest with services until the engine
+// runs them.
+var errServicesNotRun = errors.New("services: this version of the house checks them (middleware site validate) but does not run them yet; the previous manifest stays in force")
 
 // Options configure an Engine.
 type Options struct {
@@ -314,6 +319,13 @@ func (e *Engine) tick(ctx context.Context) {
 
 func (e *Engine) reconcile(ctx context.Context, domain, dir string) {
 	m, err := manifest.Load(dir)
+	if err == nil && m.Mode() == manifest.ModeServices {
+		// The schema is read and checked (site validate) a step before
+		// the engine runs it: served by the run it had until then, a
+		// site that writes services keeps its previous manifest in force
+		// instead of being served as a folder of files.
+		err = errServicesNotRun
+	}
 	e.mu.Lock()
 	s, ok := e.sites[domain]
 	if !ok {
