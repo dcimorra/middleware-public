@@ -87,12 +87,29 @@ func (d Docker) Start(ctx context.Context, spec *manifest.Spec, port int, logFil
 	image := spec.Docker.Image
 	if spec.Docker.Build != "" {
 		image = "middleware/" + dockerName(spec.Domain) + ":" + spec.Revision
-		build := exec.CommandContext(ctx, d.bin(), "build", "-q", "-t", image, "-f", filepath.Join(spec.SiteDir, spec.Docker.Build), spec.SiteDir)
-		if out, err := build.CombinedOutput(); err != nil {
-			return nil, fmt.Errorf("docker build: %w: %s", err, bytes.TrimSpace(out))
+		if spec.Service != "" {
+			if err := d.buildService(ctx, spec, image, logFile); err != nil {
+				return nil, err
+			}
+		} else {
+			build := exec.CommandContext(ctx, d.bin(), "build", "-q", "-t", image, "-f", filepath.Join(spec.SiteDir, spec.Docker.Build), spec.SiteDir)
+			if out, err := build.CombinedOutput(); err != nil {
+				return nil, fmt.Errorf("docker build: %w: %s", err, bytes.TrimSpace(out))
+			}
 		}
 	}
-	argv, env := spec.WithPort(port)
+	if err := d.checkArch(ctx, image); err != nil {
+		return nil, err
+	}
+	// Inside a service's container the port is its own (docker.port, or
+	// the house's default): the published one moves with every
+	// generation, and the site's other containers reach this one by name
+	// on the port inside.
+	inside := port
+	if spec.ContainerPort != 0 {
+		inside = spec.ContainerPort
+	}
+	argv, env := spec.WithPort(inside)
 	name := ContainerName(spec.Domain, port)
 	// A leftover with this name from an earlier life would make the run
 	// fail, and the site would not come back over a scrap. But a name is
@@ -105,9 +122,17 @@ func (d Docker) Start(ctx context.Context, spec *manifest.Spec, port int, logFil
 	}
 	_ = exec.CommandContext(ctx, d.bin(), "rm", "-f", name).Run()
 	args := []string{"run", "-d", "--name", name,
-		"-p", fmt.Sprintf("127.0.0.1:%d:%d", port, port),
 		"--label", domainLabel + "=" + spec.Domain,
 		"--label", "middleware.revision=" + spec.Revision}
+	if !spec.Unpublished {
+		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d", port, inside))
+	}
+	if spec.Network != "" {
+		if err := d.ensureNetwork(ctx, spec.Network, siteOf(spec.Domain)); err != nil {
+			return nil, err
+		}
+		args = append(args, "--network", spec.Network, "--network-alias", spec.Service)
+	}
 	if d.House != "" {
 		args = append(args, "--label", HouseLabel+"="+d.House)
 	}
@@ -125,7 +150,7 @@ func (d Docker) Start(ctx context.Context, spec *manifest.Spec, port int, logFil
 	}
 	args = append(args, mounts...)
 	args = append(args, "-w", spec.Cwd)
-	for _, kv := range containerEnv(env, port, spec.Domain, spec.SiteDir, home) {
+	for _, kv := range containerEnv(env, inside, spec.Domain, spec.SiteDir, home) {
 		args = append(args, "-e", kv)
 	}
 	args = append(args, image)

@@ -59,30 +59,32 @@ func TestTheBakeryManifestParsesWithThreeNamesOnThreeServices(t *testing.T) {
 
 func TestServicesAreRefusedWhereTheyCannotWork(t *testing.T) {
 	cases := map[string]string{
-		"run and services": `{"version":2,"run":{"command":["x"]},"services":{"a":{"run":{"command":["x"]},"domains":["a.test"]}}}`,
-		"aliases":          `{"version":2,"aliases":["b.test"],"services":{"a":{"run":{"command":["x"]},"domains":["a.test"]}}}`,
-		"one name twice":   `{"version":2,"services":{"a":{"run":{"command":["x"]},"domains":["a.test"]},"b":{"run":{"command":["y"]},"domains":["A.test"]}}}`,
-		"no run":           `{"version":2,"services":{"a":{"domains":["a.test"]}}}`,
-		"bad name":         `{"version":2,"services":{"Web_1":{"run":{"command":["x"]}}}}`,
-		"worker clash":     `{"version":2,"workers":{"a":{"command":["x"]}},"services":{"a":{"run":{"command":["x"]}}}}`,
-		"internal + names": `{"version":2,"services":{"a":{"run":{"command":["x"]},"domains":["a.test"],"internal":true}}}`,
-		"unknown dep":      `{"version":2,"services":{"a":{"run":{"command":["x"]},"depends_on":["b"]}}}`,
-		"self dep":         `{"version":2,"services":{"a":{"run":{"command":["x"]},"depends_on":["a"]}}}`,
-		"cycle":            `{"version":2,"services":{"a":{"run":{"command":["x"]},"depends_on":["b"]},"b":{"run":{"command":["x"]},"depends_on":["a"]}}}`,
-		"latest":           `{"version":2,"services":{"a":{"run":{"runtime":"docker","docker":{"image":"mariadb:latest"}}}}}`,
-		"no tag":           `{"version":2,"services":{"a":{"run":{"runtime":"docker","docker":{"image":"ghcr.io/acme/db"}}}}}`,
-		"unknown ref":      `{"version":2,"services":{"a":{"run":{"command":["x","$SERVICE_nope_PORT"]}}}}`,
-		"process → moving": `{"version":2,"services":{"a":{"run":{"command":["x"],"env":{"U":"http://127.0.0.1:${SERVICE_b_PORT}"}}},"b":{"run":{"command":["y"]},"domains":["b.test"]}}}`,
-		"prefix wildcard":  `{"version":2,"services":{"a":{"run":{"command":["x"]},"domains":["a.test/api/*"]}}}`,
-		"bad domain":       `{"version":2,"services":{"a":{"run":{"command":["x"]},"domains":["not a name"]}}}`,
-		"bad hold":         `{"version":2,"services":{"a":{"run":{"command":["x"]},"hold":{"enabled":true,"mode":"418"}}}}`,
-		"bad access":       `{"version":2,"services":{"a":{"run":{"command":["x"]},"access":{"allow":["10.0.0/8"]}}}}`,
-		"two allows":       `{"version":2,"access":{"allow":["10.0.0.0/8"]},"services":{"a":{"run":{"command":["x"]},"access":{"allow":["10.1.0.0/16"]}}}}`,
-		"two passwords":    `{"version":2,"access":{"password":"h1"},"services":{"a":{"run":{"command":["x"]},"access":{"password":"h2"}}}}`,
-		"one zone twice":   `{"version":2,"access":{"routes":{"/admin":{"password":"h"}}},"services":{"a":{"run":{"command":["x"]},"access":{"routes":{"/admin":{"password":"h"}}}}}}`,
-		"handover + port":  `{"version":2,"services":{"a":{"run":{"command":["x"],"port":8080},"handover":true}}}`,
-		"port in a run":    `{"version":2,"run":{"command":["x"],"runtime":"docker","docker":{"image":"a:1","port":80}}}`,
-		"health cmd a run": `{"version":2,"run":{"command":["x"],"health":{"command":["true"]}}}`,
+		"run and services":    `{"version":2,"run":{"command":["x"]},"services":{"a":{"run":{"command":["x"]},"domains":["a.test"]}}}`,
+		"aliases":             `{"version":2,"aliases":["b.test"],"services":{"a":{"run":{"command":["x"]},"domains":["a.test"]}}}`,
+		"one name twice":      `{"version":2,"services":{"a":{"run":{"command":["x"]},"domains":["a.test"]},"b":{"run":{"command":["y"]},"domains":["A.test"]}}}`,
+		"no run":              `{"version":2,"services":{"a":{"domains":["a.test"]}}}`,
+		"bad name":            `{"version":2,"services":{"Web_1":{"run":{"command":["x"]}}}}`,
+		"worker clash":        `{"version":2,"workers":{"a":{"command":["x"]}},"services":{"a":{"run":{"command":["x"]}}}}`,
+		"internal + names":    `{"version":2,"services":{"a":{"run":{"command":["x"]},"domains":["a.test"],"internal":true}}}`,
+		"unknown dep":         `{"version":2,"services":{"a":{"run":{"command":["x"]},"depends_on":["b"]}}}`,
+		"self dep":            `{"version":2,"services":{"a":{"run":{"command":["x"]},"depends_on":["a"]}}}`,
+		"cycle":               `{"version":2,"services":{"a":{"run":{"command":["x"]},"depends_on":["b"]},"b":{"run":{"command":["x"]},"depends_on":["a"]}}}`,
+		"latest":              `{"version":2,"services":{"a":{"run":{"runtime":"docker","docker":{"image":"mariadb:latest"}}}}}`,
+		"no tag":              `{"version":2,"services":{"a":{"run":{"runtime":"docker","docker":{"image":"ghcr.io/acme/db"}}}}}`,
+		"unknown ref":         `{"version":2,"services":{"a":{"run":{"command":["x","$SERVICE_nope_PORT"]}}}}`,
+		"process → moving":    `{"version":2,"services":{"a":{"run":{"command":["x"],"env":{"U":"http://127.0.0.1:${SERVICE_b_PORT}"}}},"b":{"run":{"command":["y"]},"domains":["b.test"]}}}`,
+		"prefix wildcard":     `{"version":2,"services":{"a":{"run":{"command":["x"]},"domains":["a.test/api/*"]}}}`,
+		"bad domain":          `{"version":2,"services":{"a":{"run":{"command":["x"]},"domains":["not a name"]}}}`,
+		"bad hold":            `{"version":2,"services":{"a":{"run":{"command":["x"]},"hold":{"enabled":true,"mode":"418"}}}}`,
+		"bad access":          `{"version":2,"services":{"a":{"run":{"command":["x"]},"access":{"allow":["10.0.0/8"]}}}}`,
+		"two allows":          `{"version":2,"access":{"allow":["10.0.0.0/8"]},"services":{"a":{"run":{"command":["x"]},"access":{"allow":["10.1.0.0/16"]}}}}`,
+		"two passwords":       `{"version":2,"access":{"password":"h1"},"services":{"a":{"run":{"command":["x"]},"access":{"password":"h2"}}}}`,
+		"one zone twice":      `{"version":2,"access":{"routes":{"/admin":{"password":"h"}}},"services":{"a":{"run":{"command":["x"]},"access":{"routes":{"/admin":{"password":"h"}}}}}}`,
+		"handover + port":     `{"version":2,"services":{"a":{"run":{"command":["x"],"port":8080},"handover":true}}}`,
+		"port in a run":       `{"version":2,"run":{"command":["x"],"runtime":"docker","docker":{"image":"a:1","port":80}}}`,
+		"container → process": `{"version":2,"services":{"a":{"run":{"runtime":"docker","docker":{"image":"a:1"},"env":{"B":"$SERVICE_b_HOST"}}},"b":{"run":{"command":["y"]},"handover":false}}}`,
+		"path on a hidden db": `{"version":2,"services":{"db":{"run":{"runtime":"docker","docker":{"image":"mariadb:11.4"},"health":{"path":"/"}}}}}`,
+		"health cmd a run":    `{"version":2,"run":{"command":["x"],"health":{"command":["true"]}}}`,
 	}
 	for name, in := range cases {
 		if _, err := Parse([]byte(in)); err == nil {
@@ -94,7 +96,7 @@ func TestServicesAreRefusedWhereTheyCannotWork(t *testing.T) {
 func TestAServiceMayReachAnotherThatDoesNotMove(t *testing.T) {
 	ok := []string{
 		// From a container, by name: the port inside does not move.
-		`{"version":2,"services":{"a":{"run":{"runtime":"docker","docker":{"image":"a:1"},"env":{"B":"$SERVICE_b_HOST:$SERVICE_b_PORT"}}},"b":{"run":{"command":["y"]},"domains":["b.test"]}}}`,
+		`{"version":2,"services":{"a":{"run":{"runtime":"docker","docker":{"image":"a:1"},"env":{"B":"$SERVICE_b_HOST:$SERVICE_b_PORT"}}},"b":{"run":{"runtime":"docker","docker":{"build":"Dockerfile"}},"domains":["b.test"]}}}`,
 		// From a process, a service that restarts in place.
 		`{"version":2,"services":{"a":{"run":{"command":["x","${SERVICE_my_db_PORT}"]}},"my-db":{"run":{"runtime":"docker","docker":{"image":"postgres:16@sha256:abc"}}}}}`,
 		// Several services on one name, by prefix, and the www an apex brings.

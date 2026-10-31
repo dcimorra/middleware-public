@@ -33,8 +33,26 @@ type Spec struct {
 	// site door's socket folder).
 	Mounts []string
 	// Node is the manifest's node: a new one is a new generation.
-	Node     string
-	Revision string
+	Node string
+	// Service is the service's name, for a site with services (Domain
+	// is then "<site>/<service>", as a worker's is).
+	Service string
+	// Network is the site's own docker network, which a service's
+	// container joins with its name as the address the others reach it
+	// by. Empty is docker's default bridge, as a site's run has always
+	// had.
+	Network string
+	// ContainerPort is the port inside the container (docker.port, or
+	// the house's default for a service); 0 is the published port, the
+	// same number inside and out.
+	ContainerPort int
+	// Unpublished keeps the container's port off the machine: only the
+	// site's network reaches it (an internal database).
+	Unpublished bool
+	// Fingerprint is what the files a built image comes from look like
+	// now (docker.watch); a change is a new generation.
+	Fingerprint string
+	Revision    string
 }
 
 // Rehash recomputes the revision after the engine added to the spec.
@@ -47,7 +65,17 @@ func Resolve(domain, siteDir string, m *Manifest) (*Spec, error) {
 	if m.Run == nil {
 		return nil, fmt.Errorf("%s: no run section", domain)
 	}
+	return resolveRun(domain, siteDir, m.Node, m.Run, nil)
+}
+
+// resolveRun is Resolve for one run section, with more variables than
+// $DOMAIN and $SITE_DIR (a service's $SERVICE_<name>_HOST and _PORT).
+func resolveRun(domain, siteDir, node string, run *Run, extra map[string]string) (*Spec, error) {
 	vars := map[string]string{"DOMAIN": domain, "SITE_DIR": siteDir}
+	for k, v := range extra {
+		vars[k] = v
+	}
+	m := &Manifest{Run: run, Node: node}
 	env := map[string]string{}
 	for _, f := range m.Run.EnvFiles {
 		fileEnv, err := readEnvFile(filepath.Join(siteDir, Expand(f, vars)))
@@ -153,6 +181,18 @@ func (s *Spec) hash() string {
 		w(k, s.Env[k])
 	}
 	w(s.Mounts...)
+	// Each only when set, as node: a site's run never has them, and its
+	// revision stays what it was.
+	if s.Network != "" || s.ContainerPort != 0 || s.Unpublished {
+		w("net", s.Network, strconv.Itoa(s.ContainerPort), strconv.FormatBool(s.Unpublished))
+	}
+	if s.Fingerprint != "" {
+		w("files", s.Fingerprint)
+	}
+	if s.Docker != nil && (s.Docker.Port != 0 || len(s.Docker.Watch) > 0) {
+		w("docker", strconv.Itoa(s.Docker.Port))
+		w(s.Docker.Watch...)
+	}
 	if s.Node != "" {
 		// Only when written: every site's revision before the field
 		// existed stays what it was, and nothing restarts on an update.

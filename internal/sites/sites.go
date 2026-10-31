@@ -105,6 +105,8 @@ type Site struct {
 	Managed  bool                    `json:"managed"`
 	Manifest *manifest.Manifest      `json:"manifest,omitempty"`
 	Workers  map[string]WorkerStatus `json:"workers,omitempty"`
+	// Services are a site's services with their state, when it has them.
+	Services map[string]engine.ServiceSnapshot `json:"services,omitempty"`
 }
 
 // WorkerStatus is a worker's state.
@@ -135,7 +137,9 @@ func (m *Manager) lookup(domain string) (engine.Snapshot, bool) {
 	if m.Engine == nil {
 		return engine.Snapshot{}, false
 	}
-	return m.Engine.Lookup(domain)
+	// The site's own snapshot: Lookup is a request's view, which for a
+	// site with services is one service's.
+	return m.Engine.Site(domain)
 }
 
 // List returns every folder under sites/ whose name is a domain: what the
@@ -209,6 +213,7 @@ func (m *Manager) describe(domain string) Site {
 	if s.Error == "" {
 		s.Error = sn.Error
 	}
+	s.Services = sn.Services
 	if len(sn.Workers) > 0 {
 		s.Workers = map[string]WorkerStatus{}
 		for name, w := range sn.Workers {
@@ -424,6 +429,93 @@ func (m *Manager) Restart(ctx context.Context, domain string) error {
 		return errors.New("no engine")
 	}
 	return m.Engine.Restart(ctx, domain)
+}
+
+// RestartService forces a new generation of one of a site's services.
+func (m *Manager) RestartService(ctx context.Context, domain, name string) error {
+	if _, err := m.managedDir(domain); err != nil {
+		return err
+	}
+	if m.Engine == nil {
+		return errors.New("no engine")
+	}
+	return m.Engine.RestartService(ctx, domain, name)
+}
+
+// RouteState is one name of a site and what answers it now.
+type RouteState struct {
+	Host    string `json:"host"`
+	Prefix  string `json:"prefix,omitempty"`
+	Service string `json:"service,omitempty"`
+	Port    int    `json:"port,omitempty"`
+	// State is up, starting, down, stopped, hold or disabled, or why the
+	// name is not served (another site claims it).
+	State string `json:"state"`
+	Error string `json:"error,omitempty"`
+}
+
+// Routes are a site's names as the house routes them now: for a site with
+// services, each host and prefix with its service, port and state; for
+// any other, its names and its one instance.
+func (m *Manager) Routes(domain string) ([]RouteState, error) {
+	s, err := m.Get(domain)
+	if err != nil {
+		return nil, err
+	}
+	if s.Manifest == nil {
+		return []RouteState{}, nil
+	}
+	owner := func(h string) string {
+		if m.Engine == nil {
+			return domain
+		}
+		if o, ok := m.Engine.Owner(h); ok {
+			return o
+		}
+		return ""
+	}
+	state := func(alive, starting bool, stopped, errText string) string {
+		switch {
+		case stopped != "":
+			return stopped
+		case alive:
+			return "up"
+		case starting:
+			return "starting"
+		case errText != "":
+			return "down"
+		}
+		return "starting"
+	}
+	out := []RouteState{}
+	if len(s.Manifest.Services) > 0 {
+		for _, r := range s.Manifest.Routes() {
+			rs := RouteState{Host: r.Host, Prefix: r.Prefix, Service: r.Service}
+			v := s.Services[r.Service]
+			rs.Port, rs.Error = v.Port, v.Error
+			rs.State = state(v.Alive, v.Starting || v.Waiting != "", v.Stopped, v.Error)
+			if s.Mode == manifest.ModeDisabled || s.Mode == manifest.ModeHold {
+				rs.State = string(s.Mode)
+			}
+			if o := owner(r.Host); o != domain && !strings.HasPrefix(r.Host, "www.") {
+				rs.State, rs.Port = "not served: another site claims it too", 0
+			}
+			out = append(out, rs)
+		}
+		return out, nil
+	}
+	for _, h := range s.Manifest.Hosts(domain) {
+		rs := RouteState{Host: h, Port: s.Port, Error: s.Error, State: state(s.Alive, s.Handing, "", s.Error)}
+		switch s.Mode {
+		case manifest.ModeStatic, manifest.ModeUpstream, manifest.ModeDisabled, manifest.ModeHold:
+			rs.State, rs.Port = string(s.Mode), 0
+		}
+		if o := owner(h); o != domain && !strings.HasPrefix(h, "www.") {
+			rs.State, rs.Port = "not served: another site claims it too", 0
+		}
+		out = append(out, rs)
+	}
+	return out, nil
 }
 
 // ArchiveDir is where Delete with archive=true moves folders.
@@ -766,6 +858,9 @@ func (m *Manager) stopAndWait(ctx context.Context, domain, dir string, original 
 	for _, w := range sn.Workers {
 		running = running || w.Alive
 	}
+	for _, v := range sn.Services {
+		running = running || v.Alive
+	}
 	if !running {
 		return nil
 	}
@@ -783,6 +878,9 @@ func (m *Manager) stopAndWait(ctx context.Context, domain, dir string, original 
 		stopped := !ok || !sn.Alive
 		for _, w := range sn.Workers {
 			stopped = stopped && !w.Alive
+		}
+		for _, v := range sn.Services {
+			stopped = stopped && !v.Alive
 		}
 		if stopped {
 			return nil

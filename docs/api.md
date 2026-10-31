@@ -137,6 +137,8 @@ A site object:
 | PATCH | `/sites/{domain}/manifest` | partial, top-level keys merged → `site` |
 | DELETE | `/sites/{domain}` | `?archive=true` moves to `data/archive/` instead of deleting |
 | POST | `/sites/{domain}/validate` | body: a manifest, or nothing for the one on disk → `{ok, error?, problems?, warnings?, routes: [{host, prefix?, service?, conflict?}]}`. Writes nothing. `error` is what the house would refuse it with; `problems`, what would fail once written (a Dockerfile that is not there, a name another site serves: a delegate, a scoped token or a site's own turn are told it is taken, not by whom); `warnings` stop nothing. In the `read` scope and the `view` grant |
+| GET | `/sites/{domain}/routes` | → `[{host, prefix?, service?, port?, state, error?}]`: every name the site answers and what answers it now (`up`, `starting`, `down`, `disabled`, `hold`, or why it is not served) |
+| POST | `/sites/{domain}/services/{name}/restart` | → `{ok}`; a new generation of that service (rebuilt when it has a `build`), the others untouched (409 when it is starting or stopped) |
 | POST | `/sites/{domain}/restart` | → `{ok}` (forces a handover) |
 | POST | `/sites/{domain}/exec` | `{command, timeout?: "60s"}` → `{exit_code, output, truncated?, seconds, timed_out?}`; `sh -c command` where the site runs (its folder, environment and HOME, inside its container if it has one), stdin empty, output capped at 1 MB, a minute by default and 10m at most. Every run is a `site.exec` event with the command |
 | GET | `/sites/{domain}/manifest/history` | → `[{id, at, bytes}]`, newest first; the first is the manifest in force. The engine keeps every valid version it sees, whoever wrote it (50 per site, in `data/history/<domain>/`) |
@@ -148,7 +150,7 @@ A site object:
 | POST | `/sites/{domain}/stop` | → `site` (sets `disabled: true`) |
 | POST | `/sites/{domain}/start` | → `site` (clears `disabled`) |
 | POST | `/sites/{domain}/hold` | `{enabled, title?, message?}` → `site` |
-| GET | `/sites/{domain}/logs` | `?lines=200&worker=name` → `text/plain`; `?follow=1` streams |
+| GET | `/sites/{domain}/logs` | `?lines=200&worker=name` (or `&service=name`, with `&build=1` for its image build) → `text/plain`; `?follow=1` streams |
 | GET | `/sites/{domain}/files` | `?path=/` → `[{name, dir, size, mtime}]` (inside the folder only) |
 | GET | `/sites/{domain}/file` | `?path=…` → raw content |
 | PUT | `/sites/{domain}/file` | `?path=…`, raw body → `{ok}` |

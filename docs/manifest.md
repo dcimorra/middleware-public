@@ -113,6 +113,7 @@ Exactly one of these decides, checked in this order:
 1. `disabled: true` → the "stopped" page. No process runs.
 2. `hold.enabled: true` → the holding page. No process runs.
 3. `run` → the supervised instance. Started, health-checked, handed over.
+   With `services`, each of the site's names is its service's (below).
 4. `upstream` → a process the middleware does not supervise (a fixed port
    someone else owns). Proxied as is.
 5. `static` → files from `static.root` (default `public`, then the folder
@@ -423,6 +424,110 @@ process.
   site's own apex name does: published, certified and sent to the site
   (`"www": false` turns both off). A name the zone already points
   elsewhere is not taken without the operator's yes (api.md, Publishing).
+
+## Services: several processes and several names
+
+A site whose project is more than one process (a mock, a Next.js app, a
+Drupal and its database) declares them in `services` instead of `run`.
+Each service is a run section with the same fields and rules as a site's,
+the names it answers, and the order it starts in:
+
+```json
+{
+  "version": 2,
+  "services": {
+    "mock":   { "run": { "command": ["node", "server.js"], "health": { "path": "/healthz" } },
+                "domains": ["bakery.example"] },
+    "next":   { "run": { "runtime": "docker", "docker": { "build": "deploy/next/Dockerfile", "memory": "768m" },
+                         "command": ["npm", "start"], "env_files": ["deploy/next/.env"], "health": { "path": "/api/health" } },
+                "domains": ["next.bakery.example"] },
+    "drupal": { "run": { "runtime": "docker",
+                         "docker": { "build": "deploy/drupal/Dockerfile", "memory": "1g", "volumes": ["drupal:/var/lib/app"] },
+                         "env": { "DB_HOST": "$SERVICE_db_HOST", "DB_PORT": "$SERVICE_db_PORT" },
+                         "health": { "path": "/user/login", "timeout": "10m" } },
+                "domains": ["drupal.bakery.example"], "depends_on": ["db"] },
+    "db":     { "run": { "runtime": "docker", "docker": { "image": "mariadb:11.4", "port": 3306 },
+                         "env_files": ["deploy/db/.env"], "health": { "command": ["healthcheck.sh", "--connect"] } },
+                "internal": true }
+  }
+}
+```
+
+- `domains` are the names the service answers: `"host"`, or `"host/prefix"`
+  for part of a name (`"shop.example/api"`: the longest prefix wins, by
+  whole segments, and the path reaches the service as it came). They are
+  published, certified and refused when another site claims them exactly
+  as `aliases` are, and an apex brings its `www.`. The site's own name must
+  be one service's. A name in two services is refused; a host the site
+  does not serve, or a path no prefix covers, gets the house's page.
+- `internal: true` (or no `domains`) is a service only the site's other
+  services reach.
+- `depends_on` holds a service's first start until those it names are up
+  and passing their health, for as long as that takes; `site show` says
+  what it waits for.
+- `optional: true` keeps the site counted as up while that service is down.
+- `handover` is `true` for a service with names (two generations for a
+  few seconds, as a site's) and `false` for one without, which is stopped
+  and started again on the same port: a database cannot run twice on one
+  volume. A written `run.port` never hands over.
+
+Each service has its own revision, build, health check, backoff, log
+(`logs/<domain>/<service>.log`) and state file. One that fails to build or
+to get healthy keeps its previous generation serving and backs off; the
+others are not touched, and while a service starts or is down its names
+get the house's page (503 with `Retry-After`), never a raw 502. A change
+to one service's section, its env files or the files its image is built
+from restarts that service only. The site is up when every service that
+is not optional is. Events about a service have `<domain>#<service>` as
+their subject.
+
+**Reaching each other.** A site's containers share a network of their
+own, `mw-<domain>-net`, in which each is reachable by its service's name:
+`drupal` reaches `db:3306`. `$SERVICE_<name>_HOST` and `$SERVICE_<name>_PORT`
+(a dash in the name as an underscore) are expanded in a service's command
+and env: from a container, the service's name and its port inside; from a
+process on the machine, `127.0.0.1` and its port there. A process may only
+name a service that restarts in place (its port stays); a container
+cannot reach a process on the machine. Inside a service's container its
+port is `docker.port` (for an image that listens on its own, mariadb's
+3306) or 8080, and `$PORT` says which.
+
+**What is published.** A service's port goes on the machine's loopback
+only, and only when something on the machine needs it: a service with
+names, one a process service names or depends on. An internal container
+that only containers reach is on the site's network and nowhere else
+(the loopback is every site's). The house cannot dial such a service, so
+its health is `health.command`, run inside it (exit 0 is healthy), or,
+without one, that the container stays up; `health.path` there is refused.
+
+**Images.** An `image` in a service names its version: a tag other than
+`latest`, or a digest. A `build` is made with BuildKit (`docker buildx
+build`) when the machine has it (the house's requirements install it),
+the site's folder as its context, its `.dockerignore` read (BuildKit also
+reads a `<Dockerfile>.dockerignore` next to the Dockerfile); its output
+goes to `logs/<domain>/build-<service>.log` (`site logs <domain> --service
+<name> --build`) and a failure says its last lines. `docker.watch` lists
+the folders whose files are part of the image's revision, so changing them
+rebuilds that service and no other; empty is the Dockerfile's folder, or
+the Dockerfile alone when it sits at the root. An image built for another
+architecture is refused before it runs, with what to do instead.
+
+**Volumes.** A named volume is the site's, whichever of its services
+mounts it: `"drupal:/var/lib/app"` is `mw-<domain>-drupal` (dots as
+dashes), the same name it had as a worker's or a site's, so nothing is
+renamed or migrated.
+
+**Moving a site from `run` to `services`.** Check the new manifest first
+(`middleware site validate <domain> --file site.new.json`), then replace
+`run` and `aliases` with `services`. The run the site had keeps answering
+its names until every service with names that is not optional is up, and
+only then is it stopped. Going back is restoring the previous manifest
+from the site's history.
+
+`services` and `run`, `upstream`, `static` or `aliases` are exclusive; a
+site's `workers` stay, with names that are not its services'. A delegate
+cannot change a service's `domains`, or its runtime, docker section and
+env files, as for a site's run.
 
 ## Redirects
 

@@ -6,7 +6,6 @@ package engine
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,10 +21,6 @@ import (
 	"github.com/dcimorra/the-middleware/internal/ports"
 	"github.com/dcimorra/the-middleware/internal/runtime"
 )
-
-// errServicesNotRun refuses a manifest with services until the engine
-// runs them.
-var errServicesNotRun = errors.New("services: this version of the house checks them (middleware site validate) but does not run them yet; the previous manifest stays in force")
 
 // Options configure an Engine.
 type Options struct {
@@ -76,6 +71,10 @@ type Site struct {
 	Spec     *manifest.Spec
 	Instance runtime.Instance
 	Workers  map[string]*worker
+	// Services are a site's units when its manifest has services
+	// (services.go). Instance is then the generation of the run it had
+	// before, kept answering until every service with names is up.
+	Services map[string]*service
 
 	health     healthState
 	needsSince time.Time // first start waiting for its needs since
@@ -100,6 +99,10 @@ type Snapshot struct {
 	Handing  bool
 	Error    string
 	Workers  map[string]WorkerSnapshot
+	// Service is the service a request's snapshot is for (LookupPath);
+	// Services, every service of a site that has them.
+	Service  string
+	Services map[string]ServiceSnapshot
 	Health   Health
 	Checks   []Check
 	// Failures is how many starts in a row have failed.
@@ -164,8 +167,16 @@ func (e *Engine) Run(ctx context.Context) {
 	}
 }
 
-// Lookup returns the snapshot for a domain or one of its aliases.
+// Lookup returns the snapshot for a domain or one of its aliases: for a
+// site with services, the one that answers the name's root.
 func (e *Engine) Lookup(domain string) (Snapshot, bool) {
+	return e.LookupPath(domain, "/")
+}
+
+// LookupPath is Lookup for a request's host and path, which together say
+// which of a site's services answers it. A name of a site with services
+// that no service answers (a path no prefix covers) answers nothing.
+func (e *Engine) LookupPath(domain, urlPath string) (Snapshot, bool) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	s, ok := e.sites[domain]
@@ -177,7 +188,35 @@ func (e *Engine) Lookup(domain string) (Snapshot, bool) {
 	if !ok {
 		return Snapshot{}, false
 	}
+	sn := e.snapshot(s)
+	if s.Mode == manifest.ModeServices && s.Manifest != nil && len(s.Manifest.Services) > 0 {
+		return e.serviceView(s, sn, domain, urlPath)
+	}
+	return sn, true
+}
+
+// Site is a site's own snapshot, by its folder's name: for a site with
+// services, the whole site and each of them, never one service's view.
+func (e *Engine) Site(domain string) (Snapshot, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	s, ok := e.sites[domain]
+	if !ok {
+		return Snapshot{}, false
+	}
 	return e.snapshot(s), true
+}
+
+// Owner is the site a name is served by: its folder, or the site that
+// claims it as an alias or a service's domain.
+func (e *Engine) Owner(host string) (string, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if _, ok := e.sites[host]; ok {
+		return host, true
+	}
+	owner, ok := e.aliases[host]
+	return owner, ok
 }
 
 // Sites returns every snapshot, sorted by domain.
@@ -198,6 +237,13 @@ func (e *Engine) Sites() []Snapshot {
 func (e *Engine) Restart(ctx context.Context, domain string) error {
 	e.mu.Lock()
 	s, ok := e.sites[domain]
+	if ok && s.Mode == manifest.ModeServices && s.Manifest != nil && len(s.Manifest.Services) > 0 {
+		defer e.mu.Unlock()
+		if e.closing {
+			return fmt.Errorf("%s: the supervisor is shutting down", domain)
+		}
+		return e.restartServicesLocked(s)
+	}
 	if !ok || s.Spec == nil {
 		e.mu.Unlock()
 		return fmt.Errorf("%s: not a running site", domain)
@@ -244,6 +290,16 @@ func (e *Engine) snapshot(s *Site) Snapshot {
 			sn.Workers[name] = WorkerSnapshot{Port: w.port, Alive: w.inst != nil, Error: w.lastErr}
 		}
 	}
+	if sn.Services = e.serviceSnapshotsLocked(s); sn.Services != nil && s.Mode == manifest.ModeServices {
+		sn.Port, sn.Revision, sn.Alive, sn.Handing, sn.Checks = 0, "", false, false, nil
+		if s.Err == "" {
+			sn.Error = ""
+		}
+		siteServicesSummaryLocked(&sn)
+		if s.Err != "" {
+			sn.Error = s.Err
+		}
+	}
 	return sn
 }
 
@@ -286,6 +342,7 @@ func (e *Engine) tick(ctx context.Context) {
 	for domain, s := range e.sites {
 		if seen[domain] {
 			e.healthDue(ctx, s)
+			e.servicesHealthDue(ctx, s)
 		}
 	}
 	e.rebuildAliases()
@@ -311,6 +368,7 @@ func (e *Engine) tick(ctx context.Context) {
 				e.retireWorkerLocked(ctx, domain, w, 8*time.Second)
 			}
 		}
+		e.stopServicesLocked(ctx, s)
 		e.clearState(domain)
 		e.emit("site.removed", domain, "", "folder removed, instance stopped", nil)
 	}
@@ -319,13 +377,6 @@ func (e *Engine) tick(ctx context.Context) {
 
 func (e *Engine) reconcile(ctx context.Context, domain, dir string) {
 	m, err := manifest.Load(dir)
-	if err == nil && m.Mode() == manifest.ModeServices {
-		// The schema is read and checked (site validate) a step before
-		// the engine runs it: served by the run it had until then, a
-		// site that writes services keeps its previous manifest in force
-		// instead of being served as a folder of files.
-		err = errServicesNotRun
-	}
 	e.mu.Lock()
 	s, ok := e.sites[domain]
 	if !ok {
@@ -353,6 +404,17 @@ func (e *Engine) reconcile(ctx context.Context, domain, dir string) {
 	e.mu.Unlock()
 
 	e.reconcileWorkers(ctx, s, m)
+
+	if len(m.Services) > 0 {
+		e.reconcileServices(ctx, s, m)
+		e.retireLegacy(ctx, s, m)
+		return
+	}
+	e.mu.Lock()
+	if len(s.Services) > 0 {
+		e.stopServicesLocked(ctx, s)
+	}
+	e.mu.Unlock()
 
 	if s.Mode != manifest.ModeRun {
 		e.mu.Lock()
@@ -629,6 +691,25 @@ func (e *Engine) adoptAll(ctx context.Context) {
 		if fresh := inst.State(); fresh.ContainerID != st.ContainerID || fresh.StartTicks != st.StartTicks || fresh.BootID != st.BootID {
 			e.saveState(fresh)
 		}
+		if site, name, ok := strings.Cut(st.Domain, "/"); ok {
+			if m, err := manifest.Load(filepath.Join(e.opts.SitesDir, site)); err == nil && m.Services[name] != nil {
+				// A service is checked as its start was: one only on the
+				// site's network has no port here to dial.
+				spec, _ := manifest.ServiceSpec(site, filepath.Join(e.opts.SitesDir, site), name, m, func(string, bool) (string, int, bool) { return "", 0, true })
+				if spec != nil && !spec.Unpublished && len(spec.Health.Command) == 0 {
+					if err := runtime.WaitReady(ctx, inst, manifest.Health{}, 3*time.Second); err != nil {
+						_ = inst.Stop(ctx, 5*time.Second)
+						e.clearState(st.Domain)
+						e.emitService("instance.stopped", site, name, "warn", name+": still running from a previous supervisor but not listening; stopped", map[string]any{"pid": st.PID, "port": st.Port})
+						continue
+					}
+				}
+				e.opts.Ports.Reserve(st.Port, st.Domain)
+				e.adoptService(st, inst, m.Services[name].HandsOver())
+				e.emitService("instance.adopted", site, name, "", name+": still running from a previous supervisor", map[string]any{"pid": st.PID, "port": st.Port, "revision": st.Revision})
+				continue
+			}
+		}
 		if strings.Contains(st.Domain, "/") {
 			// A worker need not listen on anything (a queue consumer, a
 			// watcher), so it is not dialled: the runtime has already
@@ -749,6 +830,15 @@ func (e *Engine) rebuildAliases() {
 		for _, a := range s.Manifest.Aliases {
 			claims[a] = append(claims[a], domain)
 		}
+		// A service's names are claimed as aliases are, the site's own
+		// name excepted; a host split by prefixes is claimed once.
+		mine := map[string]bool{domain: true}
+		for _, r := range s.Manifest.Routes() {
+			if host := r.Host; !mine[host] && declaredHost(s.Manifest, host) {
+				mine[host] = true
+				claims[host] = append(claims[host], domain)
+			}
+		}
 	}
 	next := map[string]string{}
 	for alias, owners := range claims {
@@ -778,6 +868,51 @@ func (e *Engine) rebuildAliases() {
 	e.aliases = next
 }
 
+// declaredHost says host is written in one of m's services' domains, not
+// only the www an apex brings, which the proxy sends on to the apex.
+func declaredHost(m *manifest.Manifest, host string) bool {
+	for _, sv := range m.Services {
+		for _, d := range sv.Domains {
+			if h, _ := manifest.SplitDomain(d); h == host {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// retireLegacy stops the run a site had before it wrote services, once
+// every service that answers a name and is not optional is up: until
+// then the old generation answers what the new ones cannot yet.
+func (e *Engine) retireLegacy(ctx context.Context, s *Site, m *manifest.Manifest) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if s.Instance == nil || s.handing {
+		return
+	}
+	if serviceStopped(m, &manifest.Service{}) == "" {
+		for _, name := range m.ServiceNames() {
+			sv := m.Services[name]
+			if len(sv.Domains) == 0 || sv.Optional || serviceStopped(m, sv) != "" {
+				continue
+			}
+			if svc := s.Services[name]; svc == nil || svc.inst == nil {
+				return
+			}
+		}
+	}
+	inst, spec := s.Instance, s.Spec
+	s.Instance, s.Spec = nil, nil
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		_ = inst.Stop(context.WithoutCancel(ctx), drainOf(spec))
+		e.opts.Ports.Release(inst.Port())
+		e.clearState(s.Domain)
+		e.emit("instance.retired", s.Domain, "", "the site's services answer its names now; the run it had before was stopped", nil)
+	}()
+}
+
 // reapContainers removes this house's containers that no state file
 // claimed, once, after adoption: what a supervisor that died mid-start left.
 func (e *Engine) reapContainers(ctx context.Context) {
@@ -798,6 +933,13 @@ func (e *Engine) reapContainers(ctx context.Context) {
 		for _, w := range s.Workers {
 			if w.inst != nil {
 				if c := w.inst.State().Container; c != "" {
+					keep[c] = true
+				}
+			}
+		}
+		for _, svc := range s.Services {
+			if svc.inst != nil {
+				if c := svc.inst.State().Container; c != "" {
 					keep[c] = true
 				}
 			}

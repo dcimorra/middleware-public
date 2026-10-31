@@ -315,7 +315,7 @@ func (r *Recorder) Mutations() []string {
 }
 
 func isCheck(call string) bool {
-	for _, p := range []string{"run getent ", "run id ", "run systemctl is-", "run systemctl show", "run sysctl -n", "run docker version", "run wg ", "sudo sysctl -n"} {
+	for _, p := range []string{"run getent ", "run id ", "run systemctl is-", "run systemctl show", "run sysctl -n", "run docker version", "run docker buildx version", "run wg ", "sudo sysctl -n"} {
 		if strings.HasPrefix(call, p) {
 			return true
 		}

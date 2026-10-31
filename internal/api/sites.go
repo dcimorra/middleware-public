@@ -36,6 +36,8 @@ func (s *Server) registerSites() {
 	s.Handle("GET", p+"/{domain}/manifest/history/{id}", "One kept manifest as it was written", s.historyGet)
 	s.Handle("POST", p+"/{domain}/manifest/history/{id}/restore", "Write a kept manifest back", s.historyRestore)
 	s.Handle("POST", p+"/{domain}/workers/{name}/restart", "Restart one worker now", s.workerRestart)
+	s.Handle("POST", p+"/{domain}/services/{name}/restart", "A new generation of one service now (a rebuild for a built image); the others are not touched", s.serviceRestart)
+	s.Handle("GET", p+"/{domain}/routes", "Every name of the site: host and prefix → service → port → state", s.sitesRoutes)
 	s.Handle("POST", p+"/{domain}/workers/{name}/stop", "Stop one worker (writes workers.<name>.disabled)", s.workerStop)
 	s.Handle("POST", p+"/{domain}/workers/{name}/start", "Start one worker (clears workers.<name>.disabled)", s.workerStart)
 	s.Handle("POST", p+"/{domain}/stop", "Stop the site (disabled: true)", s.sitesStop)
@@ -120,6 +122,33 @@ func (s *Server) sitesGet(w http.ResponseWriter, r *http.Request) (any, error) {
 		return nil, err
 	}
 	return m.Get(domain)
+}
+
+func (s *Server) serviceRestart(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := s.sitesManager()
+	if err != nil {
+		return nil, err
+	}
+	domain, err := domainOf(r)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.RestartService(r.Context(), domain, r.PathValue("name")); err != nil {
+		return nil, Errorf(http.StatusConflict, "%v", err)
+	}
+	return OK, nil
+}
+
+func (s *Server) sitesRoutes(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := s.sitesManager()
+	if err != nil {
+		return nil, err
+	}
+	domain, err := domainOf(r)
+	if err != nil {
+		return nil, err
+	}
+	return m.Routes(domain)
 }
 
 func (s *Server) sitesValidate(w http.ResponseWriter, r *http.Request) (any, error) {
@@ -502,6 +531,12 @@ func (s *Server) sitesLogs(w http.ResponseWriter, r *http.Request) (any, error) 
 		lines = n
 	}
 	worker := q.Get("worker")
+	if svc := q.Get("service"); svc != "" {
+		worker = "service:" + svc
+		if isTrue(q.Get("build")) {
+			worker = "build:" + svc
+		}
+	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if !isTrue(q.Get("follow")) {

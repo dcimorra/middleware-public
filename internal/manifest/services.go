@@ -306,6 +306,14 @@ func (m *Manifest) validServices() error {
 			if runtimeOf(sv.Run.Runtime) == "process" && m.Services[target].HandsOver() {
 				return fmt.Errorf("%s.run: names services.%s, which hands over to a new port every generation; reach it from a container, or give it handover: false", field, target)
 			}
+			// A container sees its own loopback, not the machine's, and a
+			// process listens on the machine's.
+			if runtimeOf(sv.Run.Runtime) == "docker" && runtimeOf(m.Services[target].Run.Runtime) == "process" {
+				return fmt.Errorf("%s.run: names services.%s, a process on the machine, which a container cannot reach; run it in a container too", field, target)
+			}
+		}
+		if !m.Published(name) && sv.Run.Health != nil && sv.Run.Health.Path != "" {
+			return fmt.Errorf("%s.run.health.path: the service is only on the site's network, out of the house's reach; check it with health.command, run inside it", field)
 		}
 	}
 	if cycle := m.dependsCycle(); cycle != "" {

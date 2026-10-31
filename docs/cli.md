@@ -46,12 +46,13 @@ in the API ([api.md](api.md)) and the panel.
 | command | what |
 | --- | --- |
 | `site list` | every folder under `sites/`, managed or not, with mode, port and state |
-| `site show <domain>` | the site object: manifest, instance, workers |
+| `site show <domain\|name> [--service s]` | the site object: manifest, instance, workers, and its services with their names, port, revision, state and error; a name a site serves shows that site (and that service) |
+| `site routes <domain>` | every name the site answers: host (and prefix) → service → port → state |
 | `site add <domain> [--template static\|node\|go\|docker] [--manifest file.json\|-]` | a folder with a `site.json` |
 | `site start <domain>` / `site stop <domain>` | clear or set `disabled` in the manifest |
-| `site restart <domain>` / `site restart --all` | force a handover; `--all` after an upgrade, see [upgrade.md](upgrade.md) |
+| `site restart <domain> [--service s]` / `site restart --all` | force a handover (of one service with `--service`, the others untouched); `--all` after an upgrade, see [upgrade.md](upgrade.md) |
 | `site hold <domain> [--title t] [--message m]` / `site unhold <domain>` | the holding page instead of the process |
-| `site logs <domain> [-f] [--lines 200] [--worker name]` | the instance's output |
+| `site logs <domain> [-f] [--lines 200] [--worker name \| --service name [--build]]` | the instance's output, a worker's, a service's, or a service's image build |
 | `site deploy <domain>` | run `deploy.github.build` and write the pointer, [deploy.md](deploy.md); through the github module's runner when it is enabled |
 | `site validate <domain> [--file site.json\|-]` | check a manifest without writing or deploying it: what the house would refuse, the names it would answer and whether another site has them, Dockerfiles, build contexts and folders that are not there. Exits 1 when it would not work. A site's own conversation may run it for its site |
 | `site rm <domain> [--archive]` | remove, or move to `data/archive/` |
