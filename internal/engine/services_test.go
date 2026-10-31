@@ -255,3 +255,25 @@ func TestServicesAreReAdoptedByANewEngine(t *testing.T) {
 		t.Error("the names were not routed to the adopted services")
 	}
 }
+
+// A one-off command in a service runs in what the service runs: the
+// running generation's spec, with the other services' addresses in it.
+func TestAServicesSpecForACommandIsTheRunningGenerations(t *testing.T) {
+	e, sites := newTestEngine(t)
+	writeServices(t, sites, "bakery.test", "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	web := waitPath(t, e, "bakery.test", func(sn Snapshot) bool { return sn.Alive })
+	spec, err := e.ServiceSpec("bakery.test", "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	site, _ := e.Site("bakery.test")
+	if spec.Service != "web" || spec.Revision != web.Revision || spec.Env["DB"] != "127.0.0.1:"+strconv.Itoa(site.Services["db"].Port) {
+		t.Fatalf("spec %+v, db on %d", spec, site.Services["db"].Port)
+	}
+	if _, err := e.ServiceSpec("bakery.test", "nope"); err == nil {
+		t.Error("a service the site does not have")
+	}
+}

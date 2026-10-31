@@ -35,6 +35,15 @@ var scopeRoutes = map[string][]string{
 	"deploy": {
 		"POST /api/v1/sites/{domain}/deploy",
 	},
+	// exec is a one-off command where the site runs, inside its container
+	// or a service's: what a site's turn needs for a docker site, whose
+	// jail has no docker socket and must never have one (the socket is
+	// root on the machine). The house runs it with the container's own
+	// limits, as `middleware exec` would; it is no wider than deploy,
+	// which already runs the site's code there.
+	"exec": {
+		"POST /api/v1/sites/{domain}/exec",
+	},
 	// tasks is a site's own scheduled work: the tasks whose site is that
 	// one, and nothing under /tasks, which is every task of the house. The
 	// routes check the task is the site's; the scope only lets the caller
@@ -76,7 +85,7 @@ var scopeRoutes = map[string][]string{
 // Scopes is the closed list, for the panel and for the message that
 // refuses a scope outside it. import is left out: it is made for one
 // site by POST /relocate/import-token, never picked from a list.
-func Scopes() []string { return []string{"read", "restart", "deploy", "tasks"} }
+func Scopes() []string { return []string{"read", "restart", "deploy", "exec", "tasks"} }
 
 // TurnScopes are what a site's agent turn opens when it calls the house
 // over the socket (the middleware CLI from one of its Bash calls): what a
@@ -88,7 +97,7 @@ func Scopes() []string { return []string{"read", "restart", "deploy", "tasks"} }
 // runs in the folder the agent already writes and deploys. The routes
 // keep it to tasks that run there.
 func TurnScopes(site string) []string {
-	return []string{"read:" + site, "restart:" + site, "deploy:" + site, "tasks:" + site}
+	return []string{"read:" + site, "restart:" + site, "deploy:" + site, "exec:" + site, "tasks:" + site}
 }
 
 // ErrBadScope is a scope outside the list.

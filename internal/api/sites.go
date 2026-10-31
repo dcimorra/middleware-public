@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dcimorra/the-middleware/internal/archive"
@@ -370,24 +371,99 @@ func (s *Server) sitesExec(w http.ResponseWriter, r *http.Request) (any, error) 
 		return nil, err
 	}
 	var body struct {
-		Command string `json:"command"`
-		Timeout string `json:"timeout"`
+		Command string   `json:"command"`
+		Args    []string `json:"args"`
+		Service string   `json:"service"`
+		Stream  bool     `json:"stream"`
+		Timeout string   `json:"timeout"`
 	}
 	if err := ReadJSON(r, &body); err != nil {
 		return nil, err
 	}
 	// A minute by default and ten at most: this answers within one
 	// request, and anything longer belongs in a task or a deploy, which
-	// do not hang off a browser tab.
-	timeout := time.Minute
+	// do not hang off a browser tab. A stream is a terminal's (`middleware
+	// exec` from a site's turn): an install there takes what it takes, up
+	// to an hour.
+	timeout, most := time.Minute, 10*time.Minute
+	if body.Stream {
+		timeout, most = 30*time.Minute, time.Hour
+	}
 	if body.Timeout != "" {
 		d, err := time.ParseDuration(body.Timeout)
-		if err != nil || d <= 0 || d > 10*time.Minute {
-			return nil, Errorf(http.StatusBadRequest, "timeout: %q is not a duration up to 10m", body.Timeout)
+		if err != nil || d <= 0 || d > most {
+			return nil, Errorf(http.StatusBadRequest, "timeout: %q is not a duration up to %s", body.Timeout, most)
 		}
 		timeout = d
 	}
-	return m.Exec(r.Context(), domain, body.Command, timeout)
+	if (body.Command == "") == (len(body.Args) == 0) {
+		return nil, Errorf(http.StatusBadRequest, "exec: send command (run by sh) or args (run as they are), one of them")
+	}
+	if c := auth.FromContext(r.Context()); !body.Stream && (c.Turn != "" || len(c.Scopes) > 0) {
+		return nil, Errorf(http.StatusForbidden, "exec: a turn or a service door streams (stream: true), into a container only")
+	}
+	if !body.Stream {
+		if len(body.Args) > 0 {
+			return nil, Errorf(http.StatusBadRequest, "exec: args go with stream")
+		}
+		return m.Exec(r.Context(), domain, body.Service, body.Command, timeout)
+	}
+	argv := body.Args
+	if body.Command != "" {
+		argv = []string{"sh", "-c", body.Command}
+	}
+	// The exit code goes in a trailer: it is known only once the output,
+	// already sent, has ended.
+	out := &streamOut{w: w}
+	c := auth.FromContext(r.Context())
+	code, timedOut, err := m.Run(r.Context(), domain, body.Service, argv, timeout, out, c.Turn != "" || len(c.Scopes) > 0)
+	if err != nil && !out.started {
+		return nil, err
+	}
+	out.start()
+	w.Header().Set(ExitCodeTrailer, strconv.Itoa(code))
+	if timedOut {
+		w.Header().Set(ExecErrorTrailer, "timed out after "+timeout.String())
+	} else if err != nil {
+		w.Header().Set(ExecErrorTrailer, err.Error())
+	}
+	return Handled, nil
+}
+
+// The trailers a streamed exec ends with.
+const (
+	ExitCodeTrailer  = "X-Exit-Code"
+	ExecErrorTrailer = "X-Exec-Error"
+)
+
+// streamOut sends a command's output as it comes, the headers on its
+// first byte, so an error before the command ran is still a JSON error.
+type streamOut struct {
+	mu      sync.Mutex
+	w       http.ResponseWriter
+	started bool
+}
+
+func (o *streamOut) start() {
+	if o.started {
+		return
+	}
+	o.started = true
+	o.w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	o.w.Header().Set("Trailer", ExitCodeTrailer+", "+ExecErrorTrailer)
+	o.w.Header().Set("X-Content-Type-Options", "nosniff")
+	o.w.WriteHeader(http.StatusOK)
+}
+
+func (o *streamOut) Write(p []byte) (int, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.start()
+	n, err := o.w.Write(p)
+	if f, ok := o.w.(http.Flusher); ok {
+		f.Flush()
+	}
+	return n, err
 }
 
 func (s *Server) historyList(w http.ResponseWriter, r *http.Request) (any, error) {
@@ -699,7 +775,7 @@ func (s *Server) sitesEnv(w http.ResponseWriter, r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	env, err := m.ResolvedEnv(domain)
+	env, err := m.ResolvedEnv(domain, r.URL.Query().Get("service"))
 	if err != nil {
 		return nil, err
 	}

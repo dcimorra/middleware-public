@@ -214,7 +214,8 @@ inside. `user` empty is right for the daemon: the supervisor's uid on a
 rootful daemon, none on a rootless one (where root inside is the supervisor
 outside). Containers carry the label `middleware.house`; leftovers no site
 claims are removed when the engine starts. `middleware exec <domain> -- …`
-runs a one-off command inside the site's image with the same mounts.
+runs a one-off command inside the site's image with the same mounts;
+`--service <name>` in a service's, on the site's network.
 
 Taking a site out of its container is `run.runtime: "process"` (the site's
 page has a button for it, and one to go back): the same command in the same

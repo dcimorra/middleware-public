@@ -13,7 +13,7 @@ domain.
   already owns the files. The CLI uses it. One exception: a process started
   by a site conversation's agent turn (one of its parents is the turn) is
   that site's, with the routes a token scoped `read`, `restart`,
-  `deploy` and `tasks` for it opens, and `GET /events?subject=<its site>`;
+  `deploy`, `exec` and `tasks` for it opens, and `GET /events?subject=<its site>`;
   anything else is a 403 and an `api.turn_refused` event. `/auth/me` says
   `turn`.
 
@@ -41,7 +41,8 @@ subdomain sends the panel's cookie.
 **Service doors.** A token created with `scopes` opens only the routes those
 scopes list, and with `:site` only for that site: `read` (the site list, one
 site, its logs, the events), `restart` (a site's handover and a worker's
-restart), `deploy` (a site's deploy), `tasks` (a site's own tasks, the six
+restart), `deploy` (a site's deploy), `exec` (a one-off command streamed
+into the site's container or a service's, never on the machine), `tasks` (a site's own tasks, the six
 `/sites/{domain}/tasks` routes below; never `/tasks`). Anything else answers
 403 and names the scopes. For a program that acts on the house from outside, an app that builds
 sites and restarts them, it is the narrowest door that works. A token
@@ -140,7 +141,7 @@ A site object:
 | GET | `/sites/{domain}/routes` | → `[{host, prefix?, service?, port?, state, error?}]`: every name the site answers and what answers it now (`up`, `starting`, `down`, `disabled`, `hold`, or why it is not served) |
 | POST | `/sites/{domain}/services/{name}/restart` | → `{ok}`; a new generation of that service (rebuilt when it has a `build`), the others untouched (409 when it is starting or stopped) |
 | POST | `/sites/{domain}/restart` | → `{ok}` (forces a handover) |
-| POST | `/sites/{domain}/exec` | `{command, timeout?: "60s"}` → `{exit_code, output, truncated?, seconds, timed_out?}`; `sh -c command` where the site runs (its folder, environment and HOME, inside its container if it has one), stdin empty, output capped at 1 MB, a minute by default and 10m at most. Every run is a `site.exec` event with the command |
+| POST | `/sites/{domain}/exec` | `{command, service?, timeout?: "60s"}` → `{exit_code, output, truncated?, seconds, timed_out?}`; `sh -c command` where the site runs (its folder, environment and HOME, inside its container if it has one, or in a service's: its running image, on the site's network), stdin empty, output capped at 1 MB, a minute by default and 10m at most. With `stream: true` (and `command`, or `args` run as they are) the output is sent as it comes, as `text/plain`, and the trailers `X-Exit-Code` and, when it did not run to its end, `X-Exec-Error` close it; 30m by default and an hour at most. A site's turn and a token with `exec:<domain>` stream only, and only into a container: on the machine the command would run as the supervisor, outside the turn's jail. Every run is a `site.exec` event with the command, its subject `<domain>#<service>` for a service |
 | GET | `/sites/{domain}/manifest/history` | → `[{id, at, bytes}]`, newest first; the first is the manifest in force. The engine keeps every valid version it sees, whoever wrote it (50 per site, in `data/history/<domain>/`) |
 | GET | `/sites/{domain}/manifest/history/{id}` | the version as it was written |
 | POST | `/sites/{domain}/manifest/history/{id}/restore` | → `site`; written back through the same validation as a PUT (400 when it no longer validates), and kept as the newest version |
@@ -160,7 +161,7 @@ A site object:
 | GET | `/sites/{domain}/specs` | the project's OpenSpec folder → `{enabled, initialized, changes: [{id, title, why, done, total, files, updated}], archived: [{id, date, path}], specs: [{path, capability, title, requirements}]}` |
 | POST | `/sites/{domain}/specs/init` | `openspec init` in the folder (409 with the module off; refused for a site that serves its whole folder) → `{ok, output}` |
 | POST | `/sites/{domain}/deploy` | → `{ok, build}` (runs `deploy.github.build`, writes the pointer); `{ok, via: "github"}` when the github module is enabled and the manifest has `deploy.github`: the module's runner fetches the repository first and answers at once, progress on `/events/stream` as `deploy.*` |
-| GET | `/sites/{domain}/env` | → `{resolved: {…}}` what the instance was born with (secrets masked) |
+| GET | `/sites/{domain}/env` | `?service=name` for one service's → `{resolved: {…}}` what the instance was born with (secrets masked) |
 | POST | `/sites/{domain}/rename` | `{to, publish?}` → site; the folder, its HOME, logs, conversations and cost move with it; published names are taken down and the new ones published on the same door. A project (no dot) is given a domain this way (`publish: true` publishes it on the door for new sites); a site becomes a project only when nothing in it answers a hostname (no `run`, `upstream`, `static` or `aliases`) |
 | GET | `/sites/{domain}/download.zip` | the folder as a streamed zip without what an install or a build gives back (`node_modules`, builds, caches); `?all=1` for everything |
 | GET | `/sites/{domain}/shot.png` | the site's picture, taken through a door that skips its password; 404 until there is one. Asking keeps pictures renewing for an hour |

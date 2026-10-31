@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
@@ -125,5 +126,26 @@ func TestAnImageForAnotherMachineIsRefusedBeforeItRuns(t *testing.T) {
 	}
 	if len(callsOf(t, calls, "run ")) != 0 {
 		t.Error("it ran anyway")
+	}
+}
+
+// A command run in a service's container is on the site's network, so a
+// migration reaches "db" by name as the service does.
+func TestACommandInAServiceJoinsTheSitesNetwork(t *testing.T) {
+	bin, calls := fakeServicesDocker(t, goruntime.GOARCH)
+	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	dir := t.TempDir()
+	spec := &manifest.Spec{Domain: "bakery.test/drupal", Service: "drupal", SiteDir: dir, Cwd: dir, Runtime: "docker",
+		Docker: &manifest.Docker{Image: "drupal:11.1"}, Network: manifest.DockerNetwork("bakery.test"), Env: map[string]string{}}
+	code, err := Exec(context.Background(), spec, filepath.Join(dir, "home"), ExecOptions{Args: []string{"drush", "updb"}, Stdout: io.Discard, Stderr: io.Discard})
+	if err != nil || code != 0 {
+		t.Fatalf("exec: %d %v", code, err)
+	}
+	run := callsOf(t, calls, "run")
+	if len(run) != 1 || !strings.Contains(run[0], "--network mw-bakery-test-net") || !strings.HasSuffix(run[0], "drupal:11.1 drush updb") {
+		t.Fatalf("run %q", run)
+	}
+	if len(callsOf(t, calls, "network")) == 0 {
+		t.Error("the network was not made sure of first")
 	}
 }

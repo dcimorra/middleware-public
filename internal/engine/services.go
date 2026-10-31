@@ -719,3 +719,27 @@ func probeInside(ctx context.Context, inst runtime.Instance, spec *manifest.Spec
 	c.Millis = time.Since(start).Milliseconds()
 	return c
 }
+
+// ServiceSpec is what one of a site's services runs now: the running
+// generation's spec, or, for one that is not running, the spec it would
+// start with. A one-off command (`middleware exec --service`) runs in
+// it, so it sees the image, env and network the service has.
+func (e *Engine) ServiceSpec(domain, name string) (*manifest.Spec, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	s, ok := e.sites[domain]
+	if !ok || s.Manifest == nil {
+		return nil, fmt.Errorf("%s: no such site", domain)
+	}
+	if _, ok := s.Manifest.Services[name]; !ok {
+		return nil, fmt.Errorf("%s has no service %q", domain, name)
+	}
+	if svc := s.Services[name]; svc != nil && svc.spec != nil && svc.inst != nil {
+		cp := *svc.spec
+		return &cp, nil
+	}
+	if s.Services == nil {
+		s.Services = map[string]*service{}
+	}
+	return manifest.ServiceSpec(domain, s.Dir, name, s.Manifest, e.serviceAddrLocked(s, s.Manifest))
+}

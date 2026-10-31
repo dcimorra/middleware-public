@@ -1,6 +1,7 @@
 package sites
 
 import (
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -30,8 +31,10 @@ func IsSecretKey(k string) bool {
 // ResolvedEnv returns the environment the instance is born with, resolved
 // the way the engine resolves it (env_file, env, env_from_file, the
 // variables the runtime adds), with secrets masked. A site without a run
-// section has no environment and gets an empty map.
-func (m *Manager) ResolvedEnv(domain string) (map[string]string, error) {
+// section has no environment and gets an empty map. For a site with
+// services, service names which one's (empty is the one that answers the
+// site's name).
+func (m *Manager) ResolvedEnv(domain string, service ...string) (map[string]string, error) {
 	dir, err := m.managedDir(domain)
 	if err != nil {
 		return nil, err
@@ -40,16 +43,38 @@ func (m *Manager) ResolvedEnv(domain string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if mf.Run == nil {
+	name := ""
+	if len(service) > 0 {
+		name = service[0]
+	}
+	if mf.Run == nil && len(mf.Services) == 0 {
+		if name != "" {
+			return nil, fmt.Errorf("%w: %s has no services", ErrNotFound, domain)
+		}
 		return map[string]string{}, nil
 	}
-	spec, err := manifest.Resolve(domain, dir, mf)
-	if err != nil {
-		return nil, err
-	}
+	var spec *manifest.Spec
 	port := 0
-	if sn, ok := m.lookup(domain); ok {
-		port = sn.Port
+	if len(mf.Services) > 0 {
+		if spec, err = m.execSpec(domain, dir, name, mf); err != nil {
+			return nil, err
+		}
+		if sn, ok := m.lookup(domain); ok {
+			port = sn.Services[spec.Service].Port
+		}
+		if spec.ContainerPort != 0 {
+			port = spec.ContainerPort // what $PORT is inside its container
+		}
+	} else {
+		if name != "" {
+			return nil, fmt.Errorf("%w: %s has no services", ErrNotFound, domain)
+		}
+		if spec, err = manifest.Resolve(domain, dir, mf); err != nil {
+			return nil, err
+		}
+		if sn, ok := m.lookup(domain); ok {
+			port = sn.Port
+		}
 	}
 	_, env := spec.WithPort(port)
 	env["HOME"] = filepath.Join(m.Root, "data", "homes", domain)

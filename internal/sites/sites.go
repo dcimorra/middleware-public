@@ -34,6 +34,7 @@ var (
 	ErrOutside     = errors.New("path leaves the site folder")
 	ErrBadTemplate = errors.New("unknown template: want static, node, go or docker")
 	ErrInvalid     = errors.New("invalid manifest")
+	ErrForbidden   = errors.New("not for this caller")
 )
 
 // Manager operates on the sites of one installation.
