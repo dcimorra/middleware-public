@@ -71,6 +71,15 @@ func Exec(ctx context.Context, spec *manifest.Spec, home string, o ExecOptions) 
 		}
 		args = append(args, mounts...)
 		args = append(args, "-w", spec.Cwd)
+		if spec.Network != "" {
+			// A service's command reaches the others by name, as the
+			// service does: a migration that cannot resolve "db" is no
+			// migration.
+			if err := d.ensureNetwork(ctx, spec.Network, siteOf(spec.Domain)); err != nil {
+				return 1, err
+			}
+			args = append(args, "--network", spec.Network)
+		}
 		for _, kv := range containerEnv(env, 0, spec.Domain, spec.SiteDir, home) {
 			if !strings.HasPrefix(kv, "PORT=") {
 				args = append(args, "-e", kv)

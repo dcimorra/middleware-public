@@ -50,6 +50,9 @@ export function siteScreen({ domain, tab, query }) {
   // ?worker=name opens the logs or the activity on that worker (the
   // workers card links there).
   const pickWorker = (query && query.get("worker")) || "";
+  // ?service=name (and &build=1) does the same for a service.
+  const pickService = (query && query.get("service")) || "";
+  const pickLog = pickService ? (query.get("build") ? "build:" : "service:") + pickService : pickWorker;
   const base = `#/sites/${enc(domain)}`;
   const statusLine = h("div", { class: "site-head-state" });
   // The crumb is the way back, not a second copy of the title beside it.
@@ -98,7 +101,7 @@ export function siteScreen({ domain, tab, query }) {
     if (!s) return;
     switch (active) {
       case "manifest": view = manifestTab(domain); break;
-      case "logs": view = logsTab(domain, pickWorker); break;
+      case "logs": view = logsTab(domain, pickLog); break;
       case "files": view = filesTab(domain); break;
       case "chat": view = chatTab(domain); break;
       case "tasks": view = siteTasksTab(domain); break;
@@ -479,12 +482,12 @@ function overviewTab(domain) {
       else if (held) shown.push(btn(t("site.release"), "unlock", () => hold(false), "primary"));
       else if (project) shown.push(btn(t("site.giveDomain"), "globe", rename, "primary"));
       else if (publishShown) shown.push(btn(t("site.publish"), "upload", publish, "primary"));
-      if (!m.disabled && !held && (mode === "run" || mode === "upstream")) shown.push(btn(t("site.restart"), "refresh", restartIt));
+      if (!m.disabled && !held && (mode === "run" || mode === "services" || mode === "upstream")) shown.push(btn(t("site.restart"), "refresh", restartIt));
       if (!m.disabled && !project) shown.push(btn(t("site.stop"), "stop", stopIt));
       if (m.deploy && m.deploy.github) shown.push(btn(t("site.deploy"), "upload", () => act("deploy", `/sites/${enc(domain)}/deploy`, t("site.deployStarted"))));
 
       if (!m.disabled && project) folded.push({ label: t("site.stop"), icon: "stop", onClick: stopIt });
-      if (m.disabled && (mode === "run" || mode === "upstream")) folded.push({ label: t("site.restart"), icon: "refresh", onClick: restartIt });
+      if (m.disabled && (mode === "run" || mode === "services" || mode === "upstream")) folded.push({ label: t("site.restart"), icon: "refresh", onClick: restartIt });
       if (held && !m.disabled) folded.push({ label: t("site.stop"), icon: "stop", onClick: stopIt });
       if (held && m.disabled) folded.push({ label: t("site.release"), icon: "unlock", onClick: () => hold(false) });
       if (!held) folded.push({ label: t("site.hold"), icon: "pause", onClick: () => hold(true) });
@@ -551,12 +554,98 @@ function overviewTab(domain) {
     append(el, [
       hero,
       unmanaged ? notice("warn", t("site.unmanagedNotice")) : null,
+      servicesCard(s),
       workersCard(s),
-      serves && owner ? domainsCard(m) : null,
+      serves && owner && !Object.keys(m.services || {}).length ? domainsCard(m) : null,
       serves && can(domain, "code") ? redirectsCard(m) : null,
       unmanaged || !door ? null : door,
       unmanaged ? null : envCard,
     ]);
+  }
+
+  // A site with services: one line each, as a worker's, with its names
+  // and what answers them, and below, every name of the site and where it
+  // goes now (GET /routes), which is what to look at when a name answers
+  // the house's page.
+  function servicesCard(s) {
+    const m = s.manifest || {};
+    const names = Object.keys(m.services || {}).sort();
+    if (names.length === 0) return null;
+    const items = names.map((name) => {
+      const v = (s.services && s.services[name]) || {};
+      const def = m.services[name] || {};
+      const run = def.run || {};
+      let state;
+      if (v.stopped === "disabled") state = h("span", { class: "status" }, h("span", { class: "dot" }), t("status.stopped"));
+      else if (v.stopped === "hold") state = h("span", { class: "status" }, h("span", { class: "dot warn" }), t("site.serviceHeld"));
+      else if (v.alive) state = h("span", { class: "status" }, h("span", { class: "dot ok" }), t("status.up"));
+      else if (v.starting || v.waiting) state = h("span", { class: "status", title: v.waiting ? t("site.serviceWaiting", { names: v.waiting }) : "" }, h("span", { class: "dot warn" }), t("site.serviceStarting"));
+      else state = h("span", { class: "status", title: v.error || "" }, h("span", { class: "dot bad" }), t("status.down"));
+      const what = run.runtime === "docker" && run.docker ? (run.docker.image || t("site.serviceBuilt", { file: run.docker.build || "" })) : (run.command || []).join(" ");
+      return h("li", { class: "site-worker" },
+        h("div", { class: "site-worker-main" },
+          h("div", { class: "site-worker-head" }, h("strong", null, name), state,
+            v.port ? h("code", { class: "small muted", title: v.published ? "" : t("site.serviceInside") }, ":" + v.port) : null,
+            v.revision ? h("code", { class: "small dim" }, shortRev(v.revision)) : null,
+            def.optional ? h("span", { class: "badge" }, t("site.serviceOptional")) : null),
+          (def.domains || []).length ? h("div", { class: "small" }, ...def.domains.map((d) => h("code", { class: "site-service-name" }, d)))
+            : h("div", { class: "small muted" }, t("site.serviceInternal")),
+          what ? h("code", { class: "site-worker-cmd", title: what }, what) : null,
+          v.waiting && !v.alive ? h("div", { class: "small muted" }, t("site.serviceWaiting", { names: v.waiting })) : null,
+          v.error ? h("div", { class: "small level-error" }, v.error) : null),
+        serviceActions(name, def, v));
+    });
+    const routes = h("div", { class: "site-routes" }, h("span", { class: "small muted" }, t("common.loading")));
+    api.get(`/sites/${enc(domain)}/routes`).then((rs) => {
+      const cols = [t("site.routeName"), t("site.routeService"), t("site.routePort"), t("site.routeState")];
+      clear(routes).append(table(cols.map((label) => ({ label })),
+        (rs || []).map((r) => h("tr", null,
+          cell(h("code", null, r.host + (r.prefix && r.prefix !== "/" ? r.prefix : "")), cols[0]),
+          cell(r.service || "—", cols[1]),
+          cell(r.port ? String(r.port) : "—", cols[2]),
+          cell(h("span", { title: r.error || "" }, r.state), cols[3]),
+        )), { responsive: true }).el);
+    }).catch((e) => clear(routes).append(errorBox(e)));
+    return h("section", { class: "card site-section" },
+      h("h2", null, t("site.services")),
+      h("ul", { class: "site-workers" }, ...items),
+      h("h3", { class: "small" }, t("site.routes")),
+      routes);
+  }
+
+  // Restart is for now; stop, start and hold are written to the
+  // service's section of the manifest, so they survive a restart.
+  function serviceActions(name, def, v) {
+    const tabs = `#/sites/${enc(domain)}`;
+    const run = def.run || {};
+    const box = h("div", { class: "site-worker-actions" },
+      h("a", { class: "btn sm ghost", href: `${tabs}/logs?service=${enc(name)}` }, icon("list"), t("site.workerLogs")),
+      run.runtime === "docker" && run.docker && run.docker.build
+        ? h("a", { class: "btn sm ghost", href: `${tabs}/logs?service=${enc(name)}&build=1` }, icon("list"), t("site.serviceBuildLog")) : null);
+    if (!can(domain, "operate")) return box;
+    const path = `/sites/${enc(domain)}/services/${enc(name)}`;
+    if (def.disabled) {
+      box.append(btn(t("site.workerStart"), "play", () => act("start", path + "/start", t("site.workerStarted", { name })), "sm"));
+      return box;
+    }
+    if (def.hold && def.hold.enabled) {
+      box.append(btn(t("site.release"), "unlock", () => holdService(path, false, name), "sm"));
+      return box;
+    }
+    if (v.alive || v.error) box.append(btn(t("site.restart"), "refresh", () => act("restart", path + "/restart", t("site.workerRestarted", { name })), "sm"));
+    box.append(btn(t("site.hold"), "pause", () => holdService(path, true, name), "sm"));
+    box.append(btn(t("site.stop"), "stop", async () => {
+      if (await confirm({ title: t("site.serviceStopQ", { name }), body: t("site.serviceStopBody"), confirmLabel: t("site.stop"), danger: true })) {
+        await act("stop", path + "/stop", t("site.workerStopped", { name }));
+      }
+    }, "sm"));
+    return box;
+  }
+
+  async function holdService(path, on, name) {
+    const r = await api.post(path + "/hold", { enabled: on });
+    if (r && r.domain) store.putSite(r);
+    toast(on ? t("site.serviceHeldDone", { name }) : t("site.serviceReleased", { name }), "ok");
   }
 
   function workersCard(s) {
@@ -627,7 +716,7 @@ function overviewTab(domain) {
     if (can(domain, "operate")) {
       if (m.disabled) shown.push(btn(t("site.start"), "play", startIt, "primary"));
       else if (held) shown.push(btn(t("site.release"), "unlock", () => hold(false), "primary"));
-      if (!m.disabled && !held && (mode === "run" || mode === "upstream")) shown.push(btn(t("site.restart"), "refresh", restartIt));
+      if (!m.disabled && !held && (mode === "run" || mode === "services" || mode === "upstream")) shown.push(btn(t("site.restart"), "refresh", restartIt));
       if (!m.disabled && !project) shown.push(btn(t("site.stop"), "stop", stopIt));
       if (!held) folded.push({ label: t("site.hold"), icon: "pause", onClick: () => hold(true) });
     }
@@ -645,16 +734,18 @@ function overviewTab(domain) {
     timeout.value = "1m";
     const out = h("pre", { class: "log exec-out", hidden: true });
     const status = h("p", { class: "small" });
+    const svcNames = Object.keys((store.site(domain).manifest || {}).services || {}).sort();
+    const service = h("select", null, ...svcNames.map((n) => h("option", { value: n }, n)));
     await open({
       title: t("site.execQ", { domain }),
       wide: true,
-      body: [h("p", { class: "dim small" }, t("site.execBody")), h("div", { class: "form-row" }, field(t("site.execCommand"), cmd), field(t("site.execTimeout"), timeout)), status, out],
+      body: [h("p", { class: "dim small" }, t("site.execBody")), h("div", { class: "form-row" }, svcNames.length ? field(t("site.execService"), service) : null, field(t("site.execCommand"), cmd), field(t("site.execTimeout"), timeout)), status, out],
       buttons: [{ label: t("common.close"), value: null }, { label: t("site.execRun"), submit: true, primary: true }],
       onSubmit: async () => {
         if (!cmd.value.trim()) return false;
         status.textContent = t("site.execRunning");
         out.hidden = true;
-        const r = await api.post(`/sites/${enc(domain)}/exec`, { command: cmd.value, timeout: timeout.value });
+        const r = await api.post(`/sites/${enc(domain)}/exec`, { command: cmd.value, timeout: timeout.value, service: svcNames.length ? service.value : "" });
         out.textContent = r.output || t("site.execNoOutput");
         out.hidden = false;
         status.textContent = (r.timed_out ? t("site.execTimedOut") : t("site.execExit", { code: r.exit_code })) +

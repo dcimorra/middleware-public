@@ -13,16 +13,36 @@ const MAX_CHARS = 400000;
 
 export function logsTab(domain, pick = "") {
   const s = store.site(domain);
-  const workers = Object.keys((s.manifest && s.manifest.workers) || {});
+  const m = s.manifest || {};
+  const workers = Object.keys(m.workers || {});
+  const services = Object.keys(m.services || {}).sort();
   const pre = h("pre", { class: "log site-log", tabindex: "0", "aria-live": "off", "aria-label": t("logs.label") });
-  const worker = h("select", { "aria-label": t("logs.worker") }, h("option", { value: "" }, t("logs.main")), ...workers.map((w) => h("option", { value: w, selected: w === pick }, w)));
+  // One picker for every log the site has: a service's (and its image's
+  // build, when it is built) by a prefix, a worker's by its name, as
+  // before services.
+  const choices = [];
+  for (const n of services) {
+    choices.push(["service:" + n, n]);
+    const run = (m.services[n] || {}).run || {};
+    if (run.runtime === "docker" && run.docker && run.docker.build) choices.push(["build:" + n, t("logs.build", { name: n })]);
+  }
+  for (const w of workers) choices.push([w, w]);
+  const worker = h("select", { "aria-label": t("logs.worker") },
+    services.length ? null : h("option", { value: "" }, t("logs.main")),
+    ...choices.map(([v, label]) => h("option", { value: v, selected: v === pick }, label)));
+  const params = () => {
+    const v = worker.value;
+    if (v.startsWith("service:")) return { service: v.slice(8) };
+    if (v.startsWith("build:")) return { service: v.slice(6), build: 1 };
+    return { worker: v };
+  };
   const lines = h("select", { "aria-label": t("logs.lines") }, ...[100, 200, 500, 2000].map((n) => h("option", { value: String(n), selected: n === 200 }, t("logs.lastN", { n }))));
   const follow = toggle(t("logs.follow"), {});
   const reload = h("button", { type: "button", class: "btn sm" }, icon("refresh"), t("common.reload"));
   const clearBtn = h("button", { type: "button", class: "btn sm ghost" }, icon("trash"), t("logs.clear"));
   const status = h("span", { class: "small muted", role: "status" });
   const el = h("div", null,
-    h("div", { class: "log-bar site-logs-bar" }, workers.length ? worker : null, lines, reload, clearBtn, follow.el, h("span", { class: "grow" }), status),
+    h("div", { class: "log-bar site-logs-bar" }, choices.length ? worker : null, lines, reload, clearBtn, follow.el, h("span", { class: "grow" }), status),
     pre,
   );
   let ctl = null;
@@ -44,7 +64,7 @@ export function logsTab(domain, pick = "") {
     stop();
     status.textContent = t("common.loading");
     try {
-      const text = await api.text(`/sites/${enc(domain)}/logs` + qs({ lines: lines.value, worker: worker.value }));
+      const text = await api.text(`/sites/${enc(domain)}/logs` + qs({ lines: lines.value, ...params() }));
       pre.textContent = text || "";
       if (!text) pre.textContent = t("logs.empty");
       status.textContent = "";
@@ -60,7 +80,7 @@ export function logsTab(domain, pick = "") {
     stop();
     ctl = new AbortController();
     status.textContent = t("logs.following");
-    api.stream(`/sites/${enc(domain)}/logs` + qs({ follow: 1, lines: 0, worker: worker.value }), append, ctl.signal)
+    api.stream(`/sites/${enc(domain)}/logs` + qs({ follow: 1, lines: 0, ...params() }), append, ctl.signal)
       .then(() => { if (ctl) status.textContent = t("logs.ended"); })
       .catch((e) => { if (e.name !== "AbortError") status.textContent = e.message; });
   }

@@ -134,6 +134,26 @@ func (c *Client) Stream(ctx context.Context, path string) (io.ReadCloser, error)
 	return resp.Body, nil
 }
 
+// PostStream sends a JSON body and hands back the whole response, for a
+// caller that reads its body as it comes and its trailers at the end
+// (a streamed exec, whose exit code is a trailer).
+func (c *Client) PostStream(ctx context.Context, path string, body any) (*http.Response, error) {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.request(ctx, "POST", path, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, apiError(resp.StatusCode, data)
+	}
+	return resp, nil
+}
+
 func (c *Client) request(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, c.Base+path, body)
 	if err != nil {

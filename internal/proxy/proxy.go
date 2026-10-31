@@ -29,9 +29,17 @@ import (
 // Lookup resolves a host to a site snapshot.
 type Lookup func(host string) (engine.Snapshot, bool)
 
+// PathLookup resolves a host and a path: which of a site's services
+// answers it.
+type PathLookup func(host, path string) (engine.Snapshot, bool)
+
 // Handler routes by Host.
 type Handler struct {
 	lookup Lookup
+	// ByPath, when set, is asked instead of lookup for the request
+	// itself, with its path: a site with services sends /api of a name
+	// to one service and the rest to another.
+	ByPath PathLookup
 	// Panel, when set, answers the panel domain and the loopback host.
 	Panel     http.Handler
 	panel     atomic.Pointer[string]
@@ -85,7 +93,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.Panel.ServeHTTP(w, r)
 		return
 	}
-	sn, ok := h.lookup(host)
+	var sn engine.Snapshot
+	var ok bool
+	if h.ByPath != nil {
+		sn, ok = h.ByPath(host, r.URL.Path)
+	} else {
+		sn, ok = h.lookup(host)
+	}
 	if ok && (sn.Mode == manifest.ModeProject || manifest.IsProject(sn.Domain)) {
 		// A project has no hostname; a Host header that happens to spell
 		// its folder's name is a stranger asking for something else.

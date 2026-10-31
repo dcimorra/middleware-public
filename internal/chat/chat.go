@@ -1308,6 +1308,9 @@ func Preamble(domain, workdir string, j agent.Jail) string {
 	b.WriteString("When you need the operator to decide something, ask with a fenced block the panel turns into buttons; two to four short options, the one you would pick as recommended, or an empty options list for a free-text answer:\n")
 	b.WriteString("```question\n{\"question\": \"Which database?\", \"options\": [\"SQLite\", \"Postgres\"], \"recommended\": \"SQLite\"}\n```\n")
 	b.WriteString("Ask one thing at a time, then end your turn; the answer arrives as the next message.\n")
+	if names := siteServices(workdir); len(names) > 0 {
+		b.WriteString("This site runs as services (" + strings.Join(names, ", ") + "), each with its own process or container, names and log. Run a command in one with `middleware exec " + domain + " --service <name> -- <command>` (an install, a migration: it is on the site's network, so it reaches the others by name); `middleware site show " + domain + "` and `middleware site routes " + domain + "` say how each is doing and which name goes where, `middleware site logs " + domain + " --service <name>` (with --build for its image's build) is its output, and `middleware site validate " + domain + " --file <draft>` checks a manifest before you write it.\n")
+	}
 	if image := dockerImage(workdir); image != "" {
 		b.WriteString("This site runs inside a container (" + image + "). Install its dependencies and run its tools where it runs: `middleware exec " + domain + " -- npm install` (or pip, a build, a script). Run on this machine instead, native modules are built for the wrong system and the site fails at start. Reading and editing files is direct: it is the same folder.\n")
 	}
@@ -1324,6 +1327,15 @@ func Preamble(domain, workdir string, j agent.Jail) string {
 }
 
 // dockerImage is the image a site runs in, or "" when it runs as a process.
+// siteServices are the services of a site that has them, sorted.
+func siteServices(siteDir string) []string {
+	m, err := manifest.Load(siteDir)
+	if err != nil {
+		return nil
+	}
+	return m.ServiceNames()
+}
+
 func dockerImage(siteDir string) string {
 	m, err := manifest.Load(siteDir)
 	if err != nil || m.Run == nil || m.Run.Runtime != "docker" || m.Run.Docker == nil {

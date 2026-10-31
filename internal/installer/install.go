@@ -475,6 +475,9 @@ func (in *Installer) stepPackages() (bool, string, error) {
 // distribution ships it apart from the daemon's.
 var dockerCLIPackages = map[string]string{"apt-get": "docker-cli"}
 
+// buildxPackages is docker's BuildKit front end in each distribution.
+var buildxPackages = map[string]string{"apt-get": "docker-buildx", "dnf": "docker-buildx", "apk": "docker-cli-buildx", "pacman": "docker-buildx", "zypper": "docker-buildx"}
+
 var dockerPackages = map[string]string{"apt-get": "docker.io", "dnf": "moby-engine", "apk": "docker", "pacman": "docker", "zypper": "docker"}
 
 // stepDocker makes the docker runtime work on every machine: installed
@@ -523,6 +526,21 @@ func (in *Installer) stepDocker() (bool, string, error) {
 		}
 		did = append(did, "daemon enabled and started")
 		changed = true
+	}
+	// BuildKit's front end: a site's services build with it, and without
+	// it docker falls back to the legacy builder, deprecated and slower.
+	// Not every release of every distribution packages it, so a missing
+	// one is said and stops nothing.
+	if _, err := in.Exec.Run("docker", "buildx", "version"); err != nil {
+		if cmd, name := in.packageManager(); cmd != nil && buildxPackages[name] != "" {
+			args := append(append([]string{}, cmd[1:]...), buildxPackages[name])
+			if _, err := in.Exec.Sudo(cmd[0], args...); err == nil {
+				did = append(did, "installed "+buildxPackages[name])
+				changed = true
+			} else {
+				did = append(did, "buildx not installed ("+buildxPackages[name]+": "+strings.TrimSpace(strings.SplitN(err.Error(), "\n", 2)[0])+"); services build with the legacy builder")
+			}
+		}
 	}
 	out, err := in.Exec.Run("id", "-nG", in.Params.User)
 	if err != nil {

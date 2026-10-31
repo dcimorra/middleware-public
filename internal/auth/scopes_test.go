@@ -48,9 +48,15 @@ func TestTheTasksScopeOpensItsSitesTaskRoutesOnly(t *testing.T) {
 // it opens is what it opened before: no other site, no import.
 func TestATurnManagesItsOwnSitesTasks(t *testing.T) {
 	got := TurnScopes("a.test")
-	want := []string{"read:a.test", "restart:a.test", "deploy:a.test", "tasks:a.test"}
+	want := []string{"read:a.test", "restart:a.test", "deploy:a.test", "exec:a.test", "tasks:a.test"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("TurnScopes: %v, want %v", got, want)
+	}
+	// exec, so a docker site's turn runs its commands through the house
+	// rather than through a docker socket it must never have; its own
+	// site's only.
+	if !Allows(got, "POST /api/v1/sites/{domain}/exec", "a.test") || Allows(got, "POST /api/v1/sites/{domain}/exec", "b.test") {
+		t.Fatal("a turn's exec is not its own site's")
 	}
 	if !Allows(got, "PUT /api/v1/sites/{domain}/tasks/{name}", "a.test") || Allows(got, "PUT /api/v1/sites/{domain}/tasks/{name}", "b.test") {
 		t.Fatal("a turn's tasks are not its own site's")

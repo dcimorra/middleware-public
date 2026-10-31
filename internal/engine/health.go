@@ -83,6 +83,8 @@ func (e *Engine) healthDue(ctx context.Context, s *Site) {
 		port, hc := s.Instance.Port(), s.Spec.Health
 		interval = hc.Interval.Or(defaultHealthInterval)
 		probe = func() Check { return probeHTTP(ctx, port, hc) }
+	case manifest.ModeServices:
+		return // each service has its own (servicesHealthDue)
 	case manifest.ModeStatic:
 		dir, m := s.Dir, s.Manifest
 		interval = defaultHealthInterval

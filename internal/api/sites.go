@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dcimorra/the-middleware/internal/archive"
@@ -27,6 +29,7 @@ func (s *Server) registerSites() {
 	s.Handle("GET", p+"/{domain}", "One site", s.sitesGet)
 	s.Handle("PUT", p+"/{domain}/manifest", "Replace the manifest", s.sitesPutManifest)
 	s.Handle("PATCH", p+"/{domain}/manifest", "Merge top-level keys into the manifest; null removes a key", s.sitesPatchManifest)
+	s.Handle("POST", p+"/{domain}/validate", "Check a manifest (the body, or the one on disk) without writing or deploying it: schema, paths, names, Dockerfiles", s.sitesValidate)
 	s.Handle("DELETE", p+"/{domain}", "Delete the folder, or move it to data/archive/ with ?archive=true", s.sitesDelete)
 	s.Handle("POST", p+"/{domain}/restart", "Force a handover", s.sitesRestart)
 	s.Handle("POST", p+"/{domain}/exec", "Run a command where the site runs and wait for it", s.sitesExec)
@@ -34,6 +37,11 @@ func (s *Server) registerSites() {
 	s.Handle("GET", p+"/{domain}/manifest/history/{id}", "One kept manifest as it was written", s.historyGet)
 	s.Handle("POST", p+"/{domain}/manifest/history/{id}/restore", "Write a kept manifest back", s.historyRestore)
 	s.Handle("POST", p+"/{domain}/workers/{name}/restart", "Restart one worker now", s.workerRestart)
+	s.Handle("POST", p+"/{domain}/services/{name}/restart", "A new generation of one service now (a rebuild for a built image); the others are not touched", s.serviceRestart)
+	s.Handle("POST", p+"/{domain}/services/{name}/stop", "Stop one service (writes services.<name>.disabled); its names answer the stopped page", s.serviceStop)
+	s.Handle("POST", p+"/{domain}/services/{name}/start", "Start one service (clears services.<name>.disabled)", s.serviceStart)
+	s.Handle("POST", p+"/{domain}/services/{name}/hold", "Put one service's names behind the holding page, or take them out (services.<name>.hold)", s.serviceHold)
+	s.Handle("GET", p+"/{domain}/routes", "Every name of the site: host and prefix → service → port → state", s.sitesRoutes)
 	s.Handle("POST", p+"/{domain}/workers/{name}/stop", "Stop one worker (writes workers.<name>.disabled)", s.workerStop)
 	s.Handle("POST", p+"/{domain}/workers/{name}/start", "Start one worker (clears workers.<name>.disabled)", s.workerStart)
 	s.Handle("POST", p+"/{domain}/stop", "Stop the site (disabled: true)", s.sitesStop)
@@ -118,6 +126,53 @@ func (s *Server) sitesGet(w http.ResponseWriter, r *http.Request) (any, error) {
 		return nil, err
 	}
 	return m.Get(domain)
+}
+
+func (s *Server) serviceRestart(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := s.sitesManager()
+	if err != nil {
+		return nil, err
+	}
+	domain, err := domainOf(r)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.RestartService(r.Context(), domain, r.PathValue("name")); err != nil {
+		return nil, Errorf(http.StatusConflict, "%v", err)
+	}
+	return OK, nil
+}
+
+func (s *Server) sitesRoutes(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := s.sitesManager()
+	if err != nil {
+		return nil, err
+	}
+	domain, err := domainOf(r)
+	if err != nil {
+		return nil, err
+	}
+	return m.Routes(domain)
+}
+
+func (s *Server) sitesValidate(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := s.sitesManager()
+	if err != nil {
+		return nil, err
+	}
+	domain, err := domainOf(r)
+	if err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		return nil, Errorf(http.StatusRequestEntityTooLarge, "a manifest is at most 1 MB")
+	}
+	// Whoever sees one site and not the house is told a name is taken,
+	// not by whom: the rest of the house stays invisible to them.
+	c := auth.FromContext(r.Context())
+	hide := c.Delegate() || c.Turn != "" || len(c.Scopes) > 0
+	return m.Validate(domain, bytes.TrimSpace(data), hide)
 }
 
 func (s *Server) sitesCreate(w http.ResponseWriter, r *http.Request) (any, error) {
@@ -316,24 +371,99 @@ func (s *Server) sitesExec(w http.ResponseWriter, r *http.Request) (any, error) 
 		return nil, err
 	}
 	var body struct {
-		Command string `json:"command"`
-		Timeout string `json:"timeout"`
+		Command string   `json:"command"`
+		Args    []string `json:"args"`
+		Service string   `json:"service"`
+		Stream  bool     `json:"stream"`
+		Timeout string   `json:"timeout"`
 	}
 	if err := ReadJSON(r, &body); err != nil {
 		return nil, err
 	}
 	// A minute by default and ten at most: this answers within one
 	// request, and anything longer belongs in a task or a deploy, which
-	// do not hang off a browser tab.
-	timeout := time.Minute
+	// do not hang off a browser tab. A stream is a terminal's (`middleware
+	// exec` from a site's turn): an install there takes what it takes, up
+	// to an hour.
+	timeout, most := time.Minute, 10*time.Minute
+	if body.Stream {
+		timeout, most = 30*time.Minute, time.Hour
+	}
 	if body.Timeout != "" {
 		d, err := time.ParseDuration(body.Timeout)
-		if err != nil || d <= 0 || d > 10*time.Minute {
-			return nil, Errorf(http.StatusBadRequest, "timeout: %q is not a duration up to 10m", body.Timeout)
+		if err != nil || d <= 0 || d > most {
+			return nil, Errorf(http.StatusBadRequest, "timeout: %q is not a duration up to %s", body.Timeout, most)
 		}
 		timeout = d
 	}
-	return m.Exec(r.Context(), domain, body.Command, timeout)
+	if (body.Command == "") == (len(body.Args) == 0) {
+		return nil, Errorf(http.StatusBadRequest, "exec: send command (run by sh) or args (run as they are), one of them")
+	}
+	if c := auth.FromContext(r.Context()); !body.Stream && (c.Turn != "" || len(c.Scopes) > 0) {
+		return nil, Errorf(http.StatusForbidden, "exec: a turn or a service door streams (stream: true), into a container only")
+	}
+	if !body.Stream {
+		if len(body.Args) > 0 {
+			return nil, Errorf(http.StatusBadRequest, "exec: args go with stream")
+		}
+		return m.Exec(r.Context(), domain, body.Service, body.Command, timeout)
+	}
+	argv := body.Args
+	if body.Command != "" {
+		argv = []string{"sh", "-c", body.Command}
+	}
+	// The exit code goes in a trailer: it is known only once the output,
+	// already sent, has ended.
+	out := &streamOut{w: w}
+	c := auth.FromContext(r.Context())
+	code, timedOut, err := m.Run(r.Context(), domain, body.Service, argv, timeout, out, c.Turn != "" || len(c.Scopes) > 0)
+	if err != nil && !out.started {
+		return nil, err
+	}
+	out.start()
+	w.Header().Set(ExitCodeTrailer, strconv.Itoa(code))
+	if timedOut {
+		w.Header().Set(ExecErrorTrailer, "timed out after "+timeout.String())
+	} else if err != nil {
+		w.Header().Set(ExecErrorTrailer, err.Error())
+	}
+	return Handled, nil
+}
+
+// The trailers a streamed exec ends with.
+const (
+	ExitCodeTrailer  = "X-Exit-Code"
+	ExecErrorTrailer = "X-Exec-Error"
+)
+
+// streamOut sends a command's output as it comes, the headers on its
+// first byte, so an error before the command ran is still a JSON error.
+type streamOut struct {
+	mu      sync.Mutex
+	w       http.ResponseWriter
+	started bool
+}
+
+func (o *streamOut) start() {
+	if o.started {
+		return
+	}
+	o.started = true
+	o.w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	o.w.Header().Set("Trailer", ExitCodeTrailer+", "+ExecErrorTrailer)
+	o.w.Header().Set("X-Content-Type-Options", "nosniff")
+	o.w.WriteHeader(http.StatusOK)
+}
+
+func (o *streamOut) Write(p []byte) (int, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.start()
+	n, err := o.w.Write(p)
+	if f, ok := o.w.(http.Flusher); ok {
+		f.Flush()
+	}
+	return n, err
 }
 
 func (s *Server) historyList(w http.ResponseWriter, r *http.Request) (any, error) {
@@ -425,6 +555,42 @@ func (s *Server) setWorkerDisabled(r *http.Request, disabled bool) (any, error) 
 	return m.SetWorkerDisabled(domain, r.PathValue("name"), disabled)
 }
 
+func (s *Server) serviceStop(w http.ResponseWriter, r *http.Request) (any, error) {
+	return s.setServiceDisabled(r, true)
+}
+
+func (s *Server) serviceStart(w http.ResponseWriter, r *http.Request) (any, error) {
+	return s.setServiceDisabled(r, false)
+}
+
+func (s *Server) setServiceDisabled(r *http.Request, disabled bool) (any, error) {
+	m, err := s.sitesManager()
+	if err != nil {
+		return nil, err
+	}
+	domain, err := domainOf(r)
+	if err != nil {
+		return nil, err
+	}
+	return m.SetServiceDisabled(domain, r.PathValue("name"), disabled)
+}
+
+func (s *Server) serviceHold(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := s.sitesManager()
+	if err != nil {
+		return nil, err
+	}
+	domain, err := domainOf(r)
+	if err != nil {
+		return nil, err
+	}
+	var hold manifest.Hold
+	if err := ReadJSON(r, &hold); err != nil {
+		return nil, err
+	}
+	return m.SetServiceHold(domain, r.PathValue("name"), hold)
+}
+
 func (s *Server) sitesStop(w http.ResponseWriter, r *http.Request) (any, error) {
 	return s.setDisabled(r, true)
 }
@@ -480,6 +646,12 @@ func (s *Server) sitesLogs(w http.ResponseWriter, r *http.Request) (any, error) 
 		lines = n
 	}
 	worker := q.Get("worker")
+	if svc := q.Get("service"); svc != "" {
+		worker = "service:" + svc
+		if isTrue(q.Get("build")) {
+			worker = "build:" + svc
+		}
+	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if !isTrue(q.Get("follow")) {
@@ -603,7 +775,7 @@ func (s *Server) sitesEnv(w http.ResponseWriter, r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	env, err := m.ResolvedEnv(domain)
+	env, err := m.ResolvedEnv(domain, r.URL.Query().Get("service"))
 	if err != nil {
 		return nil, err
 	}

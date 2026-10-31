@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -54,6 +55,55 @@ func (m *Manager) SetWorkerDisabled(domain, name string, disabled bool) (Site, e
 		typ, msg = "worker.disabled", name+" switched off by the operator"
 	}
 	m.emit(typ, domain, "", msg, map[string]any{"worker": name})
+	return m.describe(domain), nil
+}
+
+// SetServiceDisabled stops or starts one of a site's services by writing
+// the decision to the manifest (`services.<name>.disabled`), where it
+// survives a restart. Its names answer the stopped page meanwhile; the
+// other services are not touched.
+func (m *Manager) SetServiceDisabled(domain, name string, disabled bool) (Site, error) {
+	return m.changeService(domain, name, func(sv *manifest.Service) (string, string) {
+		sv.Disabled = disabled
+		if disabled {
+			return "service.disabled", name + " switched off by the operator"
+		}
+		return "service.enabled", name + " switched on by the operator"
+	})
+}
+
+// SetServiceHold puts one service's names behind the holding page, or
+// takes them out (`services.<name>.hold`).
+func (m *Manager) SetServiceHold(domain, name string, hold manifest.Hold) (Site, error) {
+	return m.changeService(domain, name, func(sv *manifest.Service) (string, string) {
+		if hold.Enabled {
+			sv.Hold = &hold
+		} else {
+			sv.Hold = nil
+		}
+		return "service.hold", fmt.Sprintf("%s: hold %v", name, hold.Enabled)
+	})
+}
+
+func (m *Manager) changeService(domain, name string, change func(*manifest.Service) (typ, msg string)) (Site, error) {
+	dir, err := m.managedDir(domain)
+	if err != nil {
+		return Site{}, err
+	}
+	mf, err := manifest.Load(dir)
+	if err != nil {
+		return Site{}, fmt.Errorf("manifest: %w", err)
+	}
+	sv, ok := mf.Services[name]
+	if !ok || sv == nil {
+		return Site{}, fmt.Errorf("%w: %s has no service %q", ErrNotFound, domain, name)
+	}
+	typ, msg := change(sv)
+	if err := manifest.Save(dir, mf); err != nil {
+		return Site{}, err
+	}
+	// The subject is the service's, as the engine's events about it.
+	m.emit(typ, domain+"#"+name, "", msg, map[string]any{"service": name})
 	return m.describe(domain), nil
 }
 
@@ -125,39 +175,90 @@ const execOutputCap = 1 << 20
 // at most timeout. It is the panel's "run a command": an `npm install`,
 // a migration, a look at what is on disk. Every run is an event with the
 // command in it, because it is the one button that does anything at all.
-func (m *Manager) Exec(ctx context.Context, domain, command string, timeout time.Duration) (ExecResult, error) {
-	dir, err := m.managedDir(domain)
-	if err != nil {
-		return ExecResult{}, err
-	}
+func (m *Manager) Exec(ctx context.Context, domain, service, command string, timeout time.Duration) (ExecResult, error) {
 	if strings.TrimSpace(command) == "" {
 		return ExecResult{}, fmt.Errorf("%w: an empty command", ErrInvalid)
 	}
-	mf, err := manifest.Load(dir)
-	if err != nil {
-		return ExecResult{}, fmt.Errorf("manifest: %w", err)
-	}
-	if mf.Run == nil {
-		// A static site or a project still gets its folder and HOME.
-		mf = &manifest.Manifest{Version: manifest.Version, Run: &manifest.Run{Command: []string{"true"}}}
-	}
-	spec, err := manifest.Resolve(domain, dir, mf)
-	if err != nil {
-		return ExecResult{}, err
-	}
-	m.emit("site.exec", domain, "operator", command, map[string]any{"command": command})
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 	out := &capped{max: execOutputCap}
 	start := time.Now()
-	code, err := runtime.Exec(ctx, spec, filepath.Join(m.Root, "data", "homes", domain), runtime.ExecOptions{
-		Args: []string{"sh", "-c", command}, Stdin: strings.NewReader(""), Stdout: out, Stderr: out,
-	})
-	res := ExecResult{ExitCode: code, Output: out.b.String(), Truncated: out.cut, Seconds: time.Since(start).Seconds()}
-	if ctx.Err() == context.DeadlineExceeded {
-		res.TimedOut = true
+	code, timedOut, err := m.Run(ctx, domain, service, []string{"sh", "-c", command}, timeout, out, false)
+	return ExecResult{ExitCode: code, Output: out.b.String(), Truncated: out.cut, Seconds: time.Since(start).Seconds(), TimedOut: timedOut}, err
+}
+
+// Run is Exec for an exact argv, its output written to out as it comes
+// (the API streams it): what `middleware exec` sends when it cannot run
+// the command itself, from a site's turn, whose jail has no docker. For
+// a site with services, service says in which; empty is the one that
+// answers the site's own name. containerOnly refuses a command that
+// would run on the machine: a turn and a service door are let through
+// the house into a container only, where the container's walls hold; on
+// the machine the command would run as the supervisor, outside the jail
+// the turn's own commands run in.
+func (m *Manager) Run(ctx context.Context, domain, service string, argv []string, timeout time.Duration, out io.Writer, containerOnly bool) (code int, timedOut bool, err error) {
+	dir, err := m.managedDir(domain)
+	if err != nil {
+		return 1, false, err
 	}
-	return res, err
+	if len(argv) == 0 || strings.TrimSpace(argv[0]) == "" {
+		return 1, false, fmt.Errorf("%w: an empty command", ErrInvalid)
+	}
+	mf, err := manifest.Load(dir)
+	if err != nil {
+		return 1, false, fmt.Errorf("manifest: %w", err)
+	}
+	spec, err := m.execSpec(domain, dir, service, mf)
+	if err != nil {
+		return 1, false, err
+	}
+	if containerOnly && (spec.Runtime != "docker" || spec.Docker == nil) {
+		return 1, false, fmt.Errorf("%w: %s runs on the machine, not in a container: run the command yourself, in your own folder", ErrForbidden, spec.Domain)
+	}
+	command := strings.Join(argv, " ")
+	if len(argv) == 3 && argv[0] == "sh" && argv[1] == "-c" {
+		command = argv[2]
+	}
+	data := map[string]any{"command": command}
+	subject := domain
+	if spec.Service != "" {
+		data["service"] = spec.Service
+		subject = domain + "#" + spec.Service
+	}
+	m.emit("site.exec", subject, "operator", command, data)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	code, err = runtime.Exec(ctx, spec, filepath.Join(m.Root, "data", "homes", domain), runtime.ExecOptions{
+		Args: argv, Stdin: strings.NewReader(""), Stdout: out, Stderr: out,
+	})
+	return code, ctx.Err() == context.DeadlineExceeded, err
+}
+
+// execSpec is where a one-off command runs: the site's run, or one of its
+// services (the running generation's spec, so its image and network).
+func (m *Manager) execSpec(domain, dir, service string, mf *manifest.Manifest) (*manifest.Spec, error) {
+	if len(mf.Services) == 0 {
+		if service != "" {
+			return nil, fmt.Errorf("%w: %s has no services", ErrNotFound, domain)
+		}
+		if mf.Run == nil {
+			// A static site or a project still gets its folder and HOME.
+			mf = &manifest.Manifest{Version: manifest.Version, Run: &manifest.Run{Command: []string{"true"}}}
+		}
+		return manifest.Resolve(domain, dir, mf)
+	}
+	if service == "" {
+		name, ok := mf.ServiceFor(domain, "/")
+		if !ok {
+			return nil, fmt.Errorf("%w: no service answers %s; name one (services: %s)", ErrInvalid, domain, strings.Join(mf.ServiceNames(), ", "))
+		}
+		service = name
+	}
+	if _, ok := mf.Services[service]; !ok {
+		return nil, fmt.Errorf("%w: %s has no service %q (services: %s)", ErrNotFound, domain, service, strings.Join(mf.ServiceNames(), ", "))
+	}
+	if m.Engine == nil {
+		return nil, errors.New("no engine")
+	}
+	return m.Engine.ServiceSpec(domain, service)
 }
 
 // capped keeps the first max bytes and says whether more came.

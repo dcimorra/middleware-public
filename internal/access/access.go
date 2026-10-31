@@ -44,6 +44,9 @@ import (
 type Site struct {
 	Domain string
 	Access *manifest.Access
+	// More is the access of the service that answers the request, for a
+	// site with services: judged after the site's, never instead of it.
+	More *manifest.Access
 	// Title and Theme dress the pages this door shows (see pages).
 	Title, Theme string
 }
@@ -56,6 +59,11 @@ type Options struct {
 	// DataDir is data/; the session key lives at data/access/key.
 	DataDir string
 	Lookup  Lookup
+	// LookupRequest, when set, resolves a request rather than its host:
+	// a site with services answers a host and a path with one of them,
+	// and each has its own rules. Given the path the door judges (for
+	// its own sign-in page, the page the visitor is going back to).
+	LookupRequest func(r *http.Request, urlPath string) (Site, bool)
 	// ClientIP resolves the visitor's address; nil uses RemoteAddr only.
 	ClientIP func(r *http.Request) net.IP
 	// Country resolves a request's country code; nil means "".
@@ -145,48 +153,59 @@ type door struct {
 // Wrap implements the hook.
 func (a *Access) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if a.opts.Lookup == nil {
+		if a.opts.Lookup == nil && a.opts.LookupRequest == nil {
 			next.ServeHTTP(w, r)
 			return
 		}
-		site, ok := a.opts.Lookup(hostOf(r))
-		if !ok || site.Access == nil {
+		site, ok := a.lookup(r)
+		if !ok || (site.Access == nil && site.More == nil) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		ac := site.Access
-		zone, route := matchRoute(ac.Routes, CleanPath(r.URL.Path))
 		ip := a.clientIP(r)
-		if !admitted(ip, ac.Allow, ac.Deny) || (route != nil && !admitted(ip, route.Allow, route.Deny)) {
-			pages.Render(w, r, pages.ForSite("forbidden", site.Title, site.Domain, site.Theme))
-			return
-		}
-		if len(ac.DenyCountries) > 0 && a.opts.Country != nil && ip != nil {
-			cc := strings.ToUpper(a.opts.Country(r, ip))
-			for _, d := range ac.DenyCountries {
-				if cc != "" && cc == strings.ToUpper(d) {
-					pages.Render(w, r, pages.ForSite("forbidden", site.Title, site.Domain, site.Theme))
-					return
+		clean := CleanPath(r.URL.Path)
+		var doors []door
+		// Each level is judged on its own, the site's and then its
+		// service's, so a service's rules only ever add: merged into one,
+		// the service's zone under a site's zone was the longest prefix
+		// and the site's password was never asked.
+		for _, ac := range []*manifest.Access{site.Access, site.More} {
+			if ac == nil {
+				continue
+			}
+			zone, route := matchRoute(ac.Routes, clean)
+			if !admitted(ip, ac.Allow, ac.Deny) || (route != nil && !admitted(ip, route.Allow, route.Deny)) {
+				pages.Render(w, r, pages.ForSite("forbidden", site.Title, site.Domain, site.Theme))
+				return
+			}
+			if len(ac.DenyCountries) > 0 && a.opts.Country != nil && ip != nil {
+				cc := strings.ToUpper(a.opts.Country(r, ip))
+				for _, d := range ac.DenyCountries {
+					if cc != "" && cc == strings.ToUpper(d) {
+						pages.Render(w, r, pages.ForSite("forbidden", site.Title, site.Domain, site.Theme))
+						return
+					}
 				}
+			}
+			if ac.Password != "" {
+				doors = append(doors, door{hash: ac.Password, message: ac.Message})
+			}
+			if route != nil && route.Password != "" {
+				doors = append(doors, door{zone: zone, hash: route.Password, message: route.Message})
 			}
 		}
 		switch r.URL.Path {
 		case LoginPath:
-			if d, ok := doorFor(ac, r.FormValue("zone")); ok {
-				a.login(w, r, site, d)
-				return
+			for _, ac := range []*manifest.Access{site.Access, site.More} {
+				if d, ok := doorFor(ac, r.FormValue("zone")); ok {
+					a.login(w, r, site, d)
+					return
+				}
 			}
 		case LogoutPath:
 			a.clearSessions(w, r)
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
-		}
-		var doors []door
-		if ac.Password != "" {
-			doors = append(doors, door{hash: ac.Password, message: ac.Message})
-		}
-		if route != nil && route.Password != "" {
-			doors = append(doors, door{zone: zone, hash: route.Password, message: route.Message})
 		}
 		for _, d := range doors {
 			if a.hasSession(r, site, d) {
@@ -209,8 +228,29 @@ func (a *Access) Wrap(next http.Handler) http.Handler {
 	})
 }
 
+// lookup is the site a request is for, and for one with services, the
+// service's. The sign-in page is the house's path on every name, so it is
+// judged as the page it goes back to: on a name split by prefixes, the
+// service behind /api is the one whose password the form was for.
+func (a *Access) lookup(r *http.Request) (Site, bool) {
+	if a.opts.LookupRequest == nil {
+		return a.opts.Lookup(hostOf(r))
+	}
+	p := r.URL.Path
+	if p == LoginPath {
+		p = "/"
+		if next := safeNext(r.FormValue("next")); next != "" {
+			p, _, _ = strings.Cut(next, "?")
+		}
+	}
+	return a.opts.LookupRequest(r, p)
+}
+
 // doorFor finds the door a login form was posted for.
 func doorFor(ac *manifest.Access, zone string) (door, bool) {
+	if ac == nil {
+		return door{}, false
+	}
 	if zone == "" {
 		return door{hash: ac.Password, message: ac.Message}, ac.Password != ""
 	}
@@ -529,10 +569,19 @@ func hostOf(r *http.Request) string {
 // site open with nothing but an event saying so, which is the failure that
 // looks exactly like success.
 func Closed(lookup Lookup) func(http.Handler) http.Handler {
+	if lookup == nil {
+		return ClosedRequest(nil)
+	}
+	return ClosedRequest(func(r *http.Request, _ string) (Site, bool) { return lookup(hostOf(r)) })
+}
+
+// ClosedRequest is Closed for a lookup by request (Options.LookupRequest),
+// so a service's own password closes its names too.
+func ClosedRequest(lookup func(r *http.Request, urlPath string) (Site, bool)) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if lookup != nil {
-				if site, ok := lookup(hostOf(r)); ok && guarded(site.Access) {
+				if site, ok := lookup(r, r.URL.Path); ok && (guarded(site.Access) || guarded(site.More)) {
 					w.Header().Set("Cache-Control", "no-store")
 					pages.Render(w, r, pages.ForSite("down", site.Title, site.Domain, site.Theme))
 					return

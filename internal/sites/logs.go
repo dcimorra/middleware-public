@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -21,6 +22,15 @@ func (m *Manager) LogPath(domain, worker string) (string, error) {
 	}
 	if worker == "" {
 		return filepath.Join(m.logsDir(domain), "site.log"), nil
+	}
+	// A service's output and its image's build are asked as
+	// "service:<name>" and "build:<name>": one selector, so every reader
+	// of a log (the panel, site logs, a follow) reaches them the same way.
+	if name, ok := strings.CutPrefix(worker, "service:"); ok && workerNameRe.MatchString(name) {
+		return filepath.Join(m.logsDir(domain), name+".log"), nil
+	}
+	if name, ok := strings.CutPrefix(worker, "build:"); ok && workerNameRe.MatchString(name) {
+		return filepath.Join(m.logsDir(domain), "build-"+name+".log"), nil
 	}
 	if !workerNameRe.MatchString(worker) {
 		return "", fmt.Errorf("worker %q is not a name", worker)

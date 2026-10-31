@@ -70,7 +70,11 @@ type Options struct {
 	// buffer kept for good, and a scanner rotating it ran the house out of
 	// descriptors. Nil takes every name as a site of its own.
 	Site func(r *http.Request) (string, bool)
-	Now  func() time.Time
+	// Service is the service of a site with services that answered the
+	// request, or "": written at the end of its line, so the lines of a
+	// site without services stay what they were.
+	Service func(r *http.Request) string
+	Now     func() time.Time
 	// MaxLogSize and KeepLogs set the rotation: 10 MB and 3 by default.
 	MaxLogSize int64
 	KeepLogs   int
@@ -445,7 +449,13 @@ func (r *Recorder) log(domain string, site bool, req *http.Request, status int, 
 	}
 	now := r.now()
 	line := now.UTC().Format(time.RFC3339) + " " + prefix + ip + " " + req.Method + " " + uri + " " +
-		strconv.Itoa(status) + " " + strconv.FormatInt(bytes, 10) + " " + dur.Round(time.Millisecond).String() + " \"" + ua + "\"\n"
+		strconv.Itoa(status) + " " + strconv.FormatInt(bytes, 10) + " " + dur.Round(time.Millisecond).String() + " \"" + ua + "\""
+	if site && r.opts.Service != nil {
+		if svc := r.opts.Service(req); svc != "" {
+			line += " service=" + svc
+		}
+	}
+	line += "\n"
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	lf := r.logs[key]

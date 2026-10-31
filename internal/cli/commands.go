@@ -255,7 +255,7 @@ func (e *Env) readPassword(prompt string) (string, error) {
 const siteUsage = `usage: middleware site <command> [flags]
 
   list                        every site folder
-  show <domain>               one site, with its manifest
+  show <domain|name> [--service s]  one site, with its manifest and its services
   add <domain> [--template static|node|go|docker|project] [--manifest file.json|-]
               [--publish=false] [--door tunnel|ports]
                               published by default when a DNS module is on
@@ -264,12 +264,16 @@ const siteUsage = `usage: middleware site <command> [flags]
                               put every name of the site on the internet
   unpublish <domain>          take its tunnel rules and records away
   published                   every name the house published, with its state
-  restart <domain> | --all    force a handover
+  restart <domain> [--service s] | --all    force a handover (of one service only with --service)
   stop | start <domain>       write disabled into the manifest
   hold <domain> [--title t] [--message m]
   unhold <domain>
-  logs <domain> [-f] [--lines 200] [--worker name]
+  logs <domain> [-f] [--lines 200] [--worker name | --service name [--build]]
+  routes <domain>             every name of the site: host → service → port → state
   deploy <domain>             run deploy.github.build and write the pointer
+  validate <domain> [--file site.json]
+                              check a manifest (the file, or the one on disk) without
+                              writing or deploying it: schema, paths, names, Dockerfiles
   tasks <domain> [list | save <name> <file|-> | rm <name> | run <name> | stop <name> | log <name>]
                               the site's own scheduled tasks
 `
@@ -295,6 +299,9 @@ func (e *Env) site(args []string) error {
 		worker   = fs.String("worker", "", "a worker's log instead of the site's")
 		publish  = fs.String("publish", "", "add: true or false (default: true when a DNS module is on)")
 		door     = fs.String("door", "", "add, publish: tunnel or ports (default: the door for new sites)")
+		file     = fs.String("file", "", "validate: the manifest to check (- for stdin; default: the one on disk)")
+		service  = fs.String("service", "", "restart, logs, show: one of the site's services")
+		build    = fs.Bool("build", false, "logs: the service's image build instead of its output")
 	)
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -346,11 +353,27 @@ func (e *Env) site(args []string) error {
 		if err := need(); err != nil {
 			return err
 		}
-		var raw []byte
-		if err := cl.Do("GET", "/api/v1/sites/"+domain, nil, &raw); err != nil {
+		site, svc, err := e.ownerOf(cl, domain)
+		if err != nil {
 			return err
 		}
-		return e.showSite(c, raw)
+		if *service != "" {
+			svc = *service
+		}
+		var raw []byte
+		if err := cl.Do("GET", "/api/v1/sites/"+site, nil, &raw); err != nil {
+			return err
+		}
+		return e.showSite(c, raw, svc)
+	case "routes":
+		if err := need(); err != nil {
+			return err
+		}
+		site, _, err := e.ownerOf(cl, domain)
+		if err != nil {
+			return err
+		}
+		return e.siteRoutes(c, cl, site)
 	case "add":
 		if err := need(); err != nil {
 			return err
@@ -499,27 +522,47 @@ func (e *Env) site(args []string) error {
 		if err := need(); err != nil {
 			return err
 		}
+		if *service != "" {
+			return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/services/"+url.PathEscape(*service)+"/restart", nil, "A new generation of "+*service+" is starting; the other services are not touched")
+		}
 		return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/restart", nil, "Handover started for "+domain)
 	case "stop":
 		if err := need(); err != nil {
 			return err
+		}
+		if *service != "" {
+			return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/services/"+url.PathEscape(*service)+"/stop", nil, "Stopped "+*service+" of "+domain+" (services."+*service+".disabled in site.json)")
 		}
 		return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/stop", nil, "Stopped "+domain+" (disabled in site.json)")
 	case "start":
 		if err := need(); err != nil {
 			return err
 		}
+		if *service != "" {
+			return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/services/"+url.PathEscape(*service)+"/start", nil, "Started "+*service+" of "+domain)
+		}
 		return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/start", nil, "Started "+domain)
 	case "hold":
 		if err := need(); err != nil {
 			return err
+		}
+		if *service != "" {
+			return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/services/"+url.PathEscape(*service)+"/hold", map[string]any{"enabled": true, "title": *title, "message": *message}, "The names of "+*service+" are behind the holding page")
 		}
 		return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/hold", map[string]any{"enabled": true, "title": *title, "message": *message}, domain+" is behind the holding page")
 	case "unhold":
 		if err := need(); err != nil {
 			return err
 		}
+		if *service != "" {
+			return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/services/"+url.PathEscape(*service)+"/hold", map[string]any{"enabled": false}, *service+" is back")
+		}
 		return e.simple(c, cl, "POST", "/api/v1/sites/"+domain+"/hold", map[string]any{"enabled": false}, domain+" is back")
+	case "validate", "check":
+		if err := need(); err != nil {
+			return err
+		}
+		return e.validateSite(c, cl, domain, *file)
 	case "deploy":
 		if err := need(); err != nil {
 			return err
@@ -546,6 +589,12 @@ func (e *Env) site(args []string) error {
 		q.Set("lines", strconv.Itoa(*lines))
 		if *worker != "" {
 			q.Set("worker", *worker)
+		}
+		if *service != "" {
+			q.Set("service", *service)
+			if *build {
+				q.Set("build", "1")
+			}
 		}
 		if *follow {
 			q.Set("follow", "1")
@@ -582,7 +631,7 @@ func (e *Env) simple(c common, cl *Client, method, path string, body any, done s
 	return nil
 }
 
-func (e *Env) showSite(c common, raw []byte) error {
+func (e *Env) showSite(c common, raw []byte, only string) error {
 	if c.json {
 		e.printJSON(raw)
 		return nil
@@ -613,6 +662,34 @@ func (e *Env) showSite(c common, raw []byte) error {
 		pairs = append(pairs, [2]string{"worker " + name, fmt.Sprintf("port %d, alive %s %s", w.Port, yesNo(w.Alive), w.Error)})
 	}
 	KeyValues(e.Stdout, pairs)
+	if len(s.Services) > 0 {
+		if only != "" {
+			if _, ok := s.Services[only]; !ok {
+				return fmt.Errorf("%s has no service %q", s.Domain, only)
+			}
+		}
+		fmt.Fprintln(e.Stdout)
+		rows := [][]string{}
+		for _, name := range sortedNames(s.Services) {
+			v := s.Services[name]
+			if only != "" && name != only {
+				continue
+			}
+			port := ""
+			if v.Port != 0 {
+				port = strconv.Itoa(v.Port)
+			}
+			if !v.Published {
+				port += " (site network only)"
+			}
+			state := serviceState(v.Alive, v.Starting, v.Stopped, v.Waiting, v.Error)
+			rows = append(rows, []string{name, strings.Join(v.Domains, " "), v.Runtime, yesNo(v.Alive), strings.TrimSpace(port), v.Revision, state, oneLine(v.Error)})
+		}
+		Table(e.Stdout, []string{"SERVICE", "DOMAINS", "RUNTIME", "ALIVE", "PORT", "REVISION", "STATE", "ERROR"}, rows)
+		if only != "" {
+			return nil
+		}
+	}
 	if s.Manifest != nil {
 		data, _ := json.MarshalIndent(s.Manifest, "", "  ")
 		fmt.Fprintf(e.Stdout, "\nsite.json\n%s\n", data)

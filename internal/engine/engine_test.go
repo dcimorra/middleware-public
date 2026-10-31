@@ -77,6 +77,11 @@ func stopEverything(e *Engine) {
 				insts = append(insts, w.inst)
 			}
 		}
+		for _, svc := range s.Services {
+			if svc.inst != nil {
+				insts = append(insts, svc.inst)
+			}
+		}
 	}
 	e.mu.RUnlock()
 	for _, inst := range insts {

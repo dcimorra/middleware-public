@@ -48,6 +48,10 @@ type Manifest struct {
 	Run      *Run               `json:"run,omitempty"`
 	Upstream string             `json:"upstream,omitempty"`
 	Workers  map[string]*Worker `json:"workers,omitempty"`
+	// Services are the site's processes when it has more than one, each
+	// with its own domains, lifecycle and rules (services.go). A site has
+	// run or services, never both.
+	Services map[string]*Service `json:"services,omitempty"`
 	// Move says what a move to another node leaves behind (see SiteMove).
 	Move     *SiteMove `json:"move,omitempty"`
 	Disabled bool      `json:"disabled,omitempty"`
@@ -138,6 +142,9 @@ type Health struct {
 	// otherwise anything below 500 does (a 404 on / still means the
 	// process answers).
 	ExpectStatus int `json:"expect_status,omitempty"`
+	// Command, for a service that answers no HTTP (a database), is run
+	// inside it and passes when it exits 0. Services only.
+	Command []string `json:"command,omitempty"`
 }
 
 // Healthy says whether an HTTP status passes the check.
@@ -168,6 +175,15 @@ type Docker struct {
 	// User is uid:gid inside; empty is the right default for the daemon
 	// (see runtime.Docker).
 	User string `json:"user,omitempty"`
+	// Port is the port the process listens on inside the container, for
+	// an image that listens on one of its own (mariadb on 3306) and is
+	// not told $PORT. Zero is $PORT, the same number inside and out.
+	// Services only.
+	Port int `json:"port,omitempty"`
+	// Watch are folders and files of the site whose contents are part of
+	// a built image's revision, so a change there rebuilds this service
+	// and no other. Empty is the Dockerfile's folder. Services only.
+	Watch []string `json:"watch,omitempty"`
 }
 
 // Worker is an always-on process that belongs to a site and answers no
@@ -581,42 +597,20 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("node: %q is not a major version (24) or lts", m.Node)
 	}
 	if m.Run != nil {
-		if len(m.Run.Command) == 0 {
-			return errors.New("run.command: empty")
-		}
-		if err := validRuntime("run", m.Run.Runtime, m.Run.Docker); err != nil {
+		if err := validRun("run", m.Run, false); err != nil {
 			return err
 		}
-		for k := range m.Run.Env {
-			if !validEnvKey(k) {
-				return fmt.Errorf("run.env: %q is not a variable name", k)
-			}
-		}
-		for k := range m.Run.EnvFromFile {
-			if !validEnvKey(k) {
-				return fmt.Errorf("run.env_from_file: %q is not a variable name", k)
-			}
-		}
-		if m.Run.Port < 0 || m.Run.Port > 65535 {
-			return fmt.Errorf("run.port: %d is not a port", m.Run.Port)
-		}
+	}
+	if err := m.validServices(); err != nil {
+		return err
 	}
 	for _, a := range m.Aliases {
 		if !ValidDomain(a) {
 			return fmt.Errorf("aliases: %q is not a domain", a)
 		}
 	}
-	if m.Hold != nil {
-		switch m.Hold.Mode {
-		case "", "maintenance", "404", "410", "500":
-		default:
-			return fmt.Errorf("hold.mode: %q is not maintenance, 404, 410 or 500", m.Hold.Mode)
-		}
-		if m.Hold.Until != "" {
-			if _, err := time.Parse(time.RFC3339, m.Hold.Until); err != nil {
-				return fmt.Errorf("hold.until: %q is not an RFC 3339 time", m.Hold.Until)
-			}
-		}
+	if err := validHold("hold", m.Hold); err != nil {
+		return err
 	}
 	if c := m.ClaudeAPI; c != nil {
 		switch strings.ToLower(c.Tools) {
@@ -723,24 +717,8 @@ func (m *Manifest) Validate() error {
 			}
 		}
 	}
-	if a := m.Access; a != nil {
-		if err := validAddrs("access.allow", a.Allow); err != nil {
-			return err
-		}
-		if err := validAddrs("access.deny", a.Deny); err != nil {
-			return err
-		}
-		for prefix, r := range a.Routes {
-			if r == nil {
-				continue
-			}
-			if err := validAddrs("access.routes."+prefix+".allow", r.Allow); err != nil {
-				return err
-			}
-			if err := validAddrs("access.routes."+prefix+".deny", r.Deny); err != nil {
-				return err
-			}
-		}
+	if err := validAccess("access", m.Access); err != nil {
+		return err
 	}
 	if m.VPN != nil {
 		for _, d := range m.VPN.Devices {
@@ -754,38 +732,129 @@ func (m *Manifest) Validate() error {
 			}
 		}
 	}
-	if c := m.Cache; c != nil {
+	if err := validLive("", m.Cache, m.Attack, m.Security, m.WAF); err != nil {
+		return err
+	}
+	if m.Deploy != nil && m.Deploy.GitHub != nil && !strings.Contains(m.Deploy.GitHub.Repository, "/") {
+		return errors.New("deploy.github.repository: want owner/name")
+	}
+	return nil
+}
+
+// validRun checks a run section: a site's, or a service's (inService),
+// which may also say what only a service can (docker.port, docker.watch,
+// health.command).
+func validRun(field string, r *Run, inService bool) error {
+	if len(r.Command) == 0 && !(inService && r.Runtime == "docker") {
+		return fmt.Errorf("%s.command: empty", field)
+	}
+	if err := validRuntime(field, r.Runtime, r.Docker); err != nil {
+		return err
+	}
+	for k := range r.Env {
+		if !validEnvKey(k) {
+			return fmt.Errorf("%s.env: %q is not a variable name", field, k)
+		}
+	}
+	for k := range r.EnvFromFile {
+		if !validEnvKey(k) {
+			return fmt.Errorf("%s.env_from_file: %q is not a variable name", field, k)
+		}
+	}
+	if r.Port < 0 || r.Port > 65535 {
+		return fmt.Errorf("%s.port: %d is not a port", field, r.Port)
+	}
+	if d := r.Docker; d != nil {
+		if d.Port < 0 || d.Port > 65535 {
+			return fmt.Errorf("%s.docker.port: %d is not a port", field, d.Port)
+		}
+		// Said rather than ignored: a site's run that wrote them would
+		// look as if they worked.
+		if !inService && (d.Port != 0 || len(d.Watch) > 0) {
+			return fmt.Errorf("%s.docker: port and watch belong to a service (services.<name>.run)", field)
+		}
+	}
+	if r.Health != nil && len(r.Health.Command) > 0 && !inService {
+		return fmt.Errorf("%s.health.command belongs to a service (services.<name>.run)", field)
+	}
+	return nil
+}
+
+// validHold checks a hold section, the site's or a service's.
+func validHold(field string, h *Hold) error {
+	if h == nil {
+		return nil
+	}
+	switch h.Mode {
+	case "", "maintenance", "404", "410", "500":
+	default:
+		return fmt.Errorf("%s.mode: %q is not maintenance, 404, 410 or 500", field, h.Mode)
+	}
+	if h.Until != "" {
+		if _, err := time.Parse(time.RFC3339, h.Until); err != nil {
+			return fmt.Errorf("%s.until: %q is not an RFC 3339 time", field, h.Until)
+		}
+	}
+	return nil
+}
+
+// validAccess checks every address of an access section.
+func validAccess(field string, a *Access) error {
+	if a == nil {
+		return nil
+	}
+	if err := validAddrs(field+".allow", a.Allow); err != nil {
+		return err
+	}
+	if err := validAddrs(field+".deny", a.Deny); err != nil {
+		return err
+	}
+	for prefix, r := range a.Routes {
+		if r == nil {
+			continue
+		}
+		if err := validAddrs(field+".routes."+prefix+".allow", r.Allow); err != nil {
+			return err
+		}
+		if err := validAddrs(field+".routes."+prefix+".deny", r.Deny); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validLive checks the rules applied live (cache, attack, security, waf);
+// prefix is "" for the site's and "services.<name>." for a service's.
+func validLive(prefix string, c *Cache, at *attack.Rules, sec *security.Rules, w *WAF) error {
+	if c != nil {
 		if c.MaxMB < 0 {
-			return errors.New("cache.max_mb cannot be negative")
+			return fmt.Errorf("%scache.max_mb cannot be negative", prefix)
 		}
 		for i, r := range c.Rules {
 			switch {
 			case !strings.HasPrefix(r.Path, "/"):
-				return fmt.Errorf("cache.rules[%d].path: %q must start with /", i, r.Path)
+				return fmt.Errorf("%scache.rules[%d].path: %q must start with /", prefix, i, r.Path)
 			case r.Mode != httpcache.ModeOrigin && r.Mode != httpcache.ModeForce && r.Mode != httpcache.ModeNever:
-				return fmt.Errorf("cache.rules[%d].mode: %q is not origin, force or never", i, r.Mode)
+				return fmt.Errorf("%scache.rules[%d].mode: %q is not origin, force or never", prefix, i, r.Mode)
 			case r.Mode == httpcache.ModeForce && r.TTL <= 0:
-				return fmt.Errorf("cache.rules[%d].ttl: force needs the seconds to keep", i)
+				return fmt.Errorf("%scache.rules[%d].ttl: force needs the seconds to keep", prefix, i)
 			case r.Mode == httpcache.ModeNever && r.IgnoreCookies:
 				// Said of a rule that keeps nothing, it is a rule written
 				// for another path: refused, so it is not read as working.
-				return fmt.Errorf("cache.rules[%d].ignore_cookies: never keeps nothing, with cookies or without", i)
+				return fmt.Errorf("%scache.rules[%d].ignore_cookies: never keeps nothing, with cookies or without", prefix, i)
 			}
 		}
 	}
-	if err := m.Attack.Validate(); err != nil {
-		return fmt.Errorf("attack.%w", err)
+	if err := at.Validate(); err != nil {
+		return fmt.Errorf("%sattack.%w", prefix, err)
 	}
-	if _, err := security.Compile(m.Security); err != nil {
-		return fmt.Errorf("security.%w", err)
+	if _, err := security.Compile(sec); err != nil {
+		return fmt.Errorf("%ssecurity.%w", prefix, err)
 	}
-	if m.WAF != nil && m.WAF.Rate != nil {
-		if m.WAF.Rate.Requests <= 0 || m.WAF.Rate.Window <= 0 {
-			return errors.New("waf.rate: requests and window must be positive")
+	if w != nil && w.Rate != nil {
+		if w.Rate.Requests <= 0 || w.Rate.Window <= 0 {
+			return fmt.Errorf("%swaf.rate: requests and window must be positive", prefix)
 		}
-	}
-	if m.Deploy != nil && m.Deploy.GitHub != nil && !strings.Contains(m.Deploy.GitHub.Repository, "/") {
-		return errors.New("deploy.github.repository: want owner/name")
 	}
 	return nil
 }
@@ -799,6 +868,9 @@ const (
 	ModeDisabled Mode = "disabled"
 	ModeHold     Mode = "hold"
 	ModeRun      Mode = "run"
+	// ModeServices is a site whose names are served by its services, each
+	// its own process (services.go).
+	ModeServices Mode = "services"
 	ModeUpstream Mode = "upstream"
 	ModeStatic   Mode = "static"
 	// ModeProject is a folder without a domain: workers, tasks and a
@@ -837,12 +909,21 @@ func (m *Manifest) Hosts(name string) []string {
 			add("www." + strings.ToLower(strings.TrimSuffix(strings.TrimSpace(h), ".")))
 		}
 	}
+	// A service's domains are the site's names as aliases are: published,
+	// certified, refused when another site claims them.
+	extra := append([]string(nil), m.Aliases...)
+	for _, n := range m.ServiceNames() {
+		for _, d := range m.Services[n].Domains {
+			host, _ := SplitDomain(d)
+			extra = append(extra, host)
+		}
+	}
 	add(name)
-	for _, a := range m.Aliases {
+	for _, a := range extra {
 		add(a)
 	}
 	apex(name)
-	for _, a := range m.Aliases {
+	for _, a := range extra {
 		apex(a)
 	}
 	return out
@@ -865,6 +946,8 @@ func (m *Manifest) Mode() Mode {
 		return ModeDisabled
 	case m.Hold != nil && m.Hold.Enabled:
 		return ModeHold
+	case len(m.Services) > 0:
+		return ModeServices
 	case m.Run != nil:
 		return ModeRun
 	case m.Upstream != "":

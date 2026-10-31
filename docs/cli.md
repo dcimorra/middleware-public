@@ -46,13 +46,16 @@ in the API ([api.md](api.md)) and the panel.
 | command | what |
 | --- | --- |
 | `site list` | every folder under `sites/`, managed or not, with mode, port and state |
-| `site show <domain>` | the site object: manifest, instance, workers |
+| `site show <domain\|name> [--service s]` | the site object: manifest, instance, workers, and its services with their names, port, revision, state and error; a name a site serves shows that site (and that service) |
+| `site routes <domain>` | every name the site answers: host (and prefix) → service → port → state |
 | `site add <domain> [--template static\|node\|go\|docker] [--manifest file.json\|-]` | a folder with a `site.json` |
-| `site start <domain>` / `site stop <domain>` | clear or set `disabled` in the manifest |
-| `site restart <domain>` / `site restart --all` | force a handover; `--all` after an upgrade, see [upgrade.md](upgrade.md) |
-| `site hold <domain> [--title t] [--message m]` / `site unhold <domain>` | the holding page instead of the process |
-| `site logs <domain> [-f] [--lines 200] [--worker name]` | the instance's output |
+| `site start <domain> [--service s]` / `site stop <domain> [--service s]` | clear or set `disabled` in the manifest (`services.<s>.disabled` for one service, the others untouched) |
+| `site restart <domain> [--service s]` / `site restart --all` | force a handover (of one service with `--service`, the others untouched); `--all` after an upgrade, see [upgrade.md](upgrade.md) |
+| `site hold <domain> [--service s] [--title t] [--message m]` / `site unhold <domain> [--service s]` | the holding page instead of the process (on one service's names with `--service`) |
+| `exec <domain> [--service s] [-t] [--] <command…>` | a one-off command where the site runs: in its container, or a service's (its running image, on the site's network). From a site's turn, whose jail has no docker, a container's command goes through the house (`exec:<domain>`), output as it comes and the command's exit code as its own |
+| `site logs <domain> [-f] [--lines 200] [--worker name \| --service name [--build]]` | the instance's output, a worker's, a service's, or a service's image build |
 | `site deploy <domain>` | run `deploy.github.build` and write the pointer, [deploy.md](deploy.md); through the github module's runner when it is enabled |
+| `site validate <domain> [--file site.json\|-]` | check a manifest without writing or deploying it: what the house would refuse, the names it would answer and whether another site has them, Dockerfiles, build contexts and folders that are not there. Exits 1 when it would not work. A site's own conversation may run it for its site |
 | `site rm <domain> [--archive]` | remove, or move to `data/archive/` |
 | `site tasks <domain>` (or `… list`) | the site's own tasks (the ones whose `site` is that domain) with their schedule, next and last run; `--json` prints the API's rows |
 | `site tasks <domain> save <name> <file.json\|->` | write a task from a file or stdin; with no `site` it is this one's. Refused when the name is another site's or the root's |

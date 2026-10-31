@@ -134,6 +134,11 @@ type Site struct {
 	Domain string
 	Dir    string
 	WAF    *manifest.WAF
+	// Bucket is what the rate limit counts under; empty is Domain. A
+	// service with a waf of its own has a bucket of its own, or its
+	// limit and the site's would be drawn from one bucket refilled at
+	// whichever rate the last request read.
+	Bucket string
 }
 
 // Lookup resolves a host to its site. Unknown hosts get the global policy.
@@ -145,6 +150,9 @@ type Options struct {
 	DataDir string
 	Bus     *events.Bus
 	Lookup  Lookup
+	// LookupRequest, when set, resolves a request instead of its host:
+	// a host and a path name one of a site's services.
+	LookupRequest func(r *http.Request) (Site, bool)
 	// Country resolves a request's country code; nil means "".
 	Country func(r *http.Request, ip net.IP) string
 	// Now is for tests.
@@ -680,7 +688,9 @@ func (w *WAF) Wrap(next http.Handler) http.Handler {
 		}
 		var site Site
 		isSite := false
-		if w.opts.Lookup != nil {
+		if w.opts.LookupRequest != nil {
+			site, isSite = w.opts.LookupRequest(r)
+		} else if w.opts.Lookup != nil {
 			site, isSite = w.opts.Lookup(host)
 		}
 		pol := w.effectiveFor(site.WAF)
@@ -692,6 +702,9 @@ func (w *WAF) Wrap(next http.Handler) http.Handler {
 		limitOn := ""
 		if isSite {
 			limitOn = site.Domain
+			if site.Bucket != "" {
+				limitOn = site.Bucket
+			}
 		}
 		if pol.rate != nil && !(!isSite && panelAsset(r)) {
 			switch w.allow(limitOn, addr, clientOf(r), pol.rate, costOf(r)) {
