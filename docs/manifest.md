@@ -535,7 +535,8 @@ its page on its names while the others serve; the site's `disabled` and
 <domain> --service <name>` write the service's section. In the access
 log, a request a service answered ends in `service=<name>`.
 
-**Moving a site from `run` to `services`.** Check the new manifest first
+**Moving a site from `run` to `services`** (the whole plan, with the data,
+is [services.md](services.md)). Check the new manifest first
 (`middleware site validate <domain> --file site.new.json`), then replace
 `run` and `aliases` with `services`. The run the site had keeps answering
 its names until every service with names that is not optional is up, and

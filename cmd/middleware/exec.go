@@ -40,8 +40,8 @@ func execCommand(args []string) error {
 	root := fs.String("root", "", "installation root (default $MIDDLEWARE_ROOT or /srv/middleware)")
 	tty := fs.Bool("t", false, "allocate a terminal (an interactive shell)")
 	service := fs.String("service", "", "for a site with services, the one to run in (default: the one that answers the site's name)")
-	// Flags only before the domain: everything after it belongs to the
-	// command, which has flags of its own (npm install --omit=dev).
+	// Flags before the domain, and before the command: everything from the
+	// command's first word on is its own (npm install --omit=dev).
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -50,8 +50,15 @@ func execCommand(args []string) error {
 		return fmt.Errorf("usage: middleware exec <domain> [--service s] [--] <command…>")
 	}
 	domain := strings.ToLower(rest[0])
-	cmdArgs := rest[1:]
-	if cmdArgs[0] == "--" {
+	// And between the domain and the command, which is where --service
+	// reads naturally (`exec shop.example --service db -- mysql`). The
+	// command's own flags are past its first word, or past "--", where
+	// the parse stops.
+	if err := fs.Parse(rest[1:]); err != nil {
+		return err
+	}
+	cmdArgs := fs.Args()
+	if len(cmdArgs) > 0 && cmdArgs[0] == "--" {
 		cmdArgs = cmdArgs[1:]
 	}
 	if len(cmdArgs) == 0 {

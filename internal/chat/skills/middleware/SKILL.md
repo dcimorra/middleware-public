@@ -299,6 +299,108 @@ own range (ask `GET /api/v1/system/ports`). **Never pick a port for a site**;
 and it costs the handover. A project that reads its port from another name
 maps it: `"env": { "APP_PORT": "$PORT" }`.
 
+### Several services and several names: `services`
+
+When a project is more than one process with names of its own (a frontend,
+an API on a path, a CMS on a subdomain, a database), write `services`
+instead of `run`, and **never** a router and a supervisor in bash inside
+one image: there, one typo kept every part from deploying, and a CMS that
+was installing answered a raw 502. Each service is a run section with the
+names it answers:
+
+```json
+{
+  "version": 2,
+  "services": {
+    "web": {
+      "run": { "command": ["node", "server.js"], "health": { "path": "/healthz" } },
+      "domains": ["bakery.example"]
+    },
+    "api": {
+      "run": { "command": ["node", "api.js"], "env": { "DB_HOST": "127.0.0.1", "DB_PORT": "$SERVICE_db_PORT" } },
+      "domains": ["bakery.example/api"],
+      "depends_on": ["db"],
+      "waf": { "max_body": "50m" }
+    },
+    "drupal": {
+      "run": {
+        "runtime": "docker",
+        "docker": { "build": "deploy/drupal/Dockerfile", "memory": "1g", "volumes": ["drupal:/var/www/html/sites/default/files"] },
+        "env": { "DB_HOST": "$SERVICE_db_HOST", "DB_PORT": "$SERVICE_db_PORT" },
+        "env_files": ["deploy/drupal/.env"],
+        "health": { "path": "/user/login", "timeout": "10m" }
+      },
+      "domains": ["cms.bakery.example"],
+      "depends_on": ["db"],
+      "access": { "allow": ["203.0.113.0/24"] }
+    },
+    "db": {
+      "run": {
+        "runtime": "docker",
+        "docker": { "image": "mariadb:11.4", "port": 3306, "volumes": ["db:/var/lib/mysql"] },
+        "env_files": ["deploy/db/.env"],
+        "health": { "command": ["healthcheck.sh", "--connect"] }
+      },
+      "internal": true
+    }
+  }
+}
+```
+
+What to know, in the order it bites:
+
+- **The site's own name must be one service's** (`web` here). `domains`
+  are `"host"` or `"host/prefix"` (longest prefix wins, the path reaches the
+  service as it came). They are published like aliases; a name in two
+  services, or another site's, is refused. `services` and `run`, `aliases`,
+  `static` or `upstream` are exclusive.
+- **Each service has its own life**: its revision, build, health, log and
+  backoff. Changing `deploy/drupal/` rebuilds `drupal` and nothing else
+  (`docker.watch` lists other folders to watch). One that fails keeps its
+  previous generation serving; while one starts, its names get the house's
+  503 page with `Retry-After`. `depends_on` holds a first start until those
+  are up and healthy; `optional: true` keeps the site up without it.
+- **Reaching each other**: containers share the site's network and reach
+  each other by service name (`db:3306`); `$SERVICE_<name>_HOST` and
+  `$SERVICE_<name>_PORT` (dash as underscore) give the right address from
+  wherever the service runs. A container listens inside on `docker.port`
+  or 8080 (`$PORT` says which). A process may only name a service that
+  restarts in place (one without names); a container cannot reach a
+  process. An internal container nothing on the machine needs is not on
+  the machine's loopback at all; its health is `health.command`.
+- **Images** in services carry a version (`mariadb:11.4`, never `latest`).
+  A `build` uses the site's folder as its context and its `.dockerignore`;
+  its output is `middleware site logs <domain> --service <name> --build`.
+  Prefer `COPY --from=<image>` for a binary over downloading one in the
+  Dockerfile: an arm64 machine gets the right one, and an image built for
+  another architecture is refused before it runs.
+- **Volumes** keep their names (`mw-<domain>-db`), so moving a database
+  from a worker or a run into a service keeps its data.
+- **Rules per service**: `waf`, `attack`, `headers`, `cache` and `hold`
+  replace the site's for that service's names; `access` and `security` add
+  to the site's (judged after it, never instead). `disabled` and `hold`
+  stop one service and leave the others serving.
+
+Working with one from a conversation:
+
+- Check before writing: `middleware site validate <domain> --file draft.json`
+  (it writes nothing, and lists every name with where it would go).
+- `middleware site show <domain>` and `middleware site routes <domain>`:
+  each service's state, port and error; each name → service → port → state.
+- `middleware site logs <domain> --service <name>` (and `--build`).
+- `middleware site restart <domain> --service <name>`; `site stop|start|hold
+  <domain> --service <name>` write that service's section.
+- `middleware exec <domain> --service <name> -- <command>`: an install or a
+  migration in that service's container, on the site's network. From a
+  site's turn it goes through the house (the jail has no docker): output as
+  it comes and the command's exit code.
+
+**Moving a site from `run` to `services`**: write the new manifest to a
+draft, `site validate` it, then replace `run` and `aliases` with `services`
+in one write. The old instance keeps answering until every service with
+names is up, so nothing goes dark; the previous manifest is in the history
+to go back to.
+
 ### Live versus restart
 
 The **revision** hashes what the instance was born from: resolved command,
